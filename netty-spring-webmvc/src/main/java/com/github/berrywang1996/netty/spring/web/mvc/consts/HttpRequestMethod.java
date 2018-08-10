@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.github.berrywang1996.netty.spring.web.mvc.bind.consts;
+package com.github.berrywang1996.netty.spring.web.mvc.consts;
 
 /**
  * @author berrywang1996

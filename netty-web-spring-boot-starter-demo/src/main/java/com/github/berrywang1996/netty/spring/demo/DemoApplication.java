@@ -14,18 +14,20 @@
  * limitations under the License.
  */
 
-package com.github.berrywang1996.netty.spring.web.core;
+package com.github.berrywang1996.netty.spring.demo;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 /**
  * @author berrywang1996
  * @version V1.0.0
  */
-public final class NettyServerBootstrap {
+@SpringBootApplication
+public class DemoApplication {
 
     public static void main(String[] args) {
-
-
-
+        SpringApplication.run(DemoApplication.class, args);
     }
 
 }

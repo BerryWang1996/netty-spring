@@ -14,24 +14,15 @@
  * limitations under the License.
  */
 
-package com.github.berrywang1996.netty.spring.web.mvc.bind.annotation;
+package com.github.berrywang1996.netty.spring.boot.configure;
 
-import com.github.berrywang1996.netty.spring.web.mvc.consts.HttpRequestMethod;
-
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
+import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * @author berrywang1996
  * @version V1.0.0
  */
-@Target(ElementType.METHOD)
-@Retention(RetentionPolicy.RUNTIME)
-@RequestMapping(method = HttpRequestMethod.DELETE)
-public @interface DelMapping {
-
-    String[] value() default {};
-
+@ConfigurationProperties(prefix = "server.netty")
+public class NettyServerStartupPropertiesWrapper extends NettyServerStartupProperties {
 }

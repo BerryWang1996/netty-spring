@@ -16,7 +16,7 @@
 
 package com.github.berrywang1996.netty.spring.web.mvc.bind.annotation;
 
-import com.github.berrywang1996.netty.spring.web.mvc.bind.consts.HttpRequestMethod;
+import com.github.berrywang1996.netty.spring.web.mvc.consts.HttpRequestMethod;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

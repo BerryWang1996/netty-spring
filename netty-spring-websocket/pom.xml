@@ -34,11 +34,19 @@
     </licenses>
 
     <dependencies>
+
         <dependency>
             <groupId>com.github.berrywang1996</groupId>
             <artifactId>netty-spring-web</artifactId>
             <version>${project.version}</version>
         </dependency>
+
+        <!-- lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+
     </dependencies>
 
 </project>

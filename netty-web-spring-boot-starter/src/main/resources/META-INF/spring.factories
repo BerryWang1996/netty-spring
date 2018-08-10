@@ -1,2 +1,3 @@
 org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
-  com.github.berrywang1996.netty.spring.boot.configure.NettyServerBootstrapConfigure
+  com.github.berrywang1996.netty.spring.boot.configure.NettyServerBootstrapConfigure,\
+  com.github.berrywang1996.netty.spring.boot.configure.NettyServerStartupPropertiesWrapper
