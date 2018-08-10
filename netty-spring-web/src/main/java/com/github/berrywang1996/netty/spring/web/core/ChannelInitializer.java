@@ -17,7 +17,6 @@
 package com.github.berrywang1996.netty.spring.web.core;
 
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
-import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.HttpObjectAggregator;
@@ -32,13 +31,13 @@ import java.io.File;
  * @author berrywang1996
  * @version V1.0.0
  */
-public class NettyServerChannelInitializer extends ChannelInitializer<SocketChannel> {
+public class ChannelInitializer extends io.netty.channel.ChannelInitializer<SocketChannel> {
 
     private NettyServerBootstrap nettyServerBootstrap;
 
     private SslContext sslCtx = null;
 
-    public NettyServerChannelInitializer(NettyServerBootstrap nettyServerBootstrap) throws Exception {
+    public ChannelInitializer(NettyServerBootstrap nettyServerBootstrap) throws Exception {
         this.nettyServerBootstrap = nettyServerBootstrap;
 
         // Configure SSL
@@ -60,7 +59,7 @@ public class NettyServerChannelInitializer extends ChannelInitializer<SocketChan
         if (nettyServerBootstrap.getStartupProperties().getGzip().isEnable()) {
             p.addLast(
                     "gzip",
-                    new NettyServerHttpContentCompressor(
+                    new AdvancedHttpContentCompressor(
                             nettyServerBootstrap.getStartupProperties().getGzip().getCompressionLevel(),
                             nettyServerBootstrap.getStartupProperties().getGzip().getWindowBits(),
                             nettyServerBootstrap.getStartupProperties().getGzip().getMemLevel(),
@@ -70,7 +69,7 @@ public class NettyServerChannelInitializer extends ChannelInitializer<SocketChan
         }
         p.addLast("aggregator", new HttpObjectAggregator(65536));
         p.addLast("chunked", new ChunkedWriteHandler());
-        // TODO server handler
+        p.addLast("server-handler", new ServiceHandler(nettyServerBootstrap.getStartupProperties()));
     }
 
 }

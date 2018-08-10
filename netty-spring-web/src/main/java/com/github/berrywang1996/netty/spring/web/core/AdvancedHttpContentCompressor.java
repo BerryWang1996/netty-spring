@@ -29,29 +29,18 @@ import java.util.Set;
  * @author berrywang1996
  * @version V1.0.0
  */
-public class NettyServerHttpContentCompressor extends HttpContentCompressor {
+public class AdvancedHttpContentCompressor extends HttpContentCompressor {
 
-    private final int compressionLevel;
-    private final int windowBits;
-    private final int memLevel;
-    private final int contentSizeThreshold;
-    private ChannelHandlerContext ctx;
+    private final Set<String> gzip_types;
 
-    private Set<String> gzip_types;
-
-    public NettyServerHttpContentCompressor(int compressionLevel, int windowBits, int memLevel,
-                                            int contentSizeThreshold, String gzip_types) {
+    public AdvancedHttpContentCompressor(int compressionLevel, int windowBits, int memLevel,
+                                         int contentSizeThreshold, String gzip_types) {
         super(compressionLevel, windowBits, memLevel, contentSizeThreshold);
-        this.compressionLevel = compressionLevel;
-        this.windowBits = windowBits;
-        this.memLevel = memLevel;
-        this.contentSizeThreshold = contentSizeThreshold;
         this.gzip_types = new HashSet<>(Arrays.asList(gzip_types.split(" ")));
     }
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
-        this.ctx = ctx;
         super.channelActive(ctx);
     }
 
