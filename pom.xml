@@ -43,6 +43,9 @@
         <netty.version>4.1.28.Final</netty.version>
         <spring.version>4.3.16.RELEASE</spring.version>
         <spring-boot.version>1.5.15.RELEASE</spring-boot.version>
+        <!-- log -->
+        <slf4j.version>1.7.25</slf4j.version>
+        <logback.version>1.2.3</logback.version>
         <!-- provided -->
         <lombok.version>1.18.0</lombok.version>
         <!-- test -->
@@ -72,11 +75,23 @@
 
     <dependencies>
 
+        <!-- log -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>${logback.version}</version>
+        </dependency>
+
         <!-- test -->
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
-            <version>4.12</version>
+            <version>${junit.version}</version>
         </dependency>
 
     </dependencies>
