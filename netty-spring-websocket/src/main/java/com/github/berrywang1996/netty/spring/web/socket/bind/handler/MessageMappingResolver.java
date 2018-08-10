@@ -14,28 +14,19 @@
  * limitations under the License.
  */
 
-package com.github.berrywang1996.netty.spring.web.core;
+package com.github.berrywang1996.netty.spring.web.socket.bind.handler;
 
-import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
+import com.github.berrywang1996.netty.spring.web.handler.MappingResolver;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.SimpleChannelInboundHandler;
-import lombok.extern.slf4j.Slf4j;
 
 /**
  * @author berrywang1996
  * @version V1.0.0
  */
-@Slf4j
-public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
-
-    private NettyServerStartupProperties serverStartupProperties;
-
-    public ServiceHandler(NettyServerStartupProperties serverStartupProperties) {
-        this.serverStartupProperties = serverStartupProperties;
-    }
+public class MessageMappingResolver extends MappingResolver {
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, Object msg) throws Exception {
+    public void resolve(ChannelHandlerContext ctx, Object msg) {
 
     }
 

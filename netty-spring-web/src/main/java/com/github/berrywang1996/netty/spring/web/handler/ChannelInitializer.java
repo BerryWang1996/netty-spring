@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.github.berrywang1996.netty.spring.web.core;
+package com.github.berrywang1996.netty.spring.web.handler;
 
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
 import io.netty.channel.ChannelPipeline;
@@ -57,19 +57,17 @@ public class ChannelInitializer extends io.netty.channel.ChannelInitializer<Sock
         }
         p.addLast(new HttpServerCodec());
         if (nettyServerBootstrap.getStartupProperties().getGzip().isEnable()) {
-            p.addLast(
-                    "gzip",
-                    new AdvancedHttpContentCompressor(
-                            nettyServerBootstrap.getStartupProperties().getGzip().getCompressionLevel(),
-                            nettyServerBootstrap.getStartupProperties().getGzip().getWindowBits(),
-                            nettyServerBootstrap.getStartupProperties().getGzip().getMemLevel(),
-                            nettyServerBootstrap.getStartupProperties().getGzip().getContentSizeThreshold(),
-                            nettyServerBootstrap.getStartupProperties().getGzip().getTypes())
+            p.addLast(new CompressorHandler(
+                    nettyServerBootstrap.getStartupProperties().getGzip().getCompressionLevel(),
+                    nettyServerBootstrap.getStartupProperties().getGzip().getWindowBits(),
+                    nettyServerBootstrap.getStartupProperties().getGzip().getMemLevel(),
+                    nettyServerBootstrap.getStartupProperties().getGzip().getContentSizeThreshold(),
+                    nettyServerBootstrap.getStartupProperties().getGzip().getTypes())
             );
         }
-        p.addLast("aggregator", new HttpObjectAggregator(65536));
-        p.addLast("chunked", new ChunkedWriteHandler());
-        p.addLast("server-handler", new ServiceHandler(nettyServerBootstrap.getStartupProperties()));
+        p.addLast(new HttpObjectAggregator(65536));
+        p.addLast(new ChunkedWriteHandler());
+        p.addLast(new ServiceHandler(new MappingRuntimeSupporter(nettyServerBootstrap.getStartupProperties())));
     }
 
 }

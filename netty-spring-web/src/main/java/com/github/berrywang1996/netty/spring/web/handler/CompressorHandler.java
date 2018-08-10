@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.github.berrywang1996.netty.spring.web.core;
+package com.github.berrywang1996.netty.spring.web.handler;
 
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.HttpContentCompressor;
@@ -29,12 +29,12 @@ import java.util.Set;
  * @author berrywang1996
  * @version V1.0.0
  */
-public class AdvancedHttpContentCompressor extends HttpContentCompressor {
+public class CompressorHandler extends HttpContentCompressor {
 
     private final Set<String> gzip_types;
 
-    public AdvancedHttpContentCompressor(int compressionLevel, int windowBits, int memLevel,
-                                         int contentSizeThreshold, String gzip_types) {
+    public CompressorHandler(int compressionLevel, int windowBits, int memLevel,
+                             int contentSizeThreshold, String gzip_types) {
         super(compressionLevel, windowBits, memLevel, contentSizeThreshold);
         this.gzip_types = new HashSet<>(Arrays.asList(gzip_types.split(" ")));
     }

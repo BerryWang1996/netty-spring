@@ -16,7 +16,7 @@
 
 package com.github.berrywang1996.netty.spring.web.startup;
 
-import com.github.berrywang1996.netty.spring.web.core.ChannelInitializer;
+import com.github.berrywang1996.netty.spring.web.handler.ChannelInitializer;
 import com.github.berrywang1996.netty.spring.web.util.StartupPropertiesUtil;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.ChannelFuture;
