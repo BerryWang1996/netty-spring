@@ -2,19 +2,20 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
     <modelVersion>4.0.0</modelVersion>
+    <packaging>pom</packaging>
 
     <groupId>com.github.berrywang1996</groupId>
     <artifactId>netty-spring-webmvc-parent</artifactId>
     <version>1.0.0-SNAPSHOT</version>
-
-    <packaging>pom</packaging>
 
     <modules>
         <module>netty-spring-web</module>
         <module>netty-spring-webmvc</module>
         <module>netty-spring-websocket</module>
         <module>netty-web-spring-boot-starter</module>
+        <module>netty-web-spring-boot-starter-demo</module>
     </modules>
 
     <description>
@@ -23,13 +24,6 @@
 
     <url>https://github.com/BerryWang1996/netty-spring-webmvc.git</url>
 
-    <licenses>
-        <license>
-            <name>Apache 2.0</name>
-            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
-        </license>
-    </licenses>
-
     <developers>
         <developer>
             <name>wangbor</name>
@@ -37,10 +31,55 @@
         </developer>
     </developers>
 
+    <licenses>
+        <license>
+            <name>Apache 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+        </license>
+    </licenses>
+
     <properties>
+        <!-- runtime  -->
         <netty.version>4.1.28.Final</netty.version>
+        <spring.version>4.3.16.RELEASE</spring.version>
         <spring-boot.version>1.5.15.RELEASE</spring-boot.version>
+        <!-- provided -->
+        <lombok.version>1.18.0</lombok.version>
+        <!-- test -->
+        <junit.version>4.12</junit.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+
+            <!-- lombok -->
+            <dependency>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+                <version>${lombok.version}</version>
+                <scope>provided</scope>
+            </dependency>
+
+            <!-- netty -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-all</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+
+        <!-- test -->
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.12</version>
+        </dependency>
+
+    </dependencies>
 
     <build>
         <plugins>
