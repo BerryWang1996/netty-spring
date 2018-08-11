@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-package com.github.berrywang1996.netty.spring.web.socket.bind.annotation;
+package com.github.berrywang1996.netty.spring.web.websocket.bind.annotation;
 
-import com.github.berrywang1996.netty.spring.web.socket.bind.consts.MessageConsumerEndpoint;
-import com.github.berrywang1996.netty.spring.web.socket.bind.consts.MessageProducerEndpoint;
+import com.github.berrywang1996.netty.spring.web.websocket.bind.consts.MessageConsumerEndpoint;
+import com.github.berrywang1996.netty.spring.web.websocket.bind.consts.MessageProducerEndpoint;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -40,7 +40,7 @@ import java.lang.annotation.Target;
  * </pre>
  *
  * @author berrywang1996
- * @version V1.0.0
+ * @since V1.0.0
  */
 @Target({ElementType.METHOD})
 @Retention(RetentionPolicy.RUNTIME)
@@ -60,5 +60,10 @@ public @interface MessageMapping {
      * message consumer
      */
     MessageConsumerEndpoint consumer() default MessageConsumerEndpoint.ONE;
+
+    /**
+     * port. If port is null, the application will map the method
+     */
+    int[] port() default {};
 
 }

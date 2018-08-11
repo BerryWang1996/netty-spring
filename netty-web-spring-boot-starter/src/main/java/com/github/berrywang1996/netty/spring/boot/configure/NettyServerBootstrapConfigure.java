@@ -19,15 +19,13 @@ package com.github.berrywang1996.netty.spring.boot.configure;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
 /**
  * @author berrywang1996
- * @version V1.0.0
+ * @since V1.0.0
  */
 @Slf4j
 @Configuration
@@ -36,21 +34,18 @@ public class NettyServerBootstrapConfigure {
     @Autowired
     private NettyServerStartupPropertiesWrapper startupProperties;
 
+    @Autowired
+    private ApplicationContext applicationContext;
+
     @Bean
     public NettyServerBootstrap nettyServer() {
-        final NettyServerBootstrap nettyServerBootstrap = new NettyServerBootstrap();
-        ExecutorService nettyExecutor = Executors.newCachedThreadPool();
-        nettyExecutor.execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    nettyServerBootstrap.start(startupProperties);
-                } catch (Exception e) {
-                    log.error("Netty startup failed!", e);
-                    System.exit(1);
-                }
-            }
-        });
+        final NettyServerBootstrap nettyServerBootstrap = new NettyServerBootstrap(applicationContext);
+        try {
+            nettyServerBootstrap.start(startupProperties);
+        } catch (Exception e) {
+            log.error("Netty startup failed!", e);
+            System.exit(1);
+        }
         return nettyServerBootstrap;
     }
 

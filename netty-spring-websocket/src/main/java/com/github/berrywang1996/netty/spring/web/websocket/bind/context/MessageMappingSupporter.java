@@ -14,15 +14,29 @@
  * limitations under the License.
  */
 
-package com.github.berrywang1996.netty.spring.boot.configure;
+package com.github.berrywang1996.netty.spring.web.websocket.bind.context;
 
+import com.github.berrywang1996.netty.spring.web.context.MappingSupporter;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
-import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.ApplicationContext;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * @author berrywang1996
  * @since V1.0.0
  */
-@ConfigurationProperties(prefix = "server.netty")
-public class NettyServerStartupPropertiesWrapper extends NettyServerStartupProperties {
+public class MessageMappingSupporter implements MappingSupporter<MessageMappingResolver> {
+
+    @Override
+    public Map<String, MessageMappingResolver> initMappingResolverMap(NettyServerStartupProperties startupProperties,
+                                                                      ApplicationContext applicationContext) {
+
+        HashMap<String, MessageMappingResolver> resolverMap = new HashMap<>();
+
+
+        return resolverMap;
+    }
+
 }

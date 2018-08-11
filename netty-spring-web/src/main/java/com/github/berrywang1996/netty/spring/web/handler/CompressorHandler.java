@@ -27,7 +27,7 @@ import java.util.Set;
 
 /**
  * @author berrywang1996
- * @version V1.0.0
+ * @since V1.0.0
  */
 public class CompressorHandler extends HttpContentCompressor {
 

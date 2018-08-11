@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
-package com.github.berrywang1996.netty.spring.web.handler;
+package com.github.berrywang1996.netty.spring.web.context;
 
+import com.github.berrywang1996.netty.spring.web.handler.CompressorHandler;
+import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.socket.SocketChannel;
@@ -29,15 +31,18 @@ import java.io.File;
 
 /**
  * @author berrywang1996
- * @version V1.0.0
+ * @since V1.0.0
  */
 public class ChannelInitializer extends io.netty.channel.ChannelInitializer<SocketChannel> {
 
     private NettyServerBootstrap nettyServerBootstrap;
 
+    private WebMappingSupporter supporter;
+
     private SslContext sslCtx = null;
 
     public ChannelInitializer(NettyServerBootstrap nettyServerBootstrap) throws Exception {
+
         this.nettyServerBootstrap = nettyServerBootstrap;
 
         // Configure SSL
@@ -47,6 +52,12 @@ public class ChannelInitializer extends io.netty.channel.ChannelInitializer<Sock
             File privateKeyFile = new File(nettyServerBootstrap.getStartupProperties().getSsl().getCertificate());
             sslCtx = SslContextBuilder.forServer(certificateFile, privateKeyFile).build();
         }
+
+        // Runtime supporter
+        supporter = new WebMappingSupporter(
+                nettyServerBootstrap.getStartupProperties(),
+                nettyServerBootstrap.getApplicationContext());
+
     }
 
     @Override
@@ -67,7 +78,7 @@ public class ChannelInitializer extends io.netty.channel.ChannelInitializer<Sock
         }
         p.addLast(new HttpObjectAggregator(65536));
         p.addLast(new ChunkedWriteHandler());
-        p.addLast(new ServiceHandler(new MappingRuntimeSupporter(nettyServerBootstrap.getStartupProperties())));
+        p.addLast(new ServiceHandler(supporter));
     }
 
 }

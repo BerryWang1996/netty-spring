@@ -14,24 +14,14 @@
  * limitations under the License.
  */
 
-package com.github.berrywang1996.netty.spring.web.mvc.bind.annotation;
-
-import com.github.berrywang1996.netty.spring.web.mvc.consts.HttpRequestMethod;
-
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
+package com.github.berrywang1996.netty.spring.web.websocket.bind.consts;
 
 /**
  * @author berrywang1996
- * @version V1.0.0
+ * @since V1.0.0
  */
-@Target(ElementType.METHOD)
-@Retention(RetentionPolicy.RUNTIME)
-@RequestMapping(method = HttpRequestMethod.DELETE)
-public @interface DelMapping {
+public enum MessageConsumerEndpoint {
 
-    String[] value() default {};
+    ONE, MANY,
 
 }

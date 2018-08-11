@@ -16,7 +16,8 @@
 
 package com.github.berrywang1996.netty.spring.web.startup;
 
-import com.github.berrywang1996.netty.spring.web.handler.ChannelInitializer;
+import com.github.berrywang1996.netty.spring.web.context.ChannelInitializer;
+import com.github.berrywang1996.netty.spring.web.util.DaemonThreadFactory;
 import com.github.berrywang1996.netty.spring.web.util.StartupPropertiesUtil;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.ChannelFuture;
@@ -24,19 +25,33 @@ import io.netty.channel.ChannelOption;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.support.ClassPathXmlApplicationContext;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * @author berrywang1996
- * @version V1.0.0
+ * @since V1.0.0
  */
 @Slf4j
 public final class NettyServerBootstrap {
+
+    public NettyServerBootstrap() {
+    }
+
+    public NettyServerBootstrap(ApplicationContext applicationContext) {
+        this.applicationContext = applicationContext;
+    }
 
     private NioEventLoopGroup bossGroup;
 
     private NioEventLoopGroup workerGroup;
 
     private NettyServerStartupProperties startupProperties;
+
+    private ApplicationContext applicationContext;
 
     /**
      * start server.
@@ -45,34 +60,50 @@ public final class NettyServerBootstrap {
 
         this.startupProperties = startupProperties;
 
+        if (this.applicationContext == null && this.startupProperties.isLoadSpringApplicationContext()) {
+            // load spring application context
+            log.debug("Loading spring application context.");
+            applicationContext = new ClassPathXmlApplicationContext(this.startupProperties.getConfigLocation());
+        }
+
         // check properties
+        log.debug("Checking netty server startup properties.");
         StartupPropertiesUtil.checkProperties(startupProperties);
 
         // start server
         bossGroup = new NioEventLoopGroup();
         workerGroup = new NioEventLoopGroup();
-        try {
-            ServerBootstrap b = new ServerBootstrap();
-            b.option(ChannelOption.SO_BACKLOG, 1024);
-            b.group(bossGroup, workerGroup)
-                    .channel(NioServerSocketChannel.class)
-                    .childHandler(new ChannelInitializer(this));
+        ServerBootstrap b = new ServerBootstrap();
+        b.option(ChannelOption.SO_BACKLOG, 1024);
+        b.group(bossGroup, workerGroup)
+                .channel(NioServerSocketChannel.class)
+                .childHandler(new ChannelInitializer(this));
 
-            ChannelFuture f = b.bind(startupProperties.getPort()).sync();
-            log.info("Netty started on port: {} ", startupProperties.getPort());
+        final ChannelFuture f = b.bind(startupProperties.getPort()).sync();
+        log.info("Netty started on port: {} ", startupProperties.getPort());
 
-            // Wait until the server socket is closed.
-            f.channel().closeFuture().sync();
+        ExecutorService netty = Executors.newCachedThreadPool(new DaemonThreadFactory("netty"));
+        netty.submit(new Runnable() {
+            @Override
+            public void run() {
+                // Wait until the server socket is closed.
+                try {
+                    f.channel().closeFuture().sync();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                } finally {
+                    stop();
+                }
+            }
+        });
 
-        } finally {
-            stop();
-        }
     }
 
     /**
      * Shut down all event loops to terminate all threads.
      */
     public void stop() {
+        log.info("Netty is shutting down.");
         if (bossGroup.isTerminated() || bossGroup.isShutdown() || bossGroup.isShuttingDown()) {
             return;
         }
@@ -86,5 +117,9 @@ public final class NettyServerBootstrap {
 
     public NettyServerStartupProperties getStartupProperties() {
         return startupProperties;
+    }
+
+    public ApplicationContext getApplicationContext() {
+        return applicationContext;
     }
 }

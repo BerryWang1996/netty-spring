@@ -16,6 +16,8 @@
 
 package com.github.berrywang1996.netty.spring.web.handler;
 
+import com.github.berrywang1996.netty.spring.web.context.MappingResolver;
+import com.github.berrywang1996.netty.spring.web.context.WebMappingSupporter;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.FullHttpRequest;
@@ -24,14 +26,14 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * @author berrywang1996
- * @version V1.0.0
+ * @since V1.0.0
  */
 @Slf4j
 public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
-    private MappingRuntimeSupporter mappingRuntimeSupporter;
+    private WebMappingSupporter mappingRuntimeSupporter;
 
-    public ServiceHandler(MappingRuntimeSupporter mappingRuntimeSupporter) {
+    public ServiceHandler(WebMappingSupporter mappingRuntimeSupporter) {
         this.mappingRuntimeSupporter = mappingRuntimeSupporter;
     }
 
@@ -41,8 +43,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         if (msg instanceof FullHttpRequest) {
 
             FullHttpRequest request = (FullHttpRequest) msg;
-            String baseUri = request.uri();
-            MappingResolver mappingResolver = mappingRuntimeSupporter.getMappingResolverMap().get(baseUri);
+            MappingResolver mappingResolver = getMappingResolver(getBaseUri(request));
 
             if (mappingResolver != null) {
                 // if mapped
@@ -54,6 +55,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
         } else if (msg instanceof WebSocketFrame) {
 
+            // TODO
             WebSocketFrame webSocketFrame = (WebSocketFrame) msg;
 
         }
@@ -62,6 +64,14 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
     private void handleFile(ChannelHandlerContext ctx, FullHttpRequest msg) {
 
+    }
+
+    private String getBaseUri(FullHttpRequest request) {
+        return request.uri();
+    }
+
+    private MappingResolver getMappingResolver(String uri) {
+        return mappingRuntimeSupporter.getMappingResolverMap().get(uri);
     }
 
 }

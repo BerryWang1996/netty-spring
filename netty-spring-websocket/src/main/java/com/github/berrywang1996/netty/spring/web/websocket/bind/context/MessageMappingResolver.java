@@ -14,11 +14,27 @@
  * limitations under the License.
  */
 
-package com.github.berrywang1996.netty.spring.web.mvc.handler;
+package com.github.berrywang1996.netty.spring.web.websocket.bind.context;
+
+import com.github.berrywang1996.netty.spring.web.context.MappingResolver;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.handler.codec.http.websocketx.WebSocketFrame;
+
+import java.lang.reflect.Method;
 
 /**
  * @author berrywang1996
- * @version V1.0.0
+ * @since V1.0.0
  */
-public class RequestMappingRuntimeSupporter {
+public class MessageMappingResolver extends MappingResolver<WebSocketFrame> {
+
+    public MessageMappingResolver(String url, Method method, Object invokeRef) {
+        super(url, method, invokeRef);
+    }
+
+    @Override
+    public void resolve(ChannelHandlerContext ctx, WebSocketFrame msg) {
+
+    }
+
 }

@@ -17,20 +17,22 @@
 package com.github.berrywang1996.netty.spring.web.util;
 
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
-import com.sun.istack.internal.NotNull;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.File;
 
 /**
  * @author berrywang1996
- * @version V1.0.0
+ * @since V1.0.0
  */
 @Slf4j
 public class StartupPropertiesUtil {
 
-    public static void checkProperties(@NotNull NettyServerStartupProperties properties) throws Exception {
+    public static void checkProperties(NettyServerStartupProperties properties) throws Exception {
 
+        if (properties == null) {
+            throw new NullPointerException("Netty server startup properties properties name should not null.");
+        }
         if (StringUtil.isBlank(properties.getApplicationName())) {
             throw new IllegalArgumentException("Netty application name should not blank.");
         }

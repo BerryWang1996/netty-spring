@@ -18,7 +18,7 @@ package com.github.berrywang1996.netty.spring.web.util;
 
 /**
  * @author berrywang1996
- * @version V1.0.0
+ * @since V1.0.0
  */
 public class ClassUtil {
 
@@ -32,6 +32,11 @@ public class ClassUtil {
     }
 
     public static Object newInstance(String className) {
-        return null;
+        try {
+            return Class.forName(className).newInstance();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
     }
 }

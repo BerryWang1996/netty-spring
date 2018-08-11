@@ -18,7 +18,7 @@ package com.github.berrywang1996.netty.spring.web.mvc.consts;
 
 /**
  * @author berrywang1996
- * @version V1.0.0
+ * @since V1.0.0
  */
 public enum HttpRequestMethod {
 

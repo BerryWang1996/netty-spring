@@ -14,14 +14,20 @@
  * limitations under the License.
  */
 
-package com.github.berrywang1996.netty.spring.web.socket.bind.consts;
+package com.github.berrywang1996.netty.spring.web.context;
+
+import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
+import org.springframework.context.ApplicationContext;
+
+import java.util.Map;
 
 /**
  * @author berrywang1996
- * @version V1.0.0
+ * @since V1.0.0
  */
-public enum MessageProducerEndpoint {
+public interface MappingSupporter<T extends MappingResolver> {
 
-    ONE, SERVICE
+    Map<String, T> initMappingResolverMap(NettyServerStartupProperties startupProperties,
+                                          ApplicationContext applicationContext);
 
 }

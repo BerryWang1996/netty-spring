@@ -21,7 +21,7 @@ import java.io.IOException;
 
 /**
  * @author berrywang1996
- * @version V1.0.0
+ * @since V1.0.0
  */
 public class NettyServerStartupProperties {
 

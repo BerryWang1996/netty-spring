@@ -14,20 +14,14 @@
  * limitations under the License.
  */
 
-package com.github.berrywang1996.netty.spring.web.socket.bind.handler;
-
-import com.github.berrywang1996.netty.spring.web.handler.MappingResolver;
-import io.netty.channel.ChannelHandlerContext;
+package com.github.berrywang1996.netty.spring.web.websocket.bind.consts;
 
 /**
  * @author berrywang1996
- * @version V1.0.0
+ * @since V1.0.0
  */
-public class MessageMappingResolver extends MappingResolver {
+public enum MessageProducerEndpoint {
 
-    @Override
-    public void resolve(ChannelHandlerContext ctx, Object msg) {
-
-    }
+    ONE, SERVICE
 
 }
