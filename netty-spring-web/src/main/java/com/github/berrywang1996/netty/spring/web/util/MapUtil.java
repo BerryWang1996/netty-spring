@@ -5,8 +5,8 @@ import com.github.berrywang1996.netty.spring.web.exception.DuplicateKeyException
 import java.util.Map;
 
 /**
- * @Author: 王伯瑞
- * @Date: 2018/8/11 15:30
+ * @author berrywang1996
+ * @since V1.0.0
  */
 public class MapUtil {
 

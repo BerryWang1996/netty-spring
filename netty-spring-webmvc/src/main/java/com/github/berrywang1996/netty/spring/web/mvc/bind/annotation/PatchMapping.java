@@ -6,8 +6,8 @@ import org.springframework.core.annotation.AliasFor;
 import java.lang.annotation.*;
 
 /**
- * @Author: 王伯瑞
- * @Date: 2018/8/11 14:13
+ * @author berrywang1996
+ * @since V1.0.0
  */
 @Documented
 @Target(ElementType.METHOD)

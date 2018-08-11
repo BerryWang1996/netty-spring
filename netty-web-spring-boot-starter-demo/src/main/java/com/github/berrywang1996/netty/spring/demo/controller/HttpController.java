@@ -6,10 +6,6 @@ import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestMapp
 import com.github.berrywang1996.netty.spring.web.mvc.consts.HttpRequestMethod;
 import org.springframework.stereotype.Controller;
 
-/**
- * @Author: 王伯瑞
- * @Date: 2018/8/11 13:48
- */
 @Controller
 public class HttpController {
 
