@@ -35,15 +35,10 @@ import java.util.Map;
 @Getter
 public class WebMappingSupporter implements MappingSupporter {
 
-    private static final String REQUEST_MAPPING_CLASS =
-            "com.github.berrywang1996.netty.spring.web.mvc.context.RequestMappingSupporter";
-
-    private static final String MESSAGE_MAPPING_CLASS =
-            "com.github.berrywang1996.netty.spring.web.websocket.bind.context.MessageMappingSupporter";
-
-    private final boolean initRequestMappingResolver = ClassUtil.isPresent(REQUEST_MAPPING_CLASS);
-
-    private final boolean initMessageMappingResolver = ClassUtil.isPresent(MESSAGE_MAPPING_CLASS);
+    private static final String[] DEFAULT_MAPPING_CLASSES =
+            new String[]{
+                    "com.github.berrywang1996.netty.spring.web.mvc.context.RequestMappingSupporter",
+                    "com.github.berrywang1996.netty.spring.web.websocket.bind.context.MessageMappingSupporter"};
 
     private final NettyServerStartupProperties startupProperties;
 
@@ -62,29 +57,17 @@ public class WebMappingSupporter implements MappingSupporter {
     @Override
     public Map<String, ? extends MappingResolver> initMappingResolverMap(NettyServerStartupProperties startupProperties, ApplicationContext applicationContext) {
         Map<String, MappingResolver> mappingResolverMap = new HashMap<>();
-        if (initRequestMappingResolver) {
-            Map<String, ? extends MappingResolver> resolverMap = initRequestMappingResolverMap(startupProperties,
-                    applicationContext);
-            MapUtil.checkDuplicateKey(mappingResolverMap, resolverMap);
-            mappingResolverMap.putAll(resolverMap);
-        }
-        if (initMessageMappingResolver) {
-            Map<String, ? extends MappingResolver> resolverMap = initMessageMappingResolverMap(startupProperties,
-                    applicationContext);
-            MapUtil.checkDuplicateKey(mappingResolverMap, resolverMap);
-            mappingResolverMap.putAll(resolverMap);
+        for (String mappingClass : DEFAULT_MAPPING_CLASSES) {
+            if (ClassUtil.isPresent(mappingClass)) {
+                log.debug("Init mapping supporter {}", mappingClass);
+                MappingSupporter supporter = (MappingSupporter) ClassUtil.newInstance(mappingClass);
+                Map<String, ? extends MappingResolver> resolverMap =
+                        supporter.initMappingResolverMap(startupProperties, applicationContext);
+                MapUtil.checkDuplicateKey(mappingResolverMap, resolverMap);
+                mappingResolverMap.putAll(resolverMap);
+            }
         }
         return mappingResolverMap;
-    }
-
-    private Map<String, ? extends MappingResolver> initRequestMappingResolverMap(NettyServerStartupProperties startupProperties, ApplicationContext applicationContext) {
-        MappingSupporter supporter = (MappingSupporter) ClassUtil.newInstance(REQUEST_MAPPING_CLASS);
-        return supporter.initMappingResolverMap(startupProperties, applicationContext);
-    }
-
-    private Map<String, ? extends MappingResolver> initMessageMappingResolverMap(NettyServerStartupProperties startupProperties, ApplicationContext applicationContext) {
-        MappingSupporter supporter = (MappingSupporter) ClassUtil.newInstance(MESSAGE_MAPPING_CLASS);
-        return supporter.initMappingResolverMap(startupProperties, applicationContext);
     }
 
 }

@@ -25,6 +25,7 @@ import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.stereotype.Controller;
 
 import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -60,19 +61,43 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
 
                 RequestMapping annotation = AnnotatedElementUtils.findMergedAnnotation(method, RequestMapping.class);
                 if (annotation != null) {
-                    mapRequestMappingResolver(annotation, method);
+
+                    // check port
+                    if (annotation.port().length != 0) {
+                        boolean notMap = true;
+                        int[] ports = annotation.port();
+                        for (int port : ports) {
+                            if (port == this.startupProperties.getPort()) {
+                                notMap = false;
+                                break;
+                            }
+                        }
+                        if (notMap) {
+                            continue;
+                        }
+                    }
+
+                    // map
+                    log.info("Mapping {{}{}} onto {}",
+                            Arrays.toString(annotation.value()),
+                            annotation.method().length > 0 ? ",method=" + Arrays.toString(annotation.method()) : "",
+                            method);
+
+                    RequestMappingResolver resolver =
+                            new RequestMappingResolver(method, controllerBean, Arrays.asList(annotation.method()));
+
+                    for (String url : annotation.value()) {
+                        if (this.resolverMap.containsKey(url)) {
+                            throw new IllegalStateException("Ambiguous mapping uri \"" + url + "\". Cannot map method" +
+                                    " " + method);
+                        }
+                        this.resolverMap.put(url, resolver);
+                    }
                 }
             }
         }
 
         return resolverMap;
-    }
-
-    private void mapRequestMappingResolver(RequestMapping annotation, Method method) {
-
-        log.info("Mapping {} {} onto {}", annotation.value(), annotation.method(), method);
-
-        // TODO
     }
 
 }

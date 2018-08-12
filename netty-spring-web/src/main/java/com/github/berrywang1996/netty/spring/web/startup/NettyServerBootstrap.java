@@ -103,6 +103,9 @@ public final class NettyServerBootstrap {
      * Shut down all event loops to terminate all threads.
      */
     public void stop() {
+
+        // TODO 优雅退出
+
         log.info("Netty is shutting down.");
         if (bossGroup.isTerminated() || bossGroup.isShutdown() || bossGroup.isShuttingDown()) {
             return;

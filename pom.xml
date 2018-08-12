@@ -43,6 +43,7 @@
         <netty.version>4.1.28.Final</netty.version>
         <spring.version>4.3.16.RELEASE</spring.version>
         <spring-boot.version>1.5.15.RELEASE</spring-boot.version>
+        <jackson.version>2.9.6</jackson.version>
         <!-- log -->
         <slf4j.version>1.7.25</slf4j.version>
         <logback.version>1.2.3</logback.version>
@@ -80,6 +81,13 @@
                 <groupId>org.springframework</groupId>
                 <artifactId>spring-context</artifactId>
                 <version>${spring.version}</version>
+            </dependency>
+
+            <!-- json -->
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson.version}</version>
             </dependency>
 
         </dependencies>

@@ -30,17 +30,14 @@ import java.util.Map;
  */
 public abstract class MappingResolver<T> {
 
-    private final String url;
-
     private final Method method;
 
     private final Object invokeRef;
 
     private final Map<String, Class> methodParams;
 
-    public MappingResolver(String url, Method method, Object invokeRef) {
+    public MappingResolver(Method method, Object invokeRef) {
 
-        this.url = url;
         this.method = method;
         this.invokeRef = invokeRef;
 
@@ -55,10 +52,6 @@ public abstract class MappingResolver<T> {
             }
         }
         this.methodParams = Collections.unmodifiableMap(methodParams);
-    }
-
-    public String getUrl() {
-        return url;
     }
 
     public Method getMethod() {

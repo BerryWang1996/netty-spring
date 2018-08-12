@@ -28,8 +28,8 @@ import java.lang.reflect.Method;
  */
 public class MessageMappingResolver extends MappingResolver<WebSocketFrame> {
 
-    public MessageMappingResolver(String url, Method method, Object invokeRef) {
-        super(url, method, invokeRef);
+    public MessageMappingResolver(Method method, Object invokeRef) {
+        super(method, invokeRef);
     }
 
     @Override

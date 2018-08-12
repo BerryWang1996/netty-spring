@@ -32,13 +32,24 @@ public class RequestMappingResolver extends MappingResolver<FullHttpRequest> {
 
     private final List<HttpRequestMethod> requestMethods;
 
-    public RequestMappingResolver(String url, Method method, Object invokeRef, List<HttpRequestMethod> requestMethods) {
-        super(url, method, invokeRef);
+    public RequestMappingResolver(Method method, Object invokeRef, List<HttpRequestMethod> requestMethods) {
+        super(method, invokeRef);
         this.requestMethods = requestMethods;
     }
 
     @Override
     public void resolve(ChannelHandlerContext ctx, FullHttpRequest msg) {
+
+        // TODO check request method
+
+        // TODO request data bind
+
+        // TODO validate data
+
+        // TODO invoke method reference
+
+        // TODO handle return value
+
 
     }
 
