@@ -67,6 +67,9 @@ public class WebMappingSupporter implements MappingSupporter {
                 mappingResolverMap.putAll(resolverMap);
             }
         }
+        if (mappingResolverMap.size() == 0) {
+            log.warn("No mapping resolvers are mapped.");
+        }
         return mappingResolverMap;
     }
 
