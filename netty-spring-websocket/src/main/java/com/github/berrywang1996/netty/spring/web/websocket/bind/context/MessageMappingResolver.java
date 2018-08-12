@@ -18,7 +18,8 @@ package com.github.berrywang1996.netty.spring.web.websocket.bind.context;
 
 import com.github.berrywang1996.netty.spring.web.context.MappingResolver;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.handler.codec.http.websocketx.WebSocketFrame;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.websocketx.*;
 
 import java.lang.reflect.Method;
 
@@ -26,14 +27,44 @@ import java.lang.reflect.Method;
  * @author berrywang1996
  * @since V1.0.0
  */
-public class MessageMappingResolver extends MappingResolver<WebSocketFrame> {
+public class MessageMappingResolver extends MappingResolver<Object> {
 
     public MessageMappingResolver(Method method, Object invokeRef) {
         super(method, invokeRef);
     }
 
     @Override
-    public void resolve(ChannelHandlerContext ctx, WebSocketFrame msg) {
+    public void resolve(ChannelHandlerContext ctx, Object msg) {
+
+        if (msg instanceof FullHttpRequest) {
+
+            // update websocket if headers contain Upgrade header
+
+        } else if (msg instanceof WebSocketFrame) {
+
+            if (msg instanceof CloseWebSocketFrame) {
+
+                CloseWebSocketFrame webSocketFrame = (CloseWebSocketFrame) msg;
+
+            } else if (msg instanceof PingWebSocketFrame) {
+
+                PingWebSocketFrame webSocketFrame = (PingWebSocketFrame) msg;
+
+            } else if (msg instanceof TextWebSocketFrame) {
+
+                TextWebSocketFrame webSocketFrame = (TextWebSocketFrame) msg;
+
+            } else if (msg instanceof BinaryWebSocketFrame) {
+
+                BinaryWebSocketFrame webSocketFrame = (BinaryWebSocketFrame) msg;
+
+            } else if (msg instanceof ContinuationWebSocketFrame) {
+
+                ContinuationWebSocketFrame webSocketFrame = (ContinuationWebSocketFrame) msg;
+
+            }
+
+        }
 
     }
 

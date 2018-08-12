@@ -25,9 +25,7 @@ import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.stereotype.Controller;
 
 import java.lang.reflect.Method;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 /**
  * @author berrywang1996
@@ -77,16 +75,19 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
                         }
                     }
 
+                    // get mapping url
+                    List<String> mappingUrls = getMappingUrls(method);
+
                     // map
                     log.info("Mapping {{}{}} onto {}",
-                            Arrays.toString(annotation.value()),
+                            mappingUrls,
                             annotation.method().length > 0 ? ",method=" + Arrays.toString(annotation.method()) : "",
                             method);
 
                     RequestMappingResolver resolver =
                             new RequestMappingResolver(method, controllerBean, Arrays.asList(annotation.method()));
 
-                    for (String url : annotation.value()) {
+                    for (String url : mappingUrls) {
                         if (this.resolverMap.containsKey(url)) {
                             throw new IllegalStateException("Ambiguous mapping uri \"" + url + "\". Cannot map method" +
                                     " " + method);
@@ -98,6 +99,53 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
         }
 
         return resolverMap;
+    }
+
+    private List<String> getMappingUrls(Method method) {
+
+        List<String> urls = new ArrayList<>();
+
+        RequestMapping methodAnno =
+                AnnotatedElementUtils.findMergedAnnotation(method, RequestMapping.class);
+        String[] methodUrls = getAnnotationUrls(methodAnno);
+
+        RequestMapping clzAnno =
+                AnnotatedElementUtils.findMergedAnnotation(method.getDeclaringClass(), RequestMapping.class);
+        String[] clzUrls = getAnnotationUrls(clzAnno);
+
+        for (String methodUrl : methodUrls) {
+            if (clzUrls.length > 0) {
+                for (String clzUrl : clzUrls) {
+                    urls.add(fixUrl(fixUrl(clzUrl) + fixUrl(methodUrl)));
+                }
+            } else {
+                urls.add(fixUrl(methodUrl));
+            }
+        }
+        return urls;
+    }
+
+    private static String[] getAnnotationUrls(RequestMapping methodAnno) {
+        if (methodAnno == null) {
+            return new String[0];
+        }
+        return methodAnno.value();
+    }
+
+    private static String fixUrl(String url) {
+        return "/" + cleanUrl(url);
+    }
+
+    private static String cleanUrl(String url) {
+        if (url.endsWith("/")) {
+            url = url.substring(0, url.lastIndexOf("/"));
+            url = cleanUrl(url);
+        }
+        if (url.startsWith("/")) {
+            url = url.substring(url.indexOf("/") + 1);
+            url = cleanUrl(url);
+        }
+        return url;
     }
 
 }
