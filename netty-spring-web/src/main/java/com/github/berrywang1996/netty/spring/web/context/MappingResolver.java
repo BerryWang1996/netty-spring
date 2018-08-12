@@ -18,52 +18,76 @@ package com.github.berrywang1996.netty.spring.web.context;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.springframework.core.LocalVariableTableParameterNameDiscoverer;
+import org.springframework.util.PathMatcher;
 
 import java.lang.reflect.Method;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.*;
 
 /**
  * @author berrywang1996
  * @since V1.0.0
  */
-public abstract class MappingResolver<T> {
+public abstract class MappingResolver<T, K> {
 
-    private final Method method;
+    private final Map<K, Method> methods;
+
+    private final Map<K, Map<String, Class>> methodParamTypes;
 
     private final Object invokeRef;
 
-    private final Map<String, Class> methodParams;
+    private PathMatcher pathMatcher;
 
-    public MappingResolver(Method method, Object invokeRef) {
+    public MappingResolver(Map<K, Method> methods, Object invokeRef) {
 
-        this.method = method;
+        this.methods = Collections.unmodifiableMap(methods);
         this.invokeRef = invokeRef;
 
         // parse method parameters
-        LinkedHashMap<String, Class> methodParams = new LinkedHashMap<>();
-        LocalVariableTableParameterNameDiscoverer u = new LocalVariableTableParameterNameDiscoverer();
-        String[] params = u.getParameterNames(method);
-        Class<?>[] parameterTypes = method.getParameterTypes();
-        if (params != null && parameterTypes.length == params.length) {
-            for (int i = 0; i < params.length; i++) {
-                methodParams.put(params[i], parameterTypes[i]);
+        Map<K, Map<String, Class>> tempMethodParamTypes = new HashMap<>();
+        for (Map.Entry<K, Method> kMethodEntry : methods.entrySet()) {
+            LinkedHashMap<String, Class> methodParams = new LinkedHashMap<>();
+            LocalVariableTableParameterNameDiscoverer u = new LocalVariableTableParameterNameDiscoverer();
+            String[] params = u.getParameterNames(kMethodEntry.getValue());
+            Class<?>[] parameterTypes = kMethodEntry.getValue().getParameterTypes();
+            if (params != null && parameterTypes.length == params.length) {
+                for (int i = 0; i < params.length; i++) {
+                    methodParams.put(params[i], parameterTypes[i]);
+                }
             }
+            tempMethodParamTypes.put(kMethodEntry.getKey(), methodParams);
         }
-        this.methodParams = Collections.unmodifiableMap(methodParams);
+        this.methodParamTypes = Collections.unmodifiableMap(tempMethodParamTypes);
     }
 
-    public Method getMethod() {
-        return method;
+    public Map<K, Method> getMethods() {
+        return methods;
+    }
+
+    public Method getMethod(K key) {
+        return methods.get(key);
+    }
+
+    public Map<String, Class> getMethodParamType(K key) {
+        return methodParamTypes.get(key);
+    }
+
+    public Set<K> getMethodKey() {
+        if (methods == null) {
+            return null;
+        }
+        return methods.keySet();
     }
 
     public Object getInvokeRef() {
         return invokeRef;
     }
 
-    public Map<String, Class> getMethodParams() {
-        return methodParams;
+    public PathMatcher getPathMatcher() {
+        return pathMatcher;
+    }
+
+    public void setPathMatcher(PathMatcher pathMatcher) {
+        this.pathMatcher = pathMatcher;
     }
 
     public abstract void resolve(ChannelHandlerContext ctx, T msg);

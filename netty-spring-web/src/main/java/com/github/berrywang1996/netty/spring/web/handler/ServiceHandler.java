@@ -23,6 +23,8 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.AntPathMatcher;
+import org.springframework.util.PathMatcher;
 
 /**
  * @author berrywang1996
@@ -33,8 +35,11 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
     private WebMappingSupporter mappingRuntimeSupporter;
 
+    private PathMatcher pathMatcher;
+
     public ServiceHandler(WebMappingSupporter mappingRuntimeSupporter) {
         this.mappingRuntimeSupporter = mappingRuntimeSupporter;
+        this.pathMatcher = new AntPathMatcher();
     }
 
     @Override
@@ -43,7 +48,10 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         if (msg instanceof FullHttpRequest) {
 
             FullHttpRequest request = (FullHttpRequest) msg;
-            MappingResolver mappingResolver = getMappingResolver(getBaseUri(request));
+            String baseUri = getBaseUri(request);
+
+            // get mapping resolver
+            MappingResolver mappingResolver = getMappingResolver(baseUri);
 
             if (mappingResolver != null) {
                 // if mapped
@@ -66,12 +74,31 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
     }
 
-    private String getBaseUri(FullHttpRequest request) {
-        return request.uri();
+    private MappingResolver getMappingResolver(String uri) {
+
+        // get resolver from map
+        MappingResolver mappingResolver = mappingRuntimeSupporter.getMappingResolverMap().get(uri);
+
+        // if not mapped, try to match uri
+        if (mappingResolver == null) {
+            for (String key : mappingRuntimeSupporter.getMappingResolverMap().keySet()) {
+                if (pathMatcher.match(key, uri)) {
+                    mappingResolver = mappingRuntimeSupporter.getMappingResolverMap().get(key);
+                    mappingResolver.setPathMatcher(pathMatcher);
+                    break;
+                }
+            }
+        }
+
+        return mappingResolver;
     }
 
-    private MappingResolver getMappingResolver(String uri) {
-        return mappingRuntimeSupporter.getMappingResolverMap().get(uri);
+    private static String getBaseUri(FullHttpRequest request) {
+        String uri = request.uri();
+        if (uri.contains("&")) {
+            return uri;
+        }
+        return uri.substring(0, uri.indexOf("&"));
     }
 
 }

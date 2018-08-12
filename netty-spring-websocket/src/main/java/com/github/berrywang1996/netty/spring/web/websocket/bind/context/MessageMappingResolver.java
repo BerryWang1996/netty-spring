@@ -22,15 +22,16 @@ import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.websocketx.*;
 
 import java.lang.reflect.Method;
+import java.util.Map;
 
 /**
  * @author berrywang1996
  * @since V1.0.0
  */
-public class MessageMappingResolver extends MappingResolver<Object> {
+public class MessageMappingResolver extends MappingResolver<Object, String> {
 
-    public MessageMappingResolver(Method method, Object invokeRef) {
-        super(method, invokeRef);
+    public MessageMappingResolver(Map<String, Method> methods, Object invokeRef) {
+        super(methods, invokeRef);
     }
 
     @Override

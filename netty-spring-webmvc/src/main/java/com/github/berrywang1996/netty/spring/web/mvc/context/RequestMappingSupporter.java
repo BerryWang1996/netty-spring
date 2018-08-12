@@ -18,6 +18,7 @@ package com.github.berrywang1996.netty.spring.web.mvc.context;
 
 import com.github.berrywang1996.netty.spring.web.context.MappingSupporter;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestMapping;
+import com.github.berrywang1996.netty.spring.web.mvc.consts.HttpRequestMethod;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
@@ -84,15 +85,50 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
                             annotation.method().length > 0 ? ",method=" + Arrays.toString(annotation.method()) : "",
                             method);
 
-                    RequestMappingResolver resolver =
-                            new RequestMappingResolver(method, controllerBean, Arrays.asList(annotation.method()));
 
                     for (String url : mappingUrls) {
                         if (this.resolverMap.containsKey(url)) {
-                            throw new IllegalStateException("Ambiguous mapping uri \"" + url + "\". Cannot map method" +
-                                    " " + method);
+                            RequestMappingResolver resolver = this.resolverMap.get(url);
+                            // if url is mapped and http request method is duplicate, throw exception.
+                            boolean isAmbiguous = false;
+                            if (annotation.method().length == 0 || resolver.getMethodKey().size() == 0) {
+                                // if request method not set, apply all request methods, so it is ambiguous
+                                isAmbiguous = true;
+                            } else {
+                                Set<HttpRequestMethod> methodKey = resolver.getMethodKey();
+                                for (HttpRequestMethod httpRequestMethod : annotation.method()) {
+                                    if (methodKey.contains(httpRequestMethod)) {
+                                        isAmbiguous = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (isAmbiguous) {
+                                throw new IllegalStateException("Ambiguous mapping uri \"" + url + "\". Cannot map " +
+                                        "method " + method);
+                            }
+                            // if url already mapped, clone method Map and put new resolver
+                            Map<HttpRequestMethod, Method> methodMap = new HashMap<>(resolver.getMethods());
+                            if (annotation.method().length == 0) {
+                                // if request method not set, apply all request methods
+                                for (HttpRequestMethod httpRequestMethod : annotation.method()) {
+                                    // TODO how to distinguish apply all request methods?
+                                    methodMap.put(httpRequestMethod, method);
+                                }
+                            } else {
+                                for (HttpRequestMethod httpRequestMethod : annotation.method()) {
+                                    methodMap.put(httpRequestMethod, method);
+                                }
+                            }
+                            this.resolverMap.put(url, new RequestMappingResolver(methodMap, controllerBean));
+                        } else {
+                            // if url not mapped, create new resolver map
+                            Map<HttpRequestMethod, Method> methodMap = new HashMap<>();
+                            for (HttpRequestMethod httpRequestMethod : annotation.method()) {
+                                methodMap.put(httpRequestMethod, method);
+                            }
+                            this.resolverMap.put(url, new RequestMappingResolver(methodMap, controllerBean));
                         }
-                        this.resolverMap.put(url, resolver);
                     }
                 }
             }
@@ -116,10 +152,10 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
         for (String methodUrl : methodUrls) {
             if (clzUrls.length > 0) {
                 for (String clzUrl : clzUrls) {
-                    urls.add(fixUrl(fixUrl(clzUrl) + fixUrl(methodUrl)));
+                    urls.add(clzUrl + methodUrl);
                 }
             } else {
-                urls.add(fixUrl(methodUrl));
+                urls.add(methodUrl);
             }
         }
         return urls;
@@ -130,22 +166,6 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
             return new String[0];
         }
         return methodAnno.value();
-    }
-
-    private static String fixUrl(String url) {
-        return "/" + cleanUrl(url);
-    }
-
-    private static String cleanUrl(String url) {
-        if (url.endsWith("/")) {
-            url = url.substring(0, url.lastIndexOf("/"));
-            url = cleanUrl(url);
-        }
-        if (url.startsWith("/")) {
-            url = url.substring(url.indexOf("/") + 1);
-            url = cleanUrl(url);
-        }
-        return url;
     }
 
 }

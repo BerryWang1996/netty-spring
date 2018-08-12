@@ -22,25 +22,27 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.FullHttpRequest;
 
 import java.lang.reflect.Method;
-import java.util.List;
+import java.util.Map;
 
 /**
  * @author berrywang1996
  * @since V1.0.0
  */
-public class RequestMappingResolver extends MappingResolver<FullHttpRequest> {
+public class RequestMappingResolver extends MappingResolver<FullHttpRequest, HttpRequestMethod> {
 
-    private final List<HttpRequestMethod> requestMethods;
-
-    public RequestMappingResolver(Method method, Object invokeRef, List<HttpRequestMethod> requestMethods) {
-        super(method, invokeRef);
-        this.requestMethods = requestMethods;
+    public RequestMappingResolver(Map<HttpRequestMethod, Method> methods,
+                                  Object invokeRef) {
+        super(methods, invokeRef);
     }
 
     @Override
     public void resolve(ChannelHandlerContext ctx, FullHttpRequest msg) {
 
         // TODO check request method
+        Method method = getMethod(HttpRequestMethod.getInstance(msg.method().name()));
+        if (method == null) {
+            System.out.println("request method is not allowed");
+        }
 
         // TODO request data bind
 
