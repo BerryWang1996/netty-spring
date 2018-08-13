@@ -39,4 +39,14 @@ public class ClassUtil {
             return null;
         }
     }
+
+    public static <T> T newInstance(Class<T> clz) {
+        try {
+            return clz.newInstance();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
 }
