@@ -81,7 +81,9 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
                     ServiceHandlerUtil.sendError(ctx, request, errorMsg);
                     return;
                 }
-                String localPath = this.mappingRuntimeSupporter.getStartupProperties().getInfoLocation() + baseUri;
+                String localPath = this.mappingRuntimeSupporter.getStartupProperties().getRootLocation() + baseUri;
+                localPath = localPath.replace("/", File.separator);
+                System.out.println(localPath);
                 handleFile(ctx, (FullHttpRequest) msg, localPath);
             }
 
