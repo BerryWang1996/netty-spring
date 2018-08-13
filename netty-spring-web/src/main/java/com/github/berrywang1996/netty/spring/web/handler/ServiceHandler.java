@@ -18,13 +18,26 @@ package com.github.berrywang1996.netty.spring.web.handler;
 
 import com.github.berrywang1996.netty.spring.web.context.MappingResolver;
 import com.github.berrywang1996.netty.spring.web.context.WebMappingSupporter;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.handler.codec.http.FullHttpRequest;
+import com.github.berrywang1996.netty.spring.web.util.ServiceHandlerUtil;
+import com.github.berrywang1996.netty.spring.web.util.StringUtil;
+import io.netty.channel.*;
+import io.netty.handler.codec.http.*;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
+import io.netty.handler.ssl.SslHandler;
+import io.netty.handler.stream.ChunkedFile;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.util.PathMatcher;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.RandomAccessFile;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+
+import static io.netty.handler.codec.http.HttpResponseStatus.OK;
+import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
 /**
  * @author berrywang1996
@@ -58,7 +71,18 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
                 mappingResolver.resolve(ctx, msg);
             } else {
                 // if not mapped, may be request a file
-                handleFile(ctx, (FullHttpRequest) msg);
+                if (StringUtil.isBlank(baseUri) || "/".equals(baseUri)) {
+                    ServiceHandlerUtil.HttpErrorMessage errorMsg =
+                            new ServiceHandlerUtil.HttpErrorMessage(
+                                    HttpResponseStatus.FORBIDDEN,
+                                    request.uri(),
+                                    null,
+                                    null);
+                    ServiceHandlerUtil.sendError(ctx, request, errorMsg);
+                    return;
+                }
+                String localPath = this.mappingRuntimeSupporter.getStartupProperties().getInfoLocation() + baseUri;
+                handleFile(ctx, (FullHttpRequest) msg, localPath);
             }
 
         } else if (msg instanceof WebSocketFrame) {
@@ -70,8 +94,12 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
     }
 
-    private void handleFile(ChannelHandlerContext ctx, FullHttpRequest msg) {
-
+    @Override
+    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
+        ServiceHandlerUtil.HttpErrorMessage errorMessage =
+                new ServiceHandlerUtil.HttpErrorMessage(HttpResponseStatus.INTERNAL_SERVER_ERROR, null, null, cause);
+        ServiceHandlerUtil.sendError(ctx, null, errorMessage);
+        super.exceptionCaught(ctx, cause);
     }
 
     private MappingResolver getMappingResolver(String uri) {
@@ -93,12 +121,105 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         return mappingResolver;
     }
 
+    private static void handleFile(ChannelHandlerContext ctx, FullHttpRequest msg, String localPath) throws Exception {
+        File file = new File(localPath);
+        if (file.isHidden() || !file.exists() || file.isDirectory() || !file.isFile()) {
+            ServiceHandlerUtil.HttpErrorMessage errorMsg =
+                    new ServiceHandlerUtil.HttpErrorMessage(
+                            HttpResponseStatus.NOT_FOUND,
+                            msg.uri(),
+                            null,
+                            null);
+            ServiceHandlerUtil.sendError(ctx, msg, errorMsg);
+            return;
+        }
+        // Cache Validation
+        String ifModifiedSince = msg.headers().get(HttpHeaderNames.IF_MODIFIED_SINCE);
+        if (ifModifiedSince != null && !ifModifiedSince.isEmpty()) {
+            SimpleDateFormat dateFormatter = new SimpleDateFormat(ServiceHandlerUtil.HTTP_DATE_FORMAT, Locale.US);
+            Date ifModifiedSinceDate = dateFormatter.parse(ifModifiedSince);
+
+            // Only compare up to the second because the datetime format we send to the client
+            // does not have milliseconds
+            long ifModifiedSinceDateSeconds = ifModifiedSinceDate.getTime() / 1000;
+            long fileLastModifiedSeconds = file.lastModified() / 1000;
+            if (ifModifiedSinceDateSeconds == fileLastModifiedSeconds) {
+                ServiceHandlerUtil.sendNotModified(ctx, msg.uri());
+                return;
+            }
+        }
+
+        RandomAccessFile raf;
+        try {
+            raf = new RandomAccessFile(file, "r");
+        } catch (FileNotFoundException ignore) {
+            ServiceHandlerUtil.HttpErrorMessage errorMsg =
+                    new ServiceHandlerUtil.HttpErrorMessage(
+                            HttpResponseStatus.NOT_FOUND,
+                            msg.uri(),
+                            null,
+                            null);
+            ServiceHandlerUtil.sendError(ctx, msg, errorMsg);
+            return;
+        }
+        long fileLength = raf.length();
+
+        HttpResponse response = new DefaultHttpResponse(HTTP_1_1, OK);
+        HttpUtil.setContentLength(response, fileLength);
+        ServiceHandlerUtil.setContentTypeHeader(response, file);
+        ServiceHandlerUtil.setDateAndCacheHeaders(response, file);
+        if (HttpUtil.isKeepAlive(msg)) {
+            response.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE);
+        }
+
+        // Write the initial line and the header.
+        ctx.write(response);
+
+        // Write the content.
+        ChannelFuture sendFileFuture;
+        ChannelFuture lastContentFuture;
+        if (ctx.pipeline().get(SslHandler.class) == null) {
+            sendFileFuture =
+                    ctx.write(new DefaultFileRegion(raf.getChannel(), 0, fileLength), ctx.newProgressivePromise());
+            // Write the end marker.
+            lastContentFuture = ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
+        } else {
+            sendFileFuture =
+                    ctx.writeAndFlush(new HttpChunkedInput(new ChunkedFile(raf, 0, fileLength, 8192)),
+                            ctx.newProgressivePromise());
+            // HttpChunkedInput will write the end marker (LastHttpContent) for us.
+            lastContentFuture = sendFileFuture;
+        }
+
+        sendFileFuture.addListener(new ChannelProgressiveFutureListener() {
+            @Override
+            public void operationProgressed(ChannelProgressiveFuture future, long progress, long total) {
+                if (total < 0) {
+                    log.debug("{} Transfer progress: {}", future.channel(), progress);
+                } else {
+                    log.debug("{} Transfer progress: {} / {}", future.channel(), progress, total);
+                }
+            }
+
+            @Override
+            public void operationComplete(ChannelProgressiveFuture future) {
+                log.debug("{} Transfer complete.", future.channel());
+            }
+        });
+
+        // Decide whether to close the connection or not.
+        if (!HttpUtil.isKeepAlive(msg)) {
+            // Close the connection when the whole content is written out.
+            lastContentFuture.addListener(ChannelFutureListener.CLOSE);
+        }
+    }
+
     private static String getBaseUri(FullHttpRequest request) {
         String uri = request.uri();
-        if (uri.contains("&")) {
+        if (!uri.contains("?")) {
             return uri;
         }
-        return uri.substring(0, uri.indexOf("&"));
+        return uri.substring(0, uri.indexOf("?"));
     }
 
 }

@@ -112,7 +112,6 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
                             if (annotation.method().length == 0) {
                                 // if request method not set, apply all request methods
                                 for (HttpRequestMethod httpRequestMethod : annotation.method()) {
-                                    // TODO how to distinguish apply all request methods?
                                     methodMap.put(httpRequestMethod, method);
                                 }
                             } else {
@@ -120,14 +119,14 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
                                     methodMap.put(httpRequestMethod, method);
                                 }
                             }
-                            this.resolverMap.put(url, new RequestMappingResolver(methodMap, controllerBean));
+                            this.resolverMap.put(url, new RequestMappingResolver(methodMap, controllerBean.getValue()));
                         } else {
                             // if url not mapped, create new resolver map
                             Map<HttpRequestMethod, Method> methodMap = new HashMap<>();
                             for (HttpRequestMethod httpRequestMethod : annotation.method()) {
                                 methodMap.put(httpRequestMethod, method);
                             }
-                            this.resolverMap.put(url, new RequestMappingResolver(methodMap, controllerBean));
+                            this.resolverMap.put(url, new RequestMappingResolver(methodMap, controllerBean.getValue()));
                         }
                     }
                 }

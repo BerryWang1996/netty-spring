@@ -37,7 +37,7 @@ public @interface RequestMapping {
     /**
      * accept http request method
      */
-    HttpRequestMethod[] method() default {};
+    HttpRequestMethod[] method() default {HttpRequestMethod.ALL};
 
     /**
      * port. If port is null, the application will map the method

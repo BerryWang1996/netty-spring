@@ -22,7 +22,7 @@ package com.github.berrywang1996.netty.spring.web.mvc.consts;
  */
 public enum HttpRequestMethod {
 
-    GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE;
+    GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE, ALL;
 
     public static HttpRequestMethod getInstance(String name) {
         switch (name.toUpperCase()) {
@@ -42,6 +42,8 @@ public enum HttpRequestMethod {
                 return OPTIONS;
             case "TRACE":
                 return TRACE;
+            case "ALL":
+                return ALL;
             default:
                 return null;
         }
