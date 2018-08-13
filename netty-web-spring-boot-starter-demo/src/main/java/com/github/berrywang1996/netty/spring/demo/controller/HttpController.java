@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.berrywang1996.netty.spring.demo.domain.Department;
 import com.github.berrywang1996.netty.spring.demo.domain.User;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.GetMapping;
+import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.PathVariable;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestMapping;
+import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestParam;
 import com.github.berrywang1996.netty.spring.web.mvc.context.HttpRequestContext;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -67,6 +69,16 @@ public class HttpController {
             System.out.println(entry.getKey() + "\t\t" + entry.getValue());
         }
         System.out.println(new ObjectMapper().writeValueAsString(Arrays.asList(flag, user, department)));
+    }
+
+    @GetMapping("/request")
+    public void request(@RequestParam("id") Byte id, @RequestParam String cmd) {
+        System.out.println("id:" + id + ",cmd=" + cmd);
+    }
+
+    @GetMapping("/user/{id}/{cmd}")
+    public void restUrl(@PathVariable("id") Long id, @PathVariable("cmd") String dsa) {
+        System.out.println("id:" + id + ",cmd=" + dsa);
     }
 
 }

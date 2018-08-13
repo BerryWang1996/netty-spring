@@ -52,6 +52,23 @@ public class DataBindUtil {
 
     }
 
+    public static boolean isBasicType(Class targetTypeClz) {
+
+        if (targetTypeClz == Byte.class ||
+                targetTypeClz == Short.class ||
+                targetTypeClz == Integer.class ||
+                targetTypeClz == Long.class ||
+                targetTypeClz == Boolean.class ||
+                targetTypeClz == Double.class ||
+                targetTypeClz == Float.class ||
+                targetTypeClz == Character.class) {
+            return true;
+        }
+
+        return false;
+
+    }
+
     public static <T> T parseStringToBasicType(String data, Class<T> targetTypeClz) {
 
         if (StringUtil.isBlank(data)) {
@@ -193,5 +210,4 @@ public class DataBindUtil {
         return beanInfo;
 
     }
-
 }

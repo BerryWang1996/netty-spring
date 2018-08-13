@@ -29,6 +29,8 @@ import java.util.*;
  */
 public abstract class MappingResolver<T, K> {
 
+    private final String url;
+
     private final Map<K, Method> methods;
 
     private final Map<K, Map<String, Class>> methodParamTypes;
@@ -37,26 +39,14 @@ public abstract class MappingResolver<T, K> {
 
     private PathMatcher pathMatcher;
 
-    public MappingResolver(Map<K, Method> methods, Object invokeRef) {
+    public MappingResolver(String url, Map<K, Method> methods, Object invokeRef) {
 
+        this.url = url;
         this.methods = Collections.unmodifiableMap(methods);
         this.invokeRef = invokeRef;
 
         // parse method parameters
-        Map<K, Map<String, Class>> tempMethodParamTypes = new HashMap<>();
-        for (Map.Entry<K, Method> kMethodEntry : methods.entrySet()) {
-            LinkedHashMap<String, Class> methodParams = new LinkedHashMap<>();
-            LocalVariableTableParameterNameDiscoverer u = new LocalVariableTableParameterNameDiscoverer();
-            String[] params = u.getParameterNames(kMethodEntry.getValue());
-            Class<?>[] parameterTypes = kMethodEntry.getValue().getParameterTypes();
-            if (params != null && parameterTypes.length == params.length) {
-                for (int i = 0; i < params.length; i++) {
-                    methodParams.put(params[i], parameterTypes[i]);
-                }
-            }
-            tempMethodParamTypes.put(kMethodEntry.getKey(), methodParams);
-        }
-        this.methodParamTypes = Collections.unmodifiableMap(tempMethodParamTypes);
+        this.methodParamTypes = parseMethodParameters();
     }
 
     public Map<K, Method> getMethods() {
@@ -78,6 +68,10 @@ public abstract class MappingResolver<T, K> {
         return methods.keySet();
     }
 
+    public String getUrl() {
+        return url;
+    }
+
     public Object getInvokeRef() {
         return invokeRef;
     }
@@ -91,5 +85,22 @@ public abstract class MappingResolver<T, K> {
     }
 
     public abstract void resolve(ChannelHandlerContext ctx, T msg);
+
+    public Map<K, Map<String, Class>> parseMethodParameters() {
+        Map<K, Map<String, Class>> tempMethodParamTypes = new HashMap<>();
+        for (Map.Entry<K, Method> kMethodEntry : methods.entrySet()) {
+            LinkedHashMap<String, Class> methodParams = new LinkedHashMap<>();
+            LocalVariableTableParameterNameDiscoverer u = new LocalVariableTableParameterNameDiscoverer();
+            String[] params = u.getParameterNames(kMethodEntry.getValue());
+            Class<?>[] parameterTypes = kMethodEntry.getValue().getParameterTypes();
+            if (params != null && parameterTypes.length == params.length) {
+                for (int i = 0; i < params.length; i++) {
+                    methodParams.put(params[i], parameterTypes[i]);
+                }
+            }
+            tempMethodParamTypes.put(kMethodEntry.getKey(), methodParams);
+        }
+        return Collections.unmodifiableMap(tempMethodParamTypes);
+    }
 
 }

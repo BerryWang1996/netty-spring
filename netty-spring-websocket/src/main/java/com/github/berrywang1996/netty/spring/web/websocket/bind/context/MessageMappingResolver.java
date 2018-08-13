@@ -30,8 +30,8 @@ import java.util.Map;
  */
 public class MessageMappingResolver extends MappingResolver<Object, String> {
 
-    public MessageMappingResolver(Map<String, Method> methods, Object invokeRef) {
-        super(methods, invokeRef);
+    public MessageMappingResolver(String url, Map<String, Method> methods, Object invokeRef) {
+        super(url, methods, invokeRef);
     }
 
     @Override

@@ -111,22 +111,27 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
                             Map<HttpRequestMethod, Method> methodMap = new HashMap<>(resolver.getMethods());
                             if (annotation.method().length == 0) {
                                 // if request method not set, apply all request methods
-                                for (HttpRequestMethod httpRequestMethod : annotation.method()) {
-                                    methodMap.put(httpRequestMethod, method);
-                                }
+                                methodMap.put(HttpRequestMethod.ALL, method);
                             } else {
                                 for (HttpRequestMethod httpRequestMethod : annotation.method()) {
                                     methodMap.put(httpRequestMethod, method);
                                 }
                             }
-                            this.resolverMap.put(url, new RequestMappingResolver(methodMap, controllerBean.getValue()));
+                            this.resolverMap.put(url, new RequestMappingResolver(url, methodMap,
+                                    controllerBean.getValue()));
                         } else {
                             // if url not mapped, create new resolver map
                             Map<HttpRequestMethod, Method> methodMap = new HashMap<>();
-                            for (HttpRequestMethod httpRequestMethod : annotation.method()) {
-                                methodMap.put(httpRequestMethod, method);
+                            // if annotation method not set, apply all method
+                            if (annotation.method().length == 0) {
+                                methodMap.put(HttpRequestMethod.ALL, method);
+                            } else {
+                                for (HttpRequestMethod httpRequestMethod : annotation.method()) {
+                                    methodMap.put(httpRequestMethod, method);
+                                }
                             }
-                            this.resolverMap.put(url, new RequestMappingResolver(methodMap, controllerBean.getValue()));
+                            this.resolverMap.put(url, new RequestMappingResolver(url, methodMap,
+                                    controllerBean.getValue()));
                         }
                     }
                 }

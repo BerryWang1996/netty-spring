@@ -20,21 +20,25 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.berrywang1996.netty.spring.web.context.MappingResolver;
 import com.github.berrywang1996.netty.spring.web.databind.DataBindUtil;
+import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.PathVariable;
+import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestParam;
 import com.github.berrywang1996.netty.spring.web.mvc.consts.HttpRequestMethod;
 import com.github.berrywang1996.netty.spring.web.util.ServiceHandlerUtil;
+import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.*;
 import io.netty.util.CharsetUtil;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.LocalVariableTableParameterNameDiscoverer;
+import org.springframework.util.AntPathMatcher;
+import org.springframework.util.PathMatcher;
 
+import java.lang.annotation.Annotation;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * @author berrywang1996
@@ -43,9 +47,93 @@ import java.util.Map;
 @Slf4j
 public class RequestMappingResolver extends MappingResolver<FullHttpRequest, HttpRequestMethod> {
 
-    public RequestMappingResolver(Map<HttpRequestMethod, Method> methods,
-                                  Object invokeRef) {
-        super(methods, invokeRef);
+    private final boolean isRestfulUrl;
+
+    private final PathMatcher pathMatcher;
+
+    private final String pathPattern;
+
+    public RequestMappingResolver(String url, Map<HttpRequestMethod, Method> methods, Object invokeRef) {
+        super(url, methods, invokeRef);
+
+        boolean isRestfulUrlFlag = false;
+
+        end:
+        for (Method method : methods.values()) {
+            Annotation[][] parameterAnnotations = method.getParameterAnnotations();
+            if (parameterAnnotations.length > 0) {
+                for (Annotation[] parameterAnnotation : parameterAnnotations) {
+                    for (Annotation annotation : parameterAnnotation) {
+                        if (annotation.annotationType() == PathVariable.class) {
+                            isRestfulUrlFlag = true;
+                            break end;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (isRestfulUrlFlag) {
+            isRestfulUrl = true;
+            pathMatcher = new AntPathMatcher();
+            pathPattern = url;
+
+        } else {
+            isRestfulUrl = false;
+            pathMatcher = null;
+            pathPattern = null;
+        }
+
+
+    }
+
+    @Override
+    public Map<HttpRequestMethod, Map<String, Class>> parseMethodParameters() {
+        Map<HttpRequestMethod, Map<String, Class>> tempMethodParamTypes = new HashMap<>();
+        for (Map.Entry<HttpRequestMethod, Method> kMethodEntry : getMethods().entrySet()) {
+            LinkedHashMap<String, Class> methodParams = new LinkedHashMap<>();
+            LocalVariableTableParameterNameDiscoverer u = new LocalVariableTableParameterNameDiscoverer();
+            String[] params = u.getParameterNames(kMethodEntry.getValue());
+            Annotation[][] parameterAnnotations = kMethodEntry.getValue().getParameterAnnotations();
+            Class<?>[] parameterTypes = kMethodEntry.getValue().getParameterTypes();
+            if (params != null && parameterTypes.length == params.length) {
+                for (int i = 0; i < params.length; i++) {
+                    String key = params[i];
+                    // check RequestParam and PathVariable
+                    for (Annotation annotation : parameterAnnotations[i]) {
+                        if (annotation.annotationType() == PathVariable.class) {
+                            String value = ((PathVariable) annotation).value();
+                            // if set annotation value
+                            if (StringUtil.isNotBlank(value)) {
+                                key = ((PathVariable) annotation).value();
+                            }
+                            break;
+                        } else if (annotation.annotationType() == RequestParam.class) {
+                            String value = ((RequestParam) annotation).value();
+                            // if set annotation value
+                            if (StringUtil.isNotBlank(value)) {
+                                key = ((RequestParam) annotation).value();
+                            }
+                            break;
+                        }
+                    }
+//                    if (parameterTypes[i].isAnnotationPresent(RequestParam.class)) {
+//                        RequestParam annotation = parameterTypes[i].getAnnotation(RequestParam.class);
+//                        if (StringUtil.isNotBlank(annotation.value())) {
+//                            key = annotation.value();
+//                        }
+//                    } else if (parameterTypes[i].isAnnotationPresent(PathVariable.class)) {
+//                        PathVariable annotation = parameterTypes[i].getAnnotation(PathVariable.class);
+//                        if (StringUtil.isNotBlank(annotation.value())) {
+//                            key = annotation.value();
+//                        }
+//                    }
+                    methodParams.put(key, parameterTypes[i]);
+                }
+            }
+            tempMethodParamTypes.put(kMethodEntry.getKey(), methodParams);
+        }
+        return Collections.unmodifiableMap(tempMethodParamTypes);
     }
 
     @Override
@@ -78,14 +166,26 @@ public class RequestMappingResolver extends MappingResolver<FullHttpRequest, Htt
         Map<String, String> requestParameterMap = ServiceHandlerUtil.parseRequestParameters(msg);
         requestContext.setRequestParameters(requestParameterMap);
 
+        // parse path variable
+        Map<String, String> pathParameterMap = null;
+        if (isRestfulUrl) {
+            pathParameterMap = pathMatcher.extractUriTemplateVariables(pathPattern, msg.uri());
+        }
+
         // request data bind
         Map<String, Class> methodParamType = getMethodParamType(requestMethod);
         Map<String, String> tempMethodParamType = new HashMap<>();
         List<Object> parameters = new ArrayList<>(methodParamType.size());
         for (Map.Entry<String, Class> methodParamEntry : methodParamType.entrySet()) {
 
-            // TODO validate data
-            // TODO path variable
+            // if is path variable
+            if (isRestfulUrl) {
+                String value = pathParameterMap.get(methodParamEntry.getKey());
+                if (StringUtil.isNotBlank(value)) {
+                    parameters.add(DataBindUtil.parseStringToBasicType(value, methodParamEntry.getValue()));
+                    continue;
+                }
+            }
 
             // if method parameter is request context object
             if (methodParamEntry.getValue() == HttpRequestContext.class) {
@@ -98,6 +198,9 @@ public class RequestMappingResolver extends MappingResolver<FullHttpRequest, Htt
                 parameters.add(requestContext.getChannelHandlerContext());
             } else if (methodParamEntry.getValue() == String.class) {
                 parameters.add(requestParameterMap.get(methodParamEntry.getKey()));
+            } else if (DataBindUtil.isBasicType(methodParamEntry.getValue())) {
+                parameters.add(DataBindUtil.parseStringToBasicType(
+                        requestParameterMap.get(methodParamEntry.getKey()), methodParamEntry.getValue()));
             } else {
                 // else if start with method parameter name, put into tempMethodParamType
                 for (String requestKey : requestParameterMap.keySet()) {
@@ -105,6 +208,7 @@ public class RequestMappingResolver extends MappingResolver<FullHttpRequest, Htt
                         tempMethodParamType.put(requestKey, requestParameterMap.get(requestKey));
                     }
                 }
+                // TODO validate data
                 parameters.add(DataBindUtil.parseStringToObject(tempMethodParamType, methodParamEntry.getValue()));
                 tempMethodParamType.clear();
             }
