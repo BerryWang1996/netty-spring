@@ -31,12 +31,12 @@ import java.util.Set;
  */
 public class CompressorHandler extends HttpContentCompressor {
 
-    private final Set<String> gzip_types;
+    private final Set<String> gzipTypes;
 
     public CompressorHandler(int compressionLevel, int windowBits, int memLevel,
-                             int contentSizeThreshold, String gzip_types) {
+                             int contentSizeThreshold, String gzipTypes) {
         super(compressionLevel, windowBits, memLevel, contentSizeThreshold);
-        this.gzip_types = new HashSet<>(Arrays.asList(gzip_types.split(" ")));
+        this.gzipTypes = new HashSet<>(Arrays.asList(gzipTypes.split(" ")));
     }
 
     @Override
@@ -50,8 +50,8 @@ public class CompressorHandler extends HttpContentCompressor {
         boolean shouldEncode = false;
 
         String contentType = headers.headers().get(HttpHeaderNames.CONTENT_TYPE);
-        for (String gzip_type : gzip_types) {
-            if (contentType.startsWith(gzip_type)) {
+        for (String gzipType : gzipTypes) {
+            if (contentType.startsWith(gzipType)) {
                 shouldEncode = true;
                 break;
             }

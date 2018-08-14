@@ -30,6 +30,8 @@ public class ServiceHandlerUtil {
     public static final String HTTP_DATE_GMT_TIMEZONE = "GMT";
     public static final int HTTP_CACHE_SECONDS = 60;
 
+    public static final MimetypesFileTypeMap MIME_TYPES_MAP = new MimetypesFileTypeMap();
+
     public static void sendError(ChannelHandlerContext ctx,
                                  HttpRequest msg,
                                  HttpErrorMessage errorMessage) {
@@ -87,8 +89,7 @@ public class ServiceHandlerUtil {
     }
 
     public static void setContentTypeHeader(HttpResponse response, File file) {
-        MimetypesFileTypeMap mimeTypesMap = new MimetypesFileTypeMap();
-        response.headers().set(HttpHeaderNames.CONTENT_TYPE, mimeTypesMap.getContentType(file.getPath()));
+        response.headers().set(HttpHeaderNames.CONTENT_TYPE, MIME_TYPES_MAP.getContentType(file));
     }
 
     public static void setDateAndCacheHeaders(HttpResponse response, File file) {

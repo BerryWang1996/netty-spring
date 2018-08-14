@@ -58,6 +58,12 @@
             <artifactId>jackson-databind</artifactId>
         </dependency>
 
+        <!-- activation -->
+        <dependency>
+            <groupId>javax.activation</groupId>
+            <artifactId>activation</artifactId>
+        </dependency>
+
         <!-- lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>
