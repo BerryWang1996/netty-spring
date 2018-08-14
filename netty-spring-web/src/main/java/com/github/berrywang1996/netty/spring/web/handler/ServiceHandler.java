@@ -16,7 +16,7 @@
 
 package com.github.berrywang1996.netty.spring.web.handler;
 
-import com.github.berrywang1996.netty.spring.web.context.MappingResolver;
+import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
 import com.github.berrywang1996.netty.spring.web.context.WebMappingSupporter;
 import com.github.berrywang1996.netty.spring.web.util.ServiceHandlerUtil;
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
@@ -64,7 +64,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
             String baseUri = getBaseUri(request);
 
             // get mapping resolver
-            MappingResolver mappingResolver = getMappingResolver(baseUri);
+            AbstractMappingResolver mappingResolver = getMappingResolver(baseUri);
 
             if (mappingResolver != null) {
                 // if mapped
@@ -104,10 +104,10 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         super.exceptionCaught(ctx, cause);
     }
 
-    private MappingResolver getMappingResolver(String uri) {
+    private AbstractMappingResolver getMappingResolver(String uri) {
 
         // get resolver from map
-        MappingResolver mappingResolver = mappingRuntimeSupporter.getMappingResolverMap().get(uri);
+        AbstractMappingResolver mappingResolver = mappingRuntimeSupporter.getMappingResolverMap().get(uri);
 
         // if not mapped, try to match uri
         if (mappingResolver == null) {

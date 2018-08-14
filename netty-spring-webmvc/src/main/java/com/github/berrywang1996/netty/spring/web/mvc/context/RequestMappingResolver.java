@@ -18,7 +18,7 @@ package com.github.berrywang1996.netty.spring.web.mvc.context;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.berrywang1996.netty.spring.web.context.MappingResolver;
+import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
 import com.github.berrywang1996.netty.spring.web.databind.DataBindUtil;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.PathVariable;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestParam;
@@ -45,7 +45,7 @@ import java.util.*;
  * @since V1.0.0
  */
 @Slf4j
-public class RequestMappingResolver extends MappingResolver<FullHttpRequest, HttpRequestMethod> {
+public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequest, HttpRequestMethod> {
 
     private final boolean isRestfulUrl;
 
@@ -84,7 +84,6 @@ public class RequestMappingResolver extends MappingResolver<FullHttpRequest, Htt
             pathPattern = null;
         }
 
-
     }
 
     @Override
@@ -117,17 +116,6 @@ public class RequestMappingResolver extends MappingResolver<FullHttpRequest, Htt
                             break;
                         }
                     }
-//                    if (parameterTypes[i].isAnnotationPresent(RequestParam.class)) {
-//                        RequestParam annotation = parameterTypes[i].getAnnotation(RequestParam.class);
-//                        if (StringUtil.isNotBlank(annotation.value())) {
-//                            key = annotation.value();
-//                        }
-//                    } else if (parameterTypes[i].isAnnotationPresent(PathVariable.class)) {
-//                        PathVariable annotation = parameterTypes[i].getAnnotation(PathVariable.class);
-//                        if (StringUtil.isNotBlank(annotation.value())) {
-//                            key = annotation.value();
-//                        }
-//                    }
                     methodParams.put(key, parameterTypes[i]);
                 }
             }
@@ -220,7 +208,7 @@ public class RequestMappingResolver extends MappingResolver<FullHttpRequest, Htt
         try {
             result = invokeMethod.invoke(getInvokeRef(), parameters.toArray());
         } catch (IllegalAccessException | InvocationTargetException e) {
-            e.printStackTrace();
+            log.warn("Invoke mapping method error, {}", e);
         }
 
         // TODO handle return value

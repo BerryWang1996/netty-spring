@@ -16,7 +16,7 @@
 
 package com.github.berrywang1996.netty.spring.web.startup;
 
-import com.github.berrywang1996.netty.spring.web.context.ChannelInitializer;
+import com.github.berrywang1996.netty.spring.web.context.NettyChannelInitializer;
 import com.github.berrywang1996.netty.spring.web.util.DaemonThreadFactory;
 import com.github.berrywang1996.netty.spring.web.util.StartupPropertiesUtil;
 import io.netty.bootstrap.ServerBootstrap;
@@ -77,7 +77,7 @@ public final class NettyServerBootstrap {
         b.option(ChannelOption.SO_BACKLOG, 1024);
         b.group(bossGroup, workerGroup)
                 .channel(NioServerSocketChannel.class)
-                .childHandler(new ChannelInitializer(this));
+                .childHandler(new NettyChannelInitializer(this));
 
         final ChannelFuture f = b.bind(startupProperties.getPort()).sync();
         log.info("Netty started on port: {} ", startupProperties.getPort());

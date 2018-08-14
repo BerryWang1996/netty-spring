@@ -16,7 +16,7 @@
 
 package com.github.berrywang1996.netty.spring.web.websocket.bind.context;
 
-import com.github.berrywang1996.netty.spring.web.context.MappingResolver;
+import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.websocketx.*;
@@ -28,7 +28,7 @@ import java.util.Map;
  * @author berrywang1996
  * @since V1.0.0
  */
-public class MessageMappingResolver extends MappingResolver<Object, String> {
+public class MessageMappingResolver extends AbstractMappingResolver<Object, String> {
 
     public MessageMappingResolver(String url, Map<String, Method> methods, Object invokeRef) {
         super(url, methods, invokeRef);

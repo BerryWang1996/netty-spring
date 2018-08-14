@@ -25,7 +25,7 @@ import java.util.Map;
  * @author berrywang1996
  * @since V1.0.0
  */
-public interface MappingSupporter<T extends MappingResolver> {
+public interface MappingSupporter<T extends AbstractMappingResolver> {
 
     Map<String, T> initMappingResolverMap(NettyServerStartupProperties startupProperties,
                                           ApplicationContext applicationContext);

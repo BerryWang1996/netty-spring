@@ -19,6 +19,7 @@ package com.github.berrywang1996.netty.spring.web.context;
 import com.github.berrywang1996.netty.spring.web.handler.CompressorHandler;
 import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
+import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.HttpObjectAggregator;
@@ -33,7 +34,7 @@ import java.io.File;
  * @author berrywang1996
  * @since V1.0.0
  */
-public class ChannelInitializer extends io.netty.channel.ChannelInitializer<SocketChannel> {
+public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
 
     private NettyServerBootstrap nettyServerBootstrap;
 
@@ -41,7 +42,7 @@ public class ChannelInitializer extends io.netty.channel.ChannelInitializer<Sock
 
     private SslContext sslCtx = null;
 
-    public ChannelInitializer(NettyServerBootstrap nettyServerBootstrap) throws Exception {
+    public NettyChannelInitializer(NettyServerBootstrap nettyServerBootstrap) throws Exception {
 
         this.nettyServerBootstrap = nettyServerBootstrap;
 

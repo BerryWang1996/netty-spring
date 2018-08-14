@@ -81,4 +81,9 @@ public class HttpController {
         System.out.println("id:" + id + ",cmd=" + dsa);
     }
 
+    @GetMapping("/user/test")
+    public void userTest(@PathVariable("id") Long id, @PathVariable("cmd") String dsa) {
+        System.out.println("id:" + id + ",cmd=" + dsa);
+    }
+
 }

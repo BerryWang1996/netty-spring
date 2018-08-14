@@ -44,7 +44,7 @@ public class WebMappingSupporter implements MappingSupporter {
 
     private final ApplicationContext applicationContext;
 
-    private final Map<String, MappingResolver> mappingResolverMap;
+    private final Map<String, AbstractMappingResolver> mappingResolverMap;
 
     public WebMappingSupporter(NettyServerStartupProperties startupProperties,
                                ApplicationContext applicationContext) {
@@ -55,13 +55,13 @@ public class WebMappingSupporter implements MappingSupporter {
     }
 
     @Override
-    public Map<String, ? extends MappingResolver> initMappingResolverMap(NettyServerStartupProperties startupProperties, ApplicationContext applicationContext) {
-        Map<String, MappingResolver> mappingResolverMap = new HashMap<>();
+    public Map<String, ? extends AbstractMappingResolver> initMappingResolverMap(NettyServerStartupProperties startupProperties, ApplicationContext applicationContext) {
+        Map<String, AbstractMappingResolver> mappingResolverMap = new HashMap<>();
         for (String mappingClass : DEFAULT_MAPPING_CLASSES) {
             if (ClassUtil.isPresent(mappingClass)) {
                 log.debug("Init mapping supporter {}", mappingClass);
                 MappingSupporter supporter = (MappingSupporter) ClassUtil.newInstance(mappingClass);
-                Map<String, ? extends MappingResolver> resolverMap =
+                Map<String, ? extends AbstractMappingResolver> resolverMap =
                         supporter.initMappingResolverMap(startupProperties, applicationContext);
                 MapUtil.checkDuplicateKey(mappingResolverMap, resolverMap);
                 mappingResolverMap.putAll(resolverMap);

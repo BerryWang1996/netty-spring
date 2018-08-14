@@ -27,7 +27,7 @@ import java.util.*;
  * @author berrywang1996
  * @since V1.0.0
  */
-public abstract class MappingResolver<T, K> {
+public abstract class AbstractMappingResolver<T, K> {
 
     private final String url;
 
@@ -39,7 +39,7 @@ public abstract class MappingResolver<T, K> {
 
     private PathMatcher pathMatcher;
 
-    public MappingResolver(String url, Map<K, Method> methods, Object invokeRef) {
+    public AbstractMappingResolver(String url, Map<K, Method> methods, Object invokeRef) {
 
         this.url = url;
         this.methods = Collections.unmodifiableMap(methods);
