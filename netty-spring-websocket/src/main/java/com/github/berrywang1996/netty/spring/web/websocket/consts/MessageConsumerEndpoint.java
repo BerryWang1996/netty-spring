@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.github.berrywang1996.netty.spring.web.websocket.bind.consts;
+package com.github.berrywang1996.netty.spring.web.websocket.consts;
 
 /**
  * @author berrywang1996

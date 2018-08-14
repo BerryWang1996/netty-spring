@@ -38,7 +38,7 @@ public class WebMappingSupporter implements MappingSupporter {
     private static final String[] DEFAULT_MAPPING_CLASSES =
             new String[]{
                     "com.github.berrywang1996.netty.spring.web.mvc.context.RequestMappingSupporter",
-                    "com.github.berrywang1996.netty.spring.web.websocket.bind.context.MessageMappingSupporter"};
+                    "com.github.berrywang1996.netty.spring.web.websocket.context.MessageMappingSupporter"};
 
     private final NettyServerStartupProperties startupProperties;
 

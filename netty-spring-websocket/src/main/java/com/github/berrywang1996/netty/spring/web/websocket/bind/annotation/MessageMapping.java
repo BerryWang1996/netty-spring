@@ -16,8 +16,8 @@
 
 package com.github.berrywang1996.netty.spring.web.websocket.bind.annotation;
 
-import com.github.berrywang1996.netty.spring.web.websocket.bind.consts.MessageConsumerEndpoint;
-import com.github.berrywang1996.netty.spring.web.websocket.bind.consts.MessageProducerEndpoint;
+import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageConsumerEndpoint;
+import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageProducerEndpoint;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
