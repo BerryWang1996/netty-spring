@@ -19,7 +19,9 @@ package com.github.berrywang1996.netty.spring.web.websocket.context;
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.websocketx.*;
+import io.netty.handler.ssl.SslHandler;
 
 import java.lang.reflect.Method;
 import java.util.Map;
@@ -30,6 +32,10 @@ import java.util.Map;
  */
 public class MessageMappingResolver extends AbstractMappingResolver<Object, String> {
 
+    private static final String WEBSOCKET_UPGRADE_HEADER = "websocket";
+
+    private static final String WEBSOCKET_CONNECTION_HEADER = "upgrade";
+
     public MessageMappingResolver(String url, Map<String, Method> methods, Object invokeRef) {
         super(url, methods, invokeRef);
     }
@@ -39,7 +45,24 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Stri
 
         if (msg instanceof FullHttpRequest) {
 
-            // update websocket if headers contain Upgrade header
+            FullHttpRequest request = (FullHttpRequest) msg;
+
+            // check headers contain Upgrade header
+            if (!WEBSOCKET_UPGRADE_HEADER.equals(request.headers().get(HttpHeaderNames.UPGRADE).toLowerCase())
+                    || !WEBSOCKET_CONNECTION_HEADER.equals(request.headers().get(HttpHeaderNames.CONNECTION).toLowerCase())) {
+                return;
+            }
+
+            // update http to websocket
+            String protocol = ctx.pipeline().get(SslHandler.class) == null ? "ws://" : "wss://";
+            String wsUrl = protocol + request.headers().get(HttpHeaderNames.HOST) + request.uri();
+            WebSocketServerHandshakerFactory wsFactory = new WebSocketServerHandshakerFactory(wsUrl, null, false);
+            WebSocketServerHandshaker handShaker = wsFactory.newHandshaker(request);
+            if (handShaker == null) {
+                WebSocketServerHandshakerFactory.sendUnsupportedVersionResponse(ctx.channel());
+                return;
+            }
+            handShaker.handshake(ctx.channel(), request);
 
         } else if (msg instanceof WebSocketFrame) {
 

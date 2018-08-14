@@ -25,7 +25,6 @@ import com.github.berrywang1996.netty.spring.web.mvc.view.AbstractViewHandler;
 import com.github.berrywang1996.netty.spring.web.mvc.view.HtmlViewHandler;
 import com.github.berrywang1996.netty.spring.web.mvc.view.JsonViewHandler;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
-import io.netty.handler.codec.http.HttpResponseStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.annotation.AnnotatedElementUtils;

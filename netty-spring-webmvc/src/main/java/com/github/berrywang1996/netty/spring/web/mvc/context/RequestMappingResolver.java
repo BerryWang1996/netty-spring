@@ -22,7 +22,6 @@ import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.PathVariabl
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestParam;
 import com.github.berrywang1996.netty.spring.web.mvc.consts.HttpRequestMethod;
 import com.github.berrywang1996.netty.spring.web.mvc.view.AbstractViewHandler;
-import com.github.berrywang1996.netty.spring.web.mvc.view.JsonViewHandler;
 import com.github.berrywang1996.netty.spring.web.util.ServiceHandlerUtil;
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import io.netty.channel.ChannelHandlerContext;

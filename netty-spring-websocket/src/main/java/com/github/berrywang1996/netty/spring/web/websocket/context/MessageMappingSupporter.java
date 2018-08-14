@@ -29,14 +29,13 @@ import java.util.Map;
  */
 public class MessageMappingSupporter implements MappingSupporter<MessageMappingResolver> {
 
+    private Map<String, MessageMappingResolver> resolverMap = new HashMap<>();
+
     @Override
     public Map<String, MessageMappingResolver> initMappingResolverMap(NettyServerStartupProperties startupProperties,
                                                                       ApplicationContext applicationContext) {
 
-        HashMap<String, MessageMappingResolver> resolverMap = new HashMap<>();
-
-
-        return resolverMap;
+        return this.resolverMap;
     }
 
 }
