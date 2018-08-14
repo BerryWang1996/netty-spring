@@ -174,7 +174,11 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
             if (isRestfulUrl) {
                 String value = pathParameterMap.get(methodParamEntry.getKey());
                 if (StringUtil.isNotBlank(value)) {
-                    parameters.add(DataBindUtil.parseStringToBasicType(value, methodParamEntry.getValue()));
+
+                    parameters.add(
+                            DataBindUtil.parseStringToBasicType(
+                                    ServiceHandlerUtil.decodeRequestString(value),
+                                    methodParamEntry.getValue()));
                     continue;
                 }
             }
