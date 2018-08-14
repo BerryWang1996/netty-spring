@@ -4,10 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.berrywang1996.netty.spring.demo.domain.Department;
 import com.github.berrywang1996.netty.spring.demo.domain.User;
-import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.GetMapping;
-import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.PathVariable;
-import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestMapping;
-import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestParam;
+import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.*;
 import com.github.berrywang1996.netty.spring.web.mvc.context.HttpRequestContext;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -17,6 +14,7 @@ import io.netty.util.CharsetUtil;
 import org.springframework.stereotype.Controller;
 
 import java.util.Arrays;
+import java.util.Date;
 import java.util.Map;
 
 @Controller
@@ -76,9 +74,17 @@ public class HttpController {
         System.out.println("id:" + id + ",cmd=" + cmd);
     }
 
-    @GetMapping("/user/{id}/{cmd}")
-    public void restUrl(@PathVariable("id") Long id, @PathVariable("cmd") String dsa) {
-        System.out.println("id:" + id + ",cmd=" + dsa);
+    @GetMapping("/user/{id}/{age}/{cmd}")
+    @ResponseBody
+    public User restUrl(@PathVariable("id") Long id,
+                        @PathVariable("age") Integer age,
+                        @PathVariable("cmd") String cmd) {
+        User user = new User();
+        user.setName(id.toString());
+        user.setAge(age);
+        user.setRegisterDate(new Date());
+        System.out.println(cmd);
+        return user;
     }
 
     @GetMapping("/user/test")

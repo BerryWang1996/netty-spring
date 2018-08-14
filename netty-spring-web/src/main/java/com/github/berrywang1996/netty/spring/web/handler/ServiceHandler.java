@@ -23,7 +23,6 @@ import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import io.netty.channel.*;
 import io.netty.handler.codec.http.*;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
-import io.netty.handler.ssl.SslHandler;
 import io.netty.handler.stream.ChunkedFile;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.AntPathMatcher;

@@ -1,5 +1,7 @@
 package com.github.berrywang1996.netty.spring.demo.domain;
 
+import java.util.Date;
+
 /**
  * @author berrywang1996
  * @version V1.0.0
@@ -13,6 +15,8 @@ public class User {
     private Integer age;
 
     private Department department;
+
+    private Date registerDate;
 
     public String getName() {
         return name;
@@ -44,5 +48,13 @@ public class User {
 
     public void setDepartment(Department department) {
         this.department = department;
+    }
+
+    public Date getRegisterDate() {
+        return registerDate;
+    }
+
+    public void setRegisterDate(Date registerDate) {
+        this.registerDate = registerDate;
     }
 }

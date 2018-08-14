@@ -18,8 +18,14 @@ package com.github.berrywang1996.netty.spring.web.mvc.context;
 
 import com.github.berrywang1996.netty.spring.web.context.MappingSupporter;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestMapping;
+import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.ResponseBody;
+import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RestController;
 import com.github.berrywang1996.netty.spring.web.mvc.consts.HttpRequestMethod;
+import com.github.berrywang1996.netty.spring.web.mvc.view.AbstractViewHandler;
+import com.github.berrywang1996.netty.spring.web.mvc.view.HtmlViewHandler;
+import com.github.berrywang1996.netty.spring.web.mvc.view.JsonViewHandler;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
+import io.netty.handler.codec.http.HttpResponseStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.annotation.AnnotatedElementUtils;
@@ -88,26 +94,16 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
 
                     for (String url : mappingUrls) {
                         if (this.resolverMap.containsKey(url)) {
+
                             RequestMappingResolver resolver = this.resolverMap.get(url);
+
                             // if url is mapped and http request method is duplicate, throw exception.
-                            boolean isAmbiguous = false;
-                            if (annotation.method().length == 0 || resolver.getMethodKey().size() == 0) {
-                                // if request method not set, apply all request methods, so it is ambiguous
-                                isAmbiguous = true;
-                            } else {
-                                Set<HttpRequestMethod> methodKey = resolver.getMethodKey();
-                                for (HttpRequestMethod httpRequestMethod : annotation.method()) {
-                                    if (methodKey.contains(httpRequestMethod)) {
-                                        isAmbiguous = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (isAmbiguous) {
+                            if (isDuplicateMapping(annotation.method(), resolver)) {
                                 throw new IllegalStateException("Ambiguous mapping uri \"" + url + "\". Cannot map " +
                                         "method " + method);
                             }
-                            // if url already mapped, clone method Map and put new resolver
+
+                            // if url already mapped, clone method Map and put new resolver(coverage old resolver)
                             Map<HttpRequestMethod, Method> methodMap = new HashMap<>(resolver.getMethods());
                             if (annotation.method().length == 0) {
                                 // if request method not set, apply all request methods
@@ -118,10 +114,13 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
                                 }
                             }
                             this.resolverMap.put(url, new RequestMappingResolver(url, methodMap,
-                                    controllerBean.getValue()));
+                                    controllerBean.getValue(), getViewHandler(method)));
+
                         } else {
+
                             // if url not mapped, create new resolver map
                             Map<HttpRequestMethod, Method> methodMap = new HashMap<>();
+
                             // if annotation method not set, apply all method
                             if (annotation.method().length == 0) {
                                 methodMap.put(HttpRequestMethod.ALL, method);
@@ -131,7 +130,8 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
                                 }
                             }
                             this.resolverMap.put(url, new RequestMappingResolver(url, methodMap,
-                                    controllerBean.getValue()));
+                                    controllerBean.getValue(), getViewHandler(method)));
+
                         }
                     }
                 }
@@ -139,6 +139,37 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
         }
 
         return resolverMap;
+    }
+
+    private AbstractViewHandler getViewHandler(Method method) {
+
+        if (method.isAnnotationPresent(ResponseBody.class) ||
+                method.getDeclaringClass().isAnnotationPresent(ResponseBody.class) ||
+                method.getDeclaringClass().isAnnotationPresent(RestController.class)) {
+            // if method or class contains annotation ResponseBody and RestController return value is json
+            return new JsonViewHandler();
+        } else {
+            // else return value is html
+            return new HtmlViewHandler();
+        }
+
+    }
+
+    private boolean isDuplicateMapping(HttpRequestMethod[] methods, RequestMappingResolver resolver) {
+        boolean isAmbiguous = false;
+        if (methods.length == 0 || resolver.getMethodKey().size() == 0) {
+            // if request method not set, apply all request methods, so it is ambiguous
+            isAmbiguous = true;
+        } else {
+            Set<HttpRequestMethod> methodKey = resolver.getMethodKey();
+            for (HttpRequestMethod httpRequestMethod : methods) {
+                if (methodKey.contains(httpRequestMethod)) {
+                    isAmbiguous = true;
+                    break;
+                }
+            }
+        }
+        return isAmbiguous;
     }
 
     private List<String> getMappingUrls(Method method) {

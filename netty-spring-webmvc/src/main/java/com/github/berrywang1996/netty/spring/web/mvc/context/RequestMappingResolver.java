@@ -16,20 +16,20 @@
 
 package com.github.berrywang1996.netty.spring.web.mvc.context;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
 import com.github.berrywang1996.netty.spring.web.databind.DataBindUtil;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.PathVariable;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestParam;
 import com.github.berrywang1996.netty.spring.web.mvc.consts.HttpRequestMethod;
+import com.github.berrywang1996.netty.spring.web.mvc.view.AbstractViewHandler;
+import com.github.berrywang1996.netty.spring.web.mvc.view.JsonViewHandler;
 import com.github.berrywang1996.netty.spring.web.util.ServiceHandlerUtil;
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.handler.codec.http.*;
-import io.netty.util.CharsetUtil;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.HttpResponseStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.LocalVariableTableParameterNameDiscoverer;
 import org.springframework.util.AntPathMatcher;
@@ -53,8 +53,12 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
 
     private final String pathPattern;
 
-    public RequestMappingResolver(String url, Map<HttpRequestMethod, Method> methods, Object invokeRef) {
+    private final AbstractViewHandler viewHandler;
+
+    public RequestMappingResolver(String url, Map<HttpRequestMethod, Method> methods, Object invokeRef,
+                                  AbstractViewHandler viewHandler) {
         super(url, methods, invokeRef);
+        this.viewHandler = viewHandler;
 
         boolean isRestfulUrlFlag = false;
 
@@ -211,29 +215,11 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
             log.warn("Invoke mapping method error, {}", e);
         }
 
-        // TODO handle return value
+        // handle return value
         if (result == null) {
             log.debug("return value is null");
-        } else {
-            try {
-                log.debug("return value: {}", new ObjectMapper().writeValueAsString(result));
-            } catch (JsonProcessingException e) {
-                e.printStackTrace();
-            }
         }
-
-        // TODO temp page
-        // handle return value
-        ByteBuf content = null;
-        FullHttpResponse response = null;
-        // html response
-        content = Unpooled.copiedBuffer("<html><head><title>this is template page</title></head><body>hello " +
-                "netty</body></html>", CharsetUtil.UTF_8);
-        response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK, content);
-        response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/html; charset=UTF-8");
-
-        response.headers().set(HttpHeaderNames.TRANSFER_ENCODING, "chunked");
-        ctx.writeAndFlush(response);
+        ctx.writeAndFlush(viewHandler.handleView(result));
 
     }
 
