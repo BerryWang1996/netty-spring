@@ -180,25 +180,9 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         ChannelFuture sendFileFuture =
                 ctx.write(new HttpChunkedInput(new ChunkedFile(raf, 0, fileLength, 8192)),
                         ctx.newProgressivePromise());
+
         // Write the end marker.
         ChannelFuture lastContentFuture = ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
-
-//        发现 DefaultFileRegion 与 gzip不兼容，删除掉，但是和sslhandler有什么关系不是很清楚
-//        if (ctx.pipeline().get(SslHandler.class) == null) {
-//            sendFileFuture =
-//                    ctx.write(new DefaultFileRegion(raf.getChannel(), 0, fileLength), ctx.newProgressivePromise());
-//
-//            new ChunkedFile()
-//
-//            // Write the end marker.
-//            lastContentFuture = ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
-//        } else {
-//            sendFileFuture =
-//                    ctx.writeAndFlush(new HttpChunkedInput(new ChunkedFile(raf, 0, fileLength, 8192)),
-//                            ctx.newProgressivePromise());
-//            // HttpChunkedInput will write the end marker (LastHttpContent) for us.
-//            lastContentFuture = sendFileFuture;
-//        }
 
         sendFileFuture.addListener(new ChannelProgressiveFutureListener() {
             @Override

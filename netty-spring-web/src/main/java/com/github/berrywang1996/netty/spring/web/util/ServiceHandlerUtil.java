@@ -13,6 +13,8 @@ import io.netty.util.CharsetUtil;
 import javax.activation.MimetypesFileTypeMap;
 import java.io.File;
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
@@ -121,10 +123,11 @@ public class ServiceHandlerUtil {
                 if (parameterEntry.getValue().size() > 1) {
                     for (int i = 0; i < parameterEntry.getValue().size(); i++) {
                         requestParameterMap.put(parameterEntry.getKey() + "[" + i + "]",
-                                parameterEntry.getValue().get(i));
+                                decodeRequestString(parameterEntry.getValue().get(i)));
                     }
                 } else {
-                    requestParameterMap.put(parameterEntry.getKey(), parameterEntry.getValue().get(0));
+                    requestParameterMap.put(parameterEntry.getKey(),
+                            decodeRequestString(parameterEntry.getValue().get(0)));
                 }
             }
 
@@ -147,6 +150,19 @@ public class ServiceHandlerUtil {
         }
 
         return requestParameterMap;
+    }
+
+    public static String decodeRequestString(String string) {
+
+        // TODO 请求的数据可能会出现编码不一致的情况
+
+        try {
+            return URLDecoder.decode(string, "utf-8");
+        } catch (UnsupportedEncodingException e) {
+            e.printStackTrace();
+        }
+        return "";
+
     }
 
     public static class HttpErrorMessage {
