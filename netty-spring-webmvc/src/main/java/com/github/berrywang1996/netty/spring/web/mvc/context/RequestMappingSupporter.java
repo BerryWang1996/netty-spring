@@ -17,6 +17,7 @@
 package com.github.berrywang1996.netty.spring.web.mvc.context;
 
 import com.github.berrywang1996.netty.spring.web.context.MappingSupporter;
+import com.github.berrywang1996.netty.spring.web.mvc.bind.RequestMappingResolver;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestMapping;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.ResponseBody;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RestController;

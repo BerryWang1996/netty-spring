@@ -1,9 +1,13 @@
 package com.github.berrywang1996.netty.spring.web.mvc.context;
 
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.codec.http.HttpRequest;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -19,6 +23,12 @@ public class HttpRequestContext {
     private HttpRequest httpRequest;
 
     private HttpHeaders requestHeaders;
+
+    private HttpHeaders responseHeaders;
+
+    private Map<String, String> requestCookies = new HashMap<>();
+
+    private List<Cookie> responseCookies = new ArrayList<>();
 
     private ChannelHandlerContext channelHandlerContext;
 
@@ -46,6 +56,7 @@ public class HttpRequestContext {
         this.httpRequest = httpRequest;
         this.requestHeaders = httpRequest.headers();
         this.requestUri = httpRequest.uri();
+        this.requestCookies = Cookie.parseCookieString(httpRequest.headers().get(HttpHeaderNames.COOKIE));
     }
 
     public HttpHeaders getRequestHeaders() {
@@ -54,6 +65,26 @@ public class HttpRequestContext {
 
     public void setRequestHeaders(HttpHeaders requestHeaders) {
         this.requestHeaders = requestHeaders;
+    }
+
+    public HttpHeaders getResponseHeaders() {
+        return responseHeaders;
+    }
+
+    public void setResponseHeaders(HttpHeaders responseHeaders) {
+        this.responseHeaders = responseHeaders;
+    }
+
+    public Map<String, String> getRequestCookies() {
+        return requestCookies;
+    }
+
+    public List<Cookie> getResponseCookies() {
+        return responseCookies;
+    }
+
+    public void setResponseCookies(List<Cookie> responseCookies) {
+        this.responseCookies = responseCookies;
     }
 
     public ChannelHandlerContext getChannelHandlerContext() {

@@ -14,21 +14,20 @@
  * limitations under the License.
  */
 
-package com.github.berrywang1996.netty.spring.web.mvc.context;
+package com.github.berrywang1996.netty.spring.web.mvc.bind;
 
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
 import com.github.berrywang1996.netty.spring.web.databind.DataBindUtil;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.PathVariable;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestParam;
 import com.github.berrywang1996.netty.spring.web.mvc.consts.HttpRequestMethod;
+import com.github.berrywang1996.netty.spring.web.mvc.context.Cookie;
+import com.github.berrywang1996.netty.spring.web.mvc.context.HttpRequestContext;
 import com.github.berrywang1996.netty.spring.web.mvc.view.AbstractViewHandler;
 import com.github.berrywang1996.netty.spring.web.util.ServiceHandlerUtil;
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.handler.codec.http.FullHttpRequest;
-import io.netty.handler.codec.http.HttpHeaders;
-import io.netty.handler.codec.http.HttpRequest;
-import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.LocalVariableTableParameterNameDiscoverer;
 import org.springframework.util.AntPathMatcher;
@@ -203,7 +202,7 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
                         tempMethodParamType.put(requestKey, requestParameterMap.get(requestKey));
                     }
                 }
-                // TODO validate data
+                // TODO 数据校验
                 parameters.add(DataBindUtil.parseStringToObject(tempMethodParamType, methodParamEntry.getValue()));
                 tempMethodParamType.clear();
             }
@@ -222,7 +221,19 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         if (result == null) {
             log.debug("return value is null");
         }
-        ctx.writeAndFlush(viewHandler.handleView(result));
+        FullHttpResponse response = viewHandler.handleView(result);
+        // set cookie
+        List<Cookie> responseCookies = requestContext.getResponseCookies();
+        if (responseCookies != null) {
+            for (Cookie responseCookie : responseCookies) {
+                response.headers().add("Set-Cookie", Cookie.toHeaderStrings(responseCookie));
+            }
+        }
+        // set header
+        if (requestContext.getResponseHeaders() != null) {
+            response.headers().setAll(requestContext.getResponseHeaders());
+        }
+        ctx.writeAndFlush(response);
 
     }
 

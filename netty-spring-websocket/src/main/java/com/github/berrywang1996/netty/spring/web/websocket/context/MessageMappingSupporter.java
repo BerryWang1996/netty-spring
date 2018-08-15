@@ -18,6 +18,7 @@ package com.github.berrywang1996.netty.spring.web.websocket.context;
 
 import com.github.berrywang1996.netty.spring.web.context.MappingSupporter;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
+import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
 import org.springframework.context.ApplicationContext;
 
 import java.util.HashMap;
