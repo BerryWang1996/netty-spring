@@ -29,7 +29,7 @@ import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupPrope
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.annotation.AnnotatedElementUtils;
-import org.springframework.stereotype.Controller;
+import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Method;
 import java.util.*;
@@ -51,7 +51,7 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
 
         this.startupProperties = startupProperties;
 
-        Map<String, Object> beans = applicationContext.getBeansWithAnnotation(Controller.class);
+        Map<String, Object> beans = applicationContext.getBeansWithAnnotation(Component.class);
         for (Map.Entry<String, Object> controllerBean : beans.entrySet()) {
             /*
                find method had annotation in

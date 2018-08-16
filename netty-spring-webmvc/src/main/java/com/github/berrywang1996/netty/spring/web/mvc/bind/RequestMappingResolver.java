@@ -88,6 +88,9 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
 
     }
 
+    /**
+     * Override parent class method, support parse path variable annotation
+     */
     @Override
     public Map<HttpRequestMethod, Map<String, Class>> parseMethodParameters() {
         Map<HttpRequestMethod, Map<String, Class>> tempMethodParamTypes = new HashMap<>();
@@ -127,7 +130,7 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
     }
 
     @Override
-    public void resolve(ChannelHandlerContext ctx, FullHttpRequest msg) {
+    public void resolve(ChannelHandlerContext ctx, FullHttpRequest msg) throws Exception {
 
         // check request method
         HttpRequestMethod requestMethod = HttpRequestMethod.getInstance(msg.method().name());
