@@ -16,50 +16,28 @@
 
 package com.github.berrywang1996.netty.spring.web.websocket.bind.annotation;
 
-import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageConsumerEndpoint;
-import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageProducerEndpoint;
+import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
 
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
+import java.lang.annotation.*;
 
 /**
- * <pre>
- * /-----------------------------------------------------------------------------------\
- * | PRODUCER | CONSUMER | PIPELINE                                                    |
- * |----------|----------|-------------------------------------------------------------|
- * | ONE      | ONE      | one user send message -> server -> one user receive message |
- * |----------|----------|-------------------------------------------------------------|
- * | ONE      | MANY     | one user send message -> server -> all user receive message |
- * |----------|----------|-------------------------------------------------------------|
- * | SERVICE  | ONE      | server send message   -> single user receive message        |
- * |----------|----------|-------------------------------------------------------------|
- * | SERVICE  | MANY     | server send message   -> all user receive message           |
- * \-----------------------------------------------------------------------------------/
- * </pre>
- *
  * @author berrywang1996
  * @since V1.0.0
  */
-@Target({ElementType.METHOD})
+@Target({ElementType.METHOD, ElementType.TYPE})
 @Retention(RetentionPolicy.RUNTIME)
+@Documented
 public @interface MessageMapping {
 
     /**
      * url
      */
-    String value() default "";
+    String[] value() default "";
 
     /**
      * message producer
      */
-    MessageProducerEndpoint producer() default MessageProducerEndpoint.ONE;
-
-    /**
-     * message consumer
-     */
-    MessageConsumerEndpoint consumer() default MessageConsumerEndpoint.ONE;
+    MessageType messageType() default MessageType.TEXT_MESSAGE;
 
     /**
      * port. If port is null, the application will map the method

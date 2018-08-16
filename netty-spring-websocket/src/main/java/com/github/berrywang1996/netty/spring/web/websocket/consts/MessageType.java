@@ -20,8 +20,36 @@ package com.github.berrywang1996.netty.spring.web.websocket.consts;
  * @author berrywang1996
  * @since V1.0.0
  */
-public enum MessageConsumerEndpoint {
+public enum MessageType {
 
-    ONE, MANY,
+    /**
+     *
+     */
+    HANDSHAKE,
+
+    /**
+     *
+     */
+    PING,
+
+    /**
+     *
+     */
+    TEXT_MESSAGE,
+
+    /**
+     *
+     */
+    BINARY_MESSAGE,
+
+    /**
+     *
+     */
+    ERROR,
+
+    /**
+     *
+     */
+    CLOSE
 
 }
