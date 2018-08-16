@@ -22,8 +22,10 @@ import com.github.berrywang1996.netty.spring.web.util.ServiceHandlerUtil;
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import io.netty.channel.*;
 import io.netty.handler.codec.http.*;
+import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import io.netty.handler.stream.ChunkedFile;
+import io.netty.util.AttributeKey;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.util.PathMatcher;
@@ -44,6 +46,8 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
  */
 @Slf4j
 public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
+
+    public static final AttributeKey<FullHttpRequest> REQUEST_IN_CHANNEL = AttributeKey.valueOf("request");
 
     private WebMappingSupporter mappingRuntimeSupporter;
 
@@ -87,8 +91,21 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
         } else if (msg instanceof WebSocketFrame) {
 
-            // TODO websocket 待完成
-            WebSocketFrame webSocketFrame = (WebSocketFrame) msg;
+            // get url from channel attribute, set attribute in first handshake
+            String uri = ctx.channel().attr(REQUEST_IN_CHANNEL).get().uri();
+
+            // get mapping resolver
+            AbstractMappingResolver mappingResolver = getMappingResolver(uri);
+
+            if (mappingResolver != null) {
+                // if mapped
+                mappingResolver.resolve(ctx, msg);
+            } else {
+                // if not mapped, close websocket
+                log.warn("Unknown message from uri {}, close channel.", uri);
+                ctx.writeAndFlush(new TextWebSocketFrame("Unknown sources."));
+                ctx.close();
+            }
 
         }
 
