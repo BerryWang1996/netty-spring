@@ -86,7 +86,7 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
                     List<String> mappingUrls = getMappingUrls(method);
 
                     // map
-                    log.info("Mapping {{}{}} onto {}",
+                    log.info("Mapping request {{}{}} onto {}",
                             mappingUrls,
                             annotation.method().length > 0 ? ",method=" + Arrays.toString(annotation.method()) : "",
                             method);
