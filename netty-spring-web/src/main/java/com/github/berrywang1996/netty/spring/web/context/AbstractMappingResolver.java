@@ -84,7 +84,7 @@ public abstract class AbstractMappingResolver<T, K> {
         this.pathMatcher = pathMatcher;
     }
 
-    public abstract void resolve(ChannelHandlerContext ctx, T msg);
+    public abstract void resolve(ChannelHandlerContext ctx, T msg) throws Exception;
 
     public Map<K, Map<String, Class>> parseMethodParameters() {
         Map<K, Map<String, Class>> tempMethodParamTypes = new HashMap<>();
