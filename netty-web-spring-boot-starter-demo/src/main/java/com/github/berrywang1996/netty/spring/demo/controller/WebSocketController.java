@@ -6,7 +6,7 @@ import com.github.berrywang1996.netty.spring.web.websocket.bind.annotation.Autow
 import com.github.berrywang1996.netty.spring.web.websocket.bind.annotation.MessageMapping;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
 import com.github.berrywang1996.netty.spring.web.websocket.context.BinaryMessage;
-import com.github.berrywang1996.netty.spring.web.websocket.context.Message;
+import com.github.berrywang1996.netty.spring.web.websocket.context.AbstractMessage;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSender;
 import com.github.berrywang1996.netty.spring.web.websocket.context.TextMessage;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +23,7 @@ import java.util.UUID;
 @Slf4j
 @Controller
 @MessageMapping("/ws")
+@RequestMapping("/ws")
 public class WebSocketController {
 
     @AutowiredMessageSender
@@ -39,6 +40,17 @@ public class WebSocketController {
         dataMap.put("test url session nums", messageSender.getSessionNums("/ws/test"));
 
         return dataMap;
+    }
+
+    @RequestMapping("/sendWebsocketMessage")
+    @ResponseBody
+    public String sendWebsocketMessage() {
+        try {
+            messageSender.topicMessage("/ws/test", new TextMessage("Hello everybody!~"));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return "success";
     }
 
     @MessageMapping(value = TEST_URI, messageType = MessageType.HANDSHAKE)
@@ -71,9 +83,8 @@ public class WebSocketController {
             String sessionId1 = UUID.randomUUID().toString();
             String sessionId2 = UUID.randomUUID().toString();
             if (messageSender.isSessionAlive(sessionId1, sessionId2)) {
-                messageSender.sendMessage(TEST_URI, new Message(), sessionId1);
-                messageSender.sendMessage(TEST_URI, new BinaryMessage(), sessionId1, sessionId2);
-                messageSender.topicMessage(TEST_URI, new TextMessage());
+                messageSender.sendMessage(TEST_URI, new BinaryMessage(null), sessionId1, sessionId2);
+                messageSender.topicMessage(TEST_URI, new TextMessage("testSendMessage"));
             }
         } catch (Exception e) {
             e.printStackTrace();

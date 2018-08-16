@@ -56,12 +56,20 @@ public class DefaultMessageSender implements MessageSender {
     }
 
     @Override
-    public void sendMessage(String uri, Message message, String... sessionIds) throws Exception {
+    public void sendMessage(String uri, AbstractMessage message, String... sessionIds) throws Exception {
 
     }
 
     @Override
-    public void topicMessage(String uri, Message message, String... sessionIds) throws Exception {
-
+    public void topicMessage(String uri, AbstractMessage message) throws Exception {
+        MessageMappingResolver resolver = resolverMap.get(uri);
+        if (resolver == null) {
+            return;
+        }
+        Map<String, MessageSession> sessionMap = resolver.getSessionMap();
+        for (MessageSession session : sessionMap.values()) {
+            session.getChannelHandlerContext().writeAndFlush(message.responseMsg());
+        }
     }
+
 }

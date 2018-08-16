@@ -47,16 +47,15 @@ public interface MessageSender {
      * @param sessionIds session ids
      * @throws Exception if any session closed, throw exception after execution
      */
-    void sendMessage(String uri, Message message, String... sessionIds) throws Exception;
+    void sendMessage(String uri, AbstractMessage message, String... sessionIds) throws Exception;
 
     /**
      * Send message. If any session closed, throw exception after execution.
      *
      * @param uri        target uri
      * @param message    message content
-     * @param sessionIds session ids
      * @throws Exception if any session closed, throw exception after execution
      */
-    void topicMessage(String uri, Message message, String... sessionIds) throws Exception;
+    void topicMessage(String uri, AbstractMessage message) throws Exception;
 
 }
