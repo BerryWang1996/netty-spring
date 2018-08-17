@@ -43,6 +43,8 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
 
     private NettyServerStartupProperties startupProperties;
 
+    private ApplicationContext applicationContext;
+
     private Map<String, RequestMappingResolver> resolverMap = new HashMap<>();
 
     @Override
@@ -50,11 +52,14 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
                                                                       ApplicationContext applicationContext) {
 
         this.startupProperties = startupProperties;
+        this.applicationContext = applicationContext;
 
         Map<String, Object> beans = applicationContext.getBeansWithAnnotation(Component.class);
+        log.debug("Find method had annotation \"DeleteMapping\" \"GetMapping\" \"PostMapping\" \"PutMapping\" or " +
+                "\"RequestMapping\"");
         for (Map.Entry<String, Object> controllerBean : beans.entrySet()) {
             /*
-               find method had annotation in
+               find method had annotation
                    DeleteMapping
                    GetMapping
                    PostMapping
@@ -67,17 +72,20 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
                 RequestMapping annotation = AnnotatedElementUtils.findMergedAnnotation(method, RequestMapping.class);
                 if (annotation != null) {
 
+                    log.debug("Found annotation {} at method {}", annotation, method);
+
                     // check port
                     if (annotation.port().length != 0) {
                         boolean notMap = true;
-                        int[] ports = annotation.port();
-                        for (int port : ports) {
+                        for (int port : annotation.port()) {
                             if (port == this.startupProperties.getPort()) {
                                 notMap = false;
                                 break;
                             }
                         }
                         if (notMap) {
+                            log.debug("The method marked ports did not contained port {}",
+                                    this.startupProperties.getPort());
                             continue;
                         }
                     }

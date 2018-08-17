@@ -55,6 +55,7 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         injectMessageSender();
 
         Map<String, Object> beans = applicationContext.getBeansWithAnnotation(Component.class);
+        log.debug("Find method had annotation \"MessageMapping\"");
         for (Map.Entry<String, Object> controllerBean : beans.entrySet()) {
             /*
                find method had annotation MessageMapping
@@ -64,6 +65,8 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
                 MessageMapping annotation = AnnotatedElementUtils.findMergedAnnotation(method, MessageMapping.class);
 
                 if (annotation != null) {
+
+                    log.debug("Found annotation {} at method {}", annotation, method);
 
                     // check port
                     if (annotation.port().length != 0) {
@@ -76,6 +79,8 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
                             }
                         }
                         if (notMap) {
+                            log.debug("The method marked ports did not contained port {}",
+                                    this.startupProperties.getPort());
                             continue;
                         }
                     }
@@ -120,6 +125,8 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
     }
 
     private void injectMessageSender() {
+
+        log.debug("Try to inject message sender into object.");
 
         MessageSender messageSender = new DefaultMessageSender(resolverMap);
 

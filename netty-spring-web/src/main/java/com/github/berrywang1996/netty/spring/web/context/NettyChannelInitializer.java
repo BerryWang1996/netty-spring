@@ -27,6 +27,7 @@ import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.stream.ChunkedWriteHandler;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.File;
 
@@ -34,6 +35,7 @@ import java.io.File;
  * @author berrywang1996
  * @since V1.0.0
  */
+@Slf4j
 public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
 
     private NettyServerBootstrap nettyServerBootstrap;
@@ -50,11 +52,15 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
         if (nettyServerBootstrap.getStartupProperties().getSsl() != null
                 && nettyServerBootstrap.getStartupProperties().getSsl().isEnable()) {
             File certificateFile = new File(nettyServerBootstrap.getStartupProperties().getSsl().getCertificate());
-            File privateKeyFile = new File(nettyServerBootstrap.getStartupProperties().getSsl().getCertificate());
+            File privateKeyFile = new File(nettyServerBootstrap.getStartupProperties().getSsl().getCertificateKey());
             sslCtx = SslContextBuilder.forServer(certificateFile, privateKeyFile).build();
+            log.debug("Enable ssl, certificate file:{}, private key file:{}",
+                    certificateFile.getPath(),
+                    privateKeyFile.getCanonicalPath());
         }
 
         // Runtime supporter
+        log.debug("Init web mapping supporter.");
         supporter = new WebMappingSupporter(
                 nettyServerBootstrap.getStartupProperties(),
                 nettyServerBootstrap.getApplicationContext());

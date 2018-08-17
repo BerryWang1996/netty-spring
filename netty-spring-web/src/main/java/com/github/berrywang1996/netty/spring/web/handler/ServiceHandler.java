@@ -63,17 +63,22 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
         if (msg instanceof FullHttpRequest) {
 
+            log.debug("Received a http request.");
+
             FullHttpRequest request = (FullHttpRequest) msg;
             String baseUri = getBaseUri(request);
 
             // get mapping resolver
+            log.debug("Get request mapping resolver.");
             AbstractMappingResolver mappingResolver = getMappingResolver(baseUri);
 
             if (mappingResolver != null) {
                 // if mapped
+                log.debug("Found mapped resolver {}.", mappingResolver);
                 mappingResolver.resolve(ctx, msg);
             } else {
                 // if not mapped, may be request a file
+                log.debug("Not found mapped resolver. Try to find a file in root directory.");
                 if (StringUtil.isBlank(baseUri) || "/".equals(baseUri)) {
                     ServiceHandlerUtil.HttpErrorMessage errorMsg =
                             new ServiceHandlerUtil.HttpErrorMessage(
@@ -91,14 +96,18 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
         } else if (msg instanceof WebSocketFrame) {
 
+            log.debug("Received a websocket frame.");
+
             // get url from channel attribute, set attribute in first handshake
             String uri = ctx.channel().attr(REQUEST_IN_CHANNEL).get().uri();
 
             // get mapping resolver
+            log.debug("Get message mapping resolver.");
             AbstractMappingResolver mappingResolver = getMappingResolver(uri);
 
             if (mappingResolver != null) {
                 // if mapped
+                log.debug("Found mapped resolver {}.", mappingResolver);
                 mappingResolver.resolve(ctx, msg);
             } else {
                 // if not mapped, close websocket
