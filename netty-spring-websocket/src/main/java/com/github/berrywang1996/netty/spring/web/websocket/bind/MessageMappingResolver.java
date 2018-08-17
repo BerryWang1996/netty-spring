@@ -288,10 +288,14 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             if (e instanceof InvocationTargetException) {
                 e = (Exception) ((InvocationTargetException) e).getTargetException();
             }
-            method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
-                    messageSession, MessageType.ON_ERROR, e));
+            try {
+                method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
+                        messageSession, MessageType.ON_ERROR, e));
+            } catch (InvocationTargetException e1) {
+                throw (Exception) e1.getTargetException();
+            }
         } else {
-            throw (Exception) e;
+            throw e;
         }
     }
 
