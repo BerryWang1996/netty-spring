@@ -1,7 +1,11 @@
 package com.github.berrywang1996.netty.spring.web.websocket.context;
 
 import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
+import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSessionClosedException;
+import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageUriNotDefinedException;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -36,7 +40,7 @@ public class DefaultMessageSender implements MessageSender {
     }
 
     @Override
-    public Set<String> registeredUri() {
+    public Set<String> getRegisteredUri() {
         return resolverMap.keySet();
     }
 
@@ -56,15 +60,34 @@ public class DefaultMessageSender implements MessageSender {
     }
 
     @Override
-    public void sendMessage(String uri, AbstractMessage message, String... sessionIds) throws Exception {
-
+    public void sendMessage(String uri, AbstractMessage message, String... sessionIds) throws MessageUriNotDefinedException, MessageSessionClosedException {
+        MessageMappingResolver resolver = resolverMap.get(uri);
+        if (resolver == null) {
+            throw new MessageUriNotDefinedException(uri);
+        }
+        Map<String, MessageSession> sessionMap = resolver.getSessionMap();
+        List<String> closedSessionIds = null;
+        for (String sessionId : sessionIds) {
+            MessageSession session = sessionMap.get(sessionId);
+            if (session == null) {
+                if (closedSessionIds == null) {
+                    closedSessionIds = new ArrayList<>();
+                }
+                closedSessionIds.add(sessionId);
+            } else {
+                session.getChannelHandlerContext().writeAndFlush(message.responseMsg());
+            }
+        }
+        if (closedSessionIds != null && closedSessionIds.size() > 0) {
+            throw new MessageSessionClosedException(closedSessionIds);
+        }
     }
 
     @Override
-    public void topicMessage(String uri, AbstractMessage message) throws Exception {
+    public void topicMessage(String uri, AbstractMessage message) throws MessageUriNotDefinedException {
         MessageMappingResolver resolver = resolverMap.get(uri);
         if (resolver == null) {
-            return;
+            throw new MessageUriNotDefinedException(uri);
         }
         Map<String, MessageSession> sessionMap = resolver.getSessionMap();
         for (MessageSession session : sessionMap.values()) {

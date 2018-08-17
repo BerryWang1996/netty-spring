@@ -1,5 +1,8 @@
 package com.github.berrywang1996.netty.spring.web.websocket.context;
 
+import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSessionClosedException;
+import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageUriNotDefinedException;
+
 import java.util.Set;
 
 /**
@@ -28,7 +31,7 @@ public interface MessageSender {
      *
      * @return registered uri
      */
-    Set<String> registeredUri();
+    Set<String> getRegisteredUri();
 
     /**
      * If any session closed, return false.
@@ -45,17 +48,19 @@ public interface MessageSender {
      * @param uri        target uri
      * @param message    message content
      * @param sessionIds session ids
-     * @throws Exception if any session closed, throw exception after execution
+     * @throws MessageUriNotDefinedException Message uri not defined
+     * @throws MessageSessionClosedException if any session closed, throw exception after execution
      */
-    void sendMessage(String uri, AbstractMessage message, String... sessionIds) throws Exception;
+    void sendMessage(String uri, AbstractMessage message, String... sessionIds) throws MessageUriNotDefinedException,
+            MessageSessionClosedException;
 
     /**
      * Send message. If any session closed, throw exception after execution.
      *
-     * @param uri        target uri
-     * @param message    message content
-     * @throws Exception if any session closed, throw exception after execution
+     * @param uri     target uri
+     * @param message message content
+     * @throws MessageUriNotDefinedException Message uri not defined
      */
-    void topicMessage(String uri, AbstractMessage message) throws Exception;
+    void topicMessage(String uri, AbstractMessage message) throws MessageUriNotDefinedException;
 
 }

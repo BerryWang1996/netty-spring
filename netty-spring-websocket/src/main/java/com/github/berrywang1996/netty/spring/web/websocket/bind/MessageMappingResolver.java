@@ -34,9 +34,11 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static io.netty.handler.codec.http.HttpMethod.GET;
 import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
@@ -50,7 +52,7 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 @Slf4j
 public class MessageMappingResolver extends AbstractMappingResolver<Object, MessageType> {
 
-    public static final AttributeKey<String> SESSION_ID_IN_CHANNEL = AttributeKey.valueOf("sessionId");
+    private static final AttributeKey<String> SESSION_ID_IN_CHANNEL = AttributeKey.valueOf("sessionId");
 
     private static final String WEBSOCKET_UPGRADE_HEADER = "websocket";
 
@@ -61,7 +63,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     public MessageMappingResolver(String url, Map<MessageType, Method> methods, Object invokeRef) {
         super(url, methods, invokeRef);
         // create new session map, maintain session relations
-        this.sessionMap = new HashMap<>();
+        this.sessionMap = new ConcurrentHashMap<>();
     }
 
     @Override
@@ -70,126 +72,273 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (msg instanceof FullHttpRequest) {
 
             FullHttpRequest request = (FullHttpRequest) msg;
-
-            // Handle a bad request.
-            if (!request.decoderResult().isSuccess()) {
-                sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, BAD_REQUEST));
+            // check message request
+            if (!isMessageRequestLegal(ctx, request)) {
                 return;
             }
-
-            // Allow only GET methods.
-            if (request.method() != GET) {
-                sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, FORBIDDEN));
-                return;
-            }
-
-            // check headers contain Upgrade header
-            if (!WEBSOCKET_UPGRADE_HEADER.equals(request.headers().get(HttpHeaderNames.UPGRADE).toLowerCase())
-                    || !WEBSOCKET_CONNECTION_HEADER.equals(request.headers().get(HttpHeaderNames.CONNECTION).toLowerCase())) {
-                sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, FORBIDDEN));
-                return;
-            }
-
-            // do handshake
-            Method method = getMethod(MessageType.HANDSHAKE);
-            if (method != null) {
-                try {
-                    Object invoke = method.invoke(getInvokeRef());
-                    if (invoke instanceof Boolean && !(boolean) invoke) {
-                        ctx.close();
-                    }
-                } catch (IllegalAccessException | InvocationTargetException e) {
-                    e.printStackTrace();
-                    ctx.close();
-                }
-            }
-
-            // update http to websocket
-            String protocol = ctx.pipeline().get(SslHandler.class) == null ? "ws://" : "wss://";
-            String wsUrl = protocol + request.headers().get(HttpHeaderNames.HOST) + request.uri();
-            WebSocketServerHandshakerFactory wsFactory = new WebSocketServerHandshakerFactory(wsUrl, null, false);
-            WebSocketServerHandshaker handShaker = wsFactory.newHandshaker(request);
-            if (handShaker == null) {
-                WebSocketServerHandshakerFactory.sendUnsupportedVersionResponse(ctx.channel());
-                return;
-            }
-            handShaker.handshake(ctx.channel(), request);
-
-            // set attribute request in ChannelHandlerContext, used for ServiceHandler get resolver
-            ctx.channel().attr(ServiceHandler.REQUEST_IN_CHANNEL).set(request);
-
-            // set attribute session id in ChannelHandlerContext, used for get current session
-            String sessionId = UUID.randomUUID().toString();
-            ctx.channel().attr(SESSION_ID_IN_CHANNEL).set(sessionId);
-
+            // on handshake
+            onHandshake(ctx, request);
             // create session
-            if (sessionMap.containsKey(sessionId)) {
-                log.warn("Duplicate session id.", sessionId);
-                ctx.writeAndFlush(new TextWebSocketFrame("Duplicate session id."));
-                ctx.close();
+            MessageSession session = crateMessageSession(ctx, request);
+            // do handshake
+            if (!doHandshake(ctx, request)) {
                 return;
             }
-            sessionMap.put(sessionId, new MessageSession(sessionId, ctx, request));
+            // put session into session map
+            sessionMap.put(session.getSessionId(), session);
+            // on connected
+            try {
+                onConnected(request, session);
+            } catch (Exception e) {
+                onException(msg, session, e);
+            }
 
         } else if (msg instanceof WebSocketFrame) {
 
             // if message session not exists, close connection
             String sessionId = ctx.channel().attr(SESSION_ID_IN_CHANNEL).get();
-            MessageSession messageSession = sessionMap.get(sessionId);
-            if (messageSession == null) {
-                log.warn("Session id {} has been closed.", sessionId);
+            MessageSession session = sessionMap.get(sessionId);
+
+            if (session == null) {
+                log.warn("Session {} has been closed.", sessionId);
                 ctx.writeAndFlush(new TextWebSocketFrame("Session has been closed."));
                 ctx.close();
                 return;
             }
 
             if (msg instanceof CloseWebSocketFrame) {
-
-                Method method = getMethod(MessageType.CLOSE);
-                if (method != null) {
-                    try {
-                        // TODO 未完成（参数解析）
-                        method.invoke(getInvokeRef());
-                    } catch (IllegalAccessException | InvocationTargetException e) {
-                        e.printStackTrace();
-                    }
-                }
-                ctx.close();
+                onClose((CloseWebSocketFrame) msg, session);
+                // close session
+                session.getChannelHandlerContext().close();
                 // remove session from session map
                 sessionMap.remove(sessionId);
-
             } else if (msg instanceof PingWebSocketFrame) {
-
-                Method method = getMethod(MessageType.PING);
-                if (method == null) {
-                    ctx.channel().write(new PongWebSocketFrame());
-                } else {
-                    try {
-                        // TODO 未完成（参数解析）
-                        method.invoke(getInvokeRef());
-                    } catch (IllegalAccessException | InvocationTargetException e) {
-                        e.printStackTrace();
-                    }
+                try {
+                    onPing((PingWebSocketFrame) msg, session);
+                } catch (Exception e) {
+                    onException(msg, session, e);
                 }
-
             } else if (msg instanceof TextWebSocketFrame) {
-
-                TextWebSocketFrame webSocketFrame = (TextWebSocketFrame) msg;
-                // TODO 未完成（参数解析）
-
+                try {
+                    onTextMessage((TextWebSocketFrame) msg, session);
+                } catch (Exception e) {
+                    onException(msg, session, e);
+                }
             } else if (msg instanceof BinaryWebSocketFrame) {
-
-                BinaryWebSocketFrame webSocketFrame = (BinaryWebSocketFrame) msg;
-                // TODO 未完成（参数解析）
-
+                try {
+                    onBinaryMessage((BinaryWebSocketFrame) msg, session);
+                } catch (Exception e) {
+                    onException(msg, session, e);
+                }
             } else {
-
-                log.warn("Unsupported message type.");
-
+                try {
+                    onOtherMessage((WebSocketFrame) msg, session);
+                } catch (Exception e) {
+                    onException(msg, session, e);
+                }
             }
             ctx.flush();
         }
+    }
 
+    private boolean isMessageRequestLegal(ChannelHandlerContext ctx, FullHttpRequest request) {
+
+        // Handle a bad request.
+        if (!request.decoderResult().isSuccess()) {
+            sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, BAD_REQUEST));
+            return false;
+        }
+        // Allow only GET methods.
+        if (request.method() != GET) {
+            sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, FORBIDDEN));
+            return false;
+        }
+        // check headers contain Upgrade header
+        if (!WEBSOCKET_UPGRADE_HEADER.equals(request.headers().get(HttpHeaderNames.UPGRADE).toLowerCase())
+                || !WEBSOCKET_CONNECTION_HEADER.equals(request.headers().get(HttpHeaderNames.CONNECTION).toLowerCase())) {
+            sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, FORBIDDEN));
+            return false;
+        }
+        return true;
+    }
+
+    private MessageSession crateMessageSession(ChannelHandlerContext ctx, FullHttpRequest request) {
+
+        // generate session id
+        String sessionId = UUID.randomUUID().toString();
+        if (sessionMap.containsKey(sessionId)) {
+            log.warn("Duplicate session id {}, retry.", sessionId);
+            return crateMessageSession(ctx, request);
+        }
+
+        // set attribute request in ChannelHandlerContext, used for ServiceHandler get resolver
+        ctx.channel().attr(ServiceHandler.REQUEST_IN_CHANNEL).set(request);
+
+        // set attribute session id in ChannelHandlerContext, used for get current session
+        ctx.channel().attr(SESSION_ID_IN_CHANNEL).set(sessionId);
+
+        // return new message session
+        return new MessageSession(sessionId, ctx, request);
+    }
+
+    private boolean doHandshake(ChannelHandlerContext ctx, FullHttpRequest request) {
+        String protocol = ctx.pipeline().get(SslHandler.class) == null ? "ws://" : "wss://";
+        String wsUrl = protocol + request.headers().get(HttpHeaderNames.HOST) + request.uri();
+        WebSocketServerHandshakerFactory wsFactory = new WebSocketServerHandshakerFactory(wsUrl, null, false);
+        WebSocketServerHandshaker handShaker = wsFactory.newHandshaker(request);
+        if (handShaker == null) {
+            WebSocketServerHandshakerFactory.sendUnsupportedVersionResponse(ctx.channel());
+            return false;
+        }
+        handShaker.handshake(ctx.channel(), request);
+        return true;
+    }
+
+    private void onHandshake(ChannelHandlerContext ctx, FullHttpRequest msg) {
+        Method handshakeMethod = getMethod(MessageType.ON_HANDSHAKE);
+        if (handshakeMethod != null) {
+            try {
+                Object invoke = handshakeMethod.invoke(getInvokeRef(), getMethodParam(msg, ctx, null,
+                        MessageType.ON_HANDSHAKE, null));
+                if (invoke instanceof Boolean && !(boolean) invoke) {
+                    ctx.close();
+                }
+            } catch (Exception e) {
+                log.debug("Caught exception when invoke handshake method: {}", e);
+                ctx.close();
+            }
+        }
+    }
+
+    private void onConnected(FullHttpRequest msg, MessageSession messageSession) throws Exception {
+        Method connectedMethod = getMethod(MessageType.ON_CONNECTED);
+        if (connectedMethod != null) {
+            connectedMethod.invoke(
+                    getInvokeRef(), getMethodParam(msg,
+                            messageSession.getChannelHandlerContext(),
+                            messageSession,
+                            MessageType.ON_CONNECTED,
+                            null));
+        }
+    }
+
+    private void onPing(PingWebSocketFrame msg, MessageSession messageSession) {
+        Method method = getMethod(MessageType.PING);
+        if (method == null) {
+            messageSession.getChannelHandlerContext().channel().write(new PongWebSocketFrame());
+        } else {
+            try {
+                method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
+                        messageSession, MessageType.PING, null));
+            } catch (IllegalAccessException | InvocationTargetException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void onTextMessage(TextWebSocketFrame msg, MessageSession messageSession) {
+        Method method = getMethod(MessageType.TEXT_MESSAGE);
+        if (method != null) {
+            try {
+                method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
+                        messageSession, MessageType.TEXT_MESSAGE, null));
+            } catch (IllegalAccessException | InvocationTargetException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void onBinaryMessage(BinaryWebSocketFrame msg, MessageSession messageSession) {
+        Method method = getMethod(MessageType.BINARY_MESSAGE);
+        if (method != null) {
+            try {
+                method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
+                        messageSession, MessageType.BINARY_MESSAGE, null));
+            } catch (IllegalAccessException | InvocationTargetException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void onOtherMessage(WebSocketFrame msg, MessageSession messageSession) {
+        Method method = getMethod(MessageType.OTHER);
+        try {
+            method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
+                    messageSession, MessageType.OTHER, null));
+        } catch (IllegalAccessException | InvocationTargetException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void onClose(CloseWebSocketFrame msg, MessageSession messageSession) {
+        Method method = getMethod(MessageType.ON_CLOSE);
+        if (method != null) {
+            try {
+                method.invoke(getInvokeRef(), getMethodParam(msg,
+                        messageSession.getChannelHandlerContext(), messageSession, MessageType.ON_CLOSE, null));
+            } catch (IllegalAccessException | InvocationTargetException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void onException(Object msg, MessageSession messageSession, Exception e) throws Exception {
+        Method method = getMethod(MessageType.ON_ERROR);
+        if (method != null) {
+            if (e instanceof InvocationTargetException) {
+                e = (Exception) ((InvocationTargetException) e).getTargetException();
+            }
+            method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
+                    messageSession, MessageType.ON_ERROR, e));
+        } else {
+            throw (Exception) e;
+        }
+    }
+
+    private Object[] getMethodParam(Object message, ChannelHandlerContext ctx, MessageSession session,
+                                    MessageType messageType, Exception e) {
+        List<Object> methodParams = new ArrayList<>();
+        Map<String, Class> methodParamType = getMethodParamType(messageType);
+        for (Map.Entry<String, Class> methodEntry : methodParamType.entrySet()) {
+            Class value = methodEntry.getValue();
+            if (value == MessageSession.class) {
+                // MessageSession
+                methodParams.add(session);
+            } else if (ChannelHandlerContext.class.isAssignableFrom(value)) {
+                // ChannelHandlerContext
+                methodParams.add(ctx);
+            } else if (HttpRequest.class.isAssignableFrom(value) && (messageType == MessageType.ON_HANDSHAKE)) {
+                // HttpRequest
+                methodParams.add(message);
+            } else if (HttpRequest.class.isAssignableFrom(value) && (messageType == MessageType.ON_CONNECTED)) {
+                // HttpRequest
+                methodParams.add(message);
+            } else if (HttpRequest.class.isAssignableFrom(value)) {
+                // HttpRequest
+                methodParams.add(session.getFirstRequest());
+            } else if (TextWebSocketFrame.class.isAssignableFrom(value) && messageType == MessageType.TEXT_MESSAGE) {
+                // TextWebSocketFrame
+                methodParams.add(message);
+            } else if (BinaryWebSocketFrame.class.isAssignableFrom(value) && messageType == MessageType.BINARY_MESSAGE) {
+                // BinaryWebSocketFrame
+                methodParams.add(message);
+            } else if (WebSocketFrame.class.isAssignableFrom(value) && messageType == MessageType.OTHER) {
+                // WebSocketFrame
+                methodParams.add(message);
+            } else if (PingWebSocketFrame.class.isAssignableFrom(value) && messageType == MessageType.PING) {
+                // PingWebSocketFrame
+                methodParams.add(message);
+            } else if (CloseWebSocketFrame.class.isAssignableFrom(value) && messageType == MessageType.ON_CLOSE) {
+                // CloseWebSocketFrame
+                methodParams.add(message);
+            } else if (Exception.class.isAssignableFrom(value) && messageType == MessageType.ON_ERROR) {
+                // Exception
+                methodParams.add(e);
+            } else {
+                methodParams.add(null);
+            }
+        }
+        return methodParams.toArray();
     }
 
     private static void sendHttpResponse(ChannelHandlerContext ctx, FullHttpRequest req, FullHttpResponse res) {
@@ -211,4 +360,5 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     public Map<String, MessageSession> getSessionMap() {
         return sessionMap;
     }
+
 }

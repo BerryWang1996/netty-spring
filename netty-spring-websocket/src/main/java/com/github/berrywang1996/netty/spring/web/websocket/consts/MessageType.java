@@ -23,33 +23,58 @@ package com.github.berrywang1996.netty.spring.web.websocket.consts;
 public enum MessageType {
 
     /**
-     *
+     * Close current session if the method throws an exception or returns false of Boolean type. The method marked by
+     * \@MessageMapping(messageType=ON_HANDSHAKE) will be execute before handshake. The method marked by
+     * \@MessageMapping(messageType=ERROR) will be execute If the method throws an exception.
      */
-    HANDSHAKE,
+    ON_HANDSHAKE,
 
     /**
-     *
+     * Ignore return value. The method marked by @MessageMapping(messageType=ON_CONNECTED) will be execute when
+     * connected. The method marked by @MessageMapping(messageType=ERROR) will be execute If the method throws an
+     * exception.
+     */
+    ON_CONNECTED,
+
+    /**
+     * Ignore return value. The method marked by @MessageMapping(messageType=PING) will be execute when received ping
+     * frame. If no method marked by this, the server will response a PongWebSocketFrame. The method marked by
+     * \@MessageMapping(messageType=ERROR) will be execute If the method throws an exception.
      */
     PING,
 
     /**
-     *
+     * Ignore return value. The method marked by @MessageMapping(messageType=TEXT_MESSAGE) will be execute when
+     * received text message. The method marked by @MessageMapping (messageType = ERROR) will be execute If the
+     * method throws an exception.
      */
     TEXT_MESSAGE,
 
     /**
-     *
+     * Ignore return value. The method marked by @MessageMapping(messageType=BINARY_MESSAGE) will be execute when
+     * received binary message. The method marked by @MessageMapping (messageType = ERROR) will be execute If the
+     * method throws an exception.
      */
     BINARY_MESSAGE,
 
     /**
-     *
+     * If the method marked by @MessageMapping(messageType=ON_HANDSHAKE/ON_CONNECTED/PING/TEXT_MESSAGE/BINARY_MESSAGE
+     * /OTHER) throws exception. The method marked by @MessageMapping(messageType=ERROR)the will be execute. Also you
+     * can throws exception to netty.
      */
-    ERROR,
+    ON_ERROR,
 
     /**
-     *
+     * Ignore return value and exception. The method marked by @MessageMapping(messageType=ON_CLOSE) will be execute
+     * when close session.
      */
-    CLOSE
+    ON_CLOSE,
+
+    /**
+     * Ignore return value. The method marked by @MessageMapping(messageType=OTHER) will be execute when received
+     * undefined message type. The method marked by @MessageMapping (messageType = ERROR) will be execute If the
+     * method throws an exception.
+     */
+    OTHER
 
 }

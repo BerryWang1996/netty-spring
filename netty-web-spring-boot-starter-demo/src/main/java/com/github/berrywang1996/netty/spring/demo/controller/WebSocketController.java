@@ -5,16 +5,19 @@ import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.ResponseBod
 import com.github.berrywang1996.netty.spring.web.websocket.bind.annotation.AutowiredMessageSender;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.annotation.MessageMapping;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
-import com.github.berrywang1996.netty.spring.web.websocket.context.BinaryMessage;
-import com.github.berrywang1996.netty.spring.web.websocket.context.AbstractMessage;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSender;
+import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
 import com.github.berrywang1996.netty.spring.web.websocket.context.TextMessage;
+import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Controller;
 
+import java.lang.reflect.InvocationTargetException;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
+import java.util.Set;
 
 /**
  * @author berrywang1996
@@ -22,73 +25,72 @@ import java.util.UUID;
  */
 @Slf4j
 @Controller
-@MessageMapping("/ws")
 @RequestMapping("/ws")
 public class WebSocketController {
 
     @AutowiredMessageSender
     private MessageSender messageSender;
 
-    private static final String TEST_URI = "/test";
-
-    @RequestMapping("/info")
-    @ResponseBody
-    public Object getInfo() {
-
-        Map<String, Object> dataMap = new HashMap<>();
-        dataMap.put("session numbers", messageSender.getSessionNums());
-        dataMap.put("test url session nums", messageSender.getSessionNums("/ws/test"));
-
-        return dataMap;
-    }
+    private static final String TEST_URI = "/ws/test";
 
     @RequestMapping("/sendWebsocketMessage")
     @ResponseBody
-    public String sendWebsocketMessage() {
+    public String sendWebsocketMessage(String message) {
         try {
-            messageSender.topicMessage("/ws/test", new TextMessage("Hello everybody!~"));
+            messageSender.topicMessage(TEST_URI, new TextMessage(message));
         } catch (Exception e) {
             e.printStackTrace();
         }
         return "success";
     }
 
-    @MessageMapping(value = TEST_URI, messageType = MessageType.HANDSHAKE)
-    public boolean testHandShake() {
-        return true;
+    @MessageMapping(value = TEST_URI, messageType = MessageType.ON_HANDSHAKE)
+    public void testHandShake(HttpRequest request) {
+        log.info("testHandShake ok");
+    }
+
+    @MessageMapping(value = TEST_URI, messageType = MessageType.ON_CONNECTED)
+    public void testConnected(HttpRequest request, MessageSession messageSession) {
+        log.info("testConnected ok");
+        if (System.currentTimeMillis() % 2 == 0) {
+            throw new RuntimeException("haha");
+        }
     }
 
     @MessageMapping(value = TEST_URI, messageType = MessageType.TEXT_MESSAGE)
-    public void testTextMessage() {
-
+    public void testTextMessage(HttpRequest request, TextWebSocketFrame text) {
+        log.info("testTextMessage ok, received message: {}", text.text());
     }
 
     @MessageMapping(value = TEST_URI, messageType = MessageType.BINARY_MESSAGE)
-    public void testBinaryMessage() {
-
+    public void testBinaryMessage(HttpRequest request, BinaryWebSocketFrame binary) {
+        log.info("testTextMessage ok, received message: {}", binary.content());
     }
 
     @MessageMapping(value = TEST_URI, messageType = MessageType.PING)
     public void testPing() {
-
+        log.info("get ping");
     }
 
-    @MessageMapping(value = TEST_URI, messageType = MessageType.ERROR)
-    public void testError() {
-
+    @MessageMapping(value = TEST_URI, messageType = MessageType.ON_ERROR)
+    public void testError(Exception e) {
+        log.info("get exception");
     }
 
-    public void testSendMessage() {
-        try {
-            String sessionId1 = UUID.randomUUID().toString();
-            String sessionId2 = UUID.randomUUID().toString();
-            if (messageSender.isSessionAlive(sessionId1, sessionId2)) {
-                messageSender.sendMessage(TEST_URI, new BinaryMessage(null), sessionId1, sessionId2);
-                messageSender.topicMessage(TEST_URI, new TextMessage("testSendMessage"));
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
+    @RequestMapping("/info")
+    @ResponseBody
+    public Object getInfo() {
+
+        Set<String> registeredUris = messageSender.getRegisteredUri();
+        Map<String, Integer> sessionNums = new HashMap<>();
+        for (String registeredUri : registeredUris) {
+            sessionNums.put(registeredUri, messageSender.getSessionNums(registeredUri));
         }
+
+        Map<String, Object> dataMap = new HashMap<>(1);
+        dataMap.put("session map", sessionNums);
+
+        return dataMap;
     }
 
 }
