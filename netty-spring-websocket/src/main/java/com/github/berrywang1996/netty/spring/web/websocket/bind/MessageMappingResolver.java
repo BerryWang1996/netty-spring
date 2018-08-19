@@ -154,7 +154,9 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             return false;
         }
         // check headers contain Upgrade header
-        if (!WEBSOCKET_UPGRADE_HEADER.equals(request.headers().get(HttpHeaderNames.UPGRADE).toLowerCase())
+        if (request.headers().get(HttpHeaderNames.UPGRADE) == null
+                || request.headers().get(HttpHeaderNames.CONNECTION) == null
+                || !WEBSOCKET_UPGRADE_HEADER.equals(request.headers().get(HttpHeaderNames.UPGRADE).toLowerCase())
                 || !WEBSOCKET_CONNECTION_HEADER.equals(request.headers().get(HttpHeaderNames.CONNECTION).toLowerCase())) {
             sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, FORBIDDEN));
             return false;
