@@ -200,9 +200,9 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
                         requestParameterMap.get(methodParamEntry.getKey()), methodParamEntry.getValue()));
             } else {
                 // else if start with method parameter name, put into tempMethodParamType
-                for (String requestKey : requestParameterMap.keySet()) {
-                    if (requestKey.startsWith(methodParamEntry.getKey())) {
-                        tempMethodParamType.put(requestKey, requestParameterMap.get(requestKey));
+                for (Map.Entry<String, String> entry : requestParameterMap.entrySet()) {
+                    if (entry.getKey().startsWith(methodParamEntry.getKey())) {
+                        tempMethodParamType.put(entry.getKey(), requestParameterMap.get(entry.getKey()));
                     }
                 }
                 // TODO 数据校验

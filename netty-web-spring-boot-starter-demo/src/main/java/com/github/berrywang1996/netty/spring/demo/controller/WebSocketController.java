@@ -14,7 +14,6 @@ import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Controller;
 
-import java.lang.reflect.InvocationTargetException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -52,9 +51,6 @@ public class WebSocketController {
     @MessageMapping(value = TEST_URI, messageType = MessageType.ON_CONNECTED)
     public void testConnected(HttpRequest request, MessageSession messageSession) {
         log.info("testConnected ok");
-        if (System.currentTimeMillis() % 2 == 0) {
-            throw new RuntimeException("haha");
-        }
     }
 
     @MessageMapping(value = TEST_URI, messageType = MessageType.TEXT_MESSAGE)

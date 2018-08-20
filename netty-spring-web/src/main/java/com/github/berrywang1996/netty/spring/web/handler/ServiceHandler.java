@@ -60,64 +60,84 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Object msg) throws Exception {
-
         if (msg instanceof FullHttpRequest) {
-
-            log.debug("Received a http request.");
-
-            FullHttpRequest request = (FullHttpRequest) msg;
-            String baseUri = getBaseUri(request);
-
-            // get mapping resolver
-            log.debug("Get request mapping resolver.");
-            AbstractMappingResolver mappingResolver = getMappingResolver(baseUri);
-
-            if (mappingResolver != null) {
-                // if mapped
-                log.debug("Found mapped resolver {}.", mappingResolver);
-                mappingResolver.resolve(ctx, msg);
-            } else {
-                // if not mapped, may be request a file
-                log.debug("Not found mapped resolver. Try to find a file in root directory.");
-                if (StringUtil.isBlank(baseUri) || "/".equals(baseUri)) {
-                    ServiceHandlerUtil.HttpErrorMessage errorMsg =
-                            new ServiceHandlerUtil.HttpErrorMessage(
-                                    HttpResponseStatus.FORBIDDEN,
-                                    request.uri(),
-                                    null,
-                                    null);
-                    ServiceHandlerUtil.sendError(ctx, request, errorMsg);
-                    return;
-                }
-                String localPath = this.mappingRuntimeSupporter.getStartupProperties().getRootLocation() + baseUri;
-                localPath = localPath.replace("/", File.separator);
-                handleFile(ctx, (FullHttpRequest) msg, localPath);
+            try {
+                handleHttpRequest(ctx, msg);
+            } catch (Exception e) {
+                handleHttpRequestException(ctx, msg);
             }
-
         } else if (msg instanceof WebSocketFrame) {
-
-            log.debug("Received a websocket frame.");
-
-            // get url from channel attribute, set attribute in first handshake
-            String uri = ctx.channel().attr(REQUEST_IN_CHANNEL).get().uri();
-
-            // get mapping resolver
-            log.debug("Get message mapping resolver.");
-            AbstractMappingResolver mappingResolver = getMappingResolver(uri);
-
-            if (mappingResolver != null) {
-                // if mapped
-                log.debug("Found mapped resolver {}.", mappingResolver);
-                mappingResolver.resolve(ctx, msg);
-            } else {
-                // if not mapped, close websocket
-                log.warn("Unknown message from uri {}, close channel.", uri);
-                ctx.writeAndFlush(new TextWebSocketFrame("Unknown sources."));
-                ctx.close();
+            try {
+                handleWebSocketFrame(ctx, msg);
+            } catch (Exception e) {
+                handleWebSocketFrameException(ctx, msg);
             }
+        }
+    }
 
+    private void handleHttpRequest(ChannelHandlerContext ctx, Object msg) throws Exception {
+
+        log.debug("Received a http request.");
+
+        FullHttpRequest request = (FullHttpRequest) msg;
+        String baseUri = getBaseUri(request);
+
+        // get mapping resolver
+        log.debug("Get request mapping resolver.");
+        AbstractMappingResolver mappingResolver = getMappingResolver(baseUri);
+
+        if (mappingResolver != null) {
+            // if mapped
+            log.debug("Found mapped resolver {}.", mappingResolver);
+            mappingResolver.resolve(ctx, msg);
+        } else {
+            // if not mapped, may be request a file
+            log.debug("Not found mapped resolver. Try to find a file in root directory.");
+            if (StringUtil.isBlank(baseUri) || "/".equals(baseUri)) {
+                ServiceHandlerUtil.HttpErrorMessage errorMsg =
+                        new ServiceHandlerUtil.HttpErrorMessage(
+                                HttpResponseStatus.FORBIDDEN,
+                                request.uri(),
+                                null,
+                                null);
+                ServiceHandlerUtil.sendError(ctx, request, errorMsg);
+                return;
+            }
+            String localPath = this.mappingRuntimeSupporter.getStartupProperties().getRootLocation() + baseUri;
+            localPath = localPath.replace("/", File.separator);
+            handleFile(ctx, (FullHttpRequest) msg, localPath);
+        }
+    }
+
+    private void handleHttpRequestException(ChannelHandlerContext ctx, Object msg) throws Exception {
+
+    }
+
+    private void handleWebSocketFrame(ChannelHandlerContext ctx, Object msg) throws Exception {
+
+        log.debug("Received a websocket frame.");
+
+        // get url from channel attribute, set attribute in first handshake
+        String uri = ctx.channel().attr(REQUEST_IN_CHANNEL).get().uri();
+
+        // get mapping resolver
+        log.debug("Get message mapping resolver.");
+        AbstractMappingResolver mappingResolver = getMappingResolver(uri);
+
+        if (mappingResolver != null) {
+            // if mapped
+            log.debug("Found mapped resolver {}.", mappingResolver);
+            mappingResolver.resolve(ctx, msg);
+        } else {
+            // if not mapped, close websocket
+            log.warn("Unknown message from uri {}, close channel.", uri);
+            ctx.writeAndFlush(new TextWebSocketFrame("Unknown sources."));
+            ctx.close();
         }
 
+    }
+
+    private void handleWebSocketFrameException(ChannelHandlerContext ctx, Object msg) throws Exception {
     }
 
     @Override
@@ -133,7 +153,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         // get resolver from map
         AbstractMappingResolver mappingResolver = mappingRuntimeSupporter.getMappingResolverMap().get(uri);
 
-        // if not mapped, try to match uri
+        // if not mapped, try to match
         if (mappingResolver == null) {
             for (String key : mappingRuntimeSupporter.getMappingResolverMap().keySet()) {
                 if (pathMatcher.match(key, uri)) {
@@ -145,6 +165,14 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         }
 
         return mappingResolver;
+    }
+
+    private static String getBaseUri(FullHttpRequest request) {
+        String uri = request.uri();
+        if (!uri.contains("?")) {
+            return uri;
+        }
+        return uri.substring(0, uri.indexOf("?"));
     }
 
     private static void handleFile(ChannelHandlerContext ctx, FullHttpRequest msg, String localPath) throws Exception {
@@ -231,14 +259,6 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
             // Close the connection when the whole content is written out.
             lastContentFuture.addListener(ChannelFutureListener.CLOSE);
         }
-    }
-
-    private static String getBaseUri(FullHttpRequest request) {
-        String uri = request.uri();
-        if (!uri.contains("?")) {
-            return uri;
-        }
-        return uri.substring(0, uri.indexOf("?"));
     }
 
 }
