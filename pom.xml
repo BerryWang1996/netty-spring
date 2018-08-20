@@ -15,7 +15,9 @@
         <module>netty-spring-webmvc</module>
         <module>netty-spring-websocket</module>
         <module>netty-web-spring-boot-starter</module>
-        <module>netty-web-spring-boot-starter-demo</module>
+        <module>netty-webmvc-spring-boot-starter</module>
+        <module>netty-websocket-spring-boot-starter</module>
+        <module>demo-netty-web-spring-boot-starter</module>
     </modules>
 
     <description>
