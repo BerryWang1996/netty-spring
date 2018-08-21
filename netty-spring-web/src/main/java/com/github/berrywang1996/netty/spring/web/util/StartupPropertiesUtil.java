@@ -28,7 +28,7 @@ import java.io.File;
 @Slf4j
 public class StartupPropertiesUtil {
 
-    public static void checkProperties(NettyServerStartupProperties properties) throws Exception {
+    public static void checkAndImproveProperties(NettyServerStartupProperties properties) throws Exception {
 
         if (properties == null) {
             throw new NullPointerException("Netty server startup properties properties name should not null.");
@@ -42,18 +42,20 @@ public class StartupPropertiesUtil {
         if (properties.getConfigLocation() == null) {
             throw new IllegalArgumentException("Spring config location should not be null.");
         }
-        if (properties.getRootLocation() == null) {
-            throw new IllegalArgumentException("Netty root location should not be null.");
+        // TODO 为模板引擎做预留准备
+//        if (properties.getInfoLocation() == null) {
+//            throw new IllegalArgumentException("Info location should not be null, please set your WEB-INF location.");
+//        }
+        if (properties.getFileLocation() == null && properties.isHandleFile()) {
+            throw new IllegalArgumentException("File location should not be null, please set your file location.");
         }
-        if (properties.getInfoLocation() == null) {
-            throw new IllegalArgumentException("Netty info location should not be null.");
+        if (properties.isHandleFile()) {
+            createDirectory(properties.getFileLocation());
+            log.info("Netty server {} directory is \"{}\"", "root", properties.getFileLocation());
         }
 
-        createDirectory(properties.getRootLocation());
-        log.info("Netty server {} directory is \"{}\"", "root", properties.getRootLocation());
-
-        createDirectory(properties.getInfoLocation());
-        log.info("Netty server {} directory is \"{}\"", "info", properties.getInfoLocation());
+//        createDirectory(properties.getInfoLocation());
+//        log.info("Netty server {} directory is \"{}\"", "info", properties.getInfoLocation());
 
     }
 

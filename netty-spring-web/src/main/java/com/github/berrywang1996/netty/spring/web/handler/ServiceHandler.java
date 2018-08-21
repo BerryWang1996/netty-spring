@@ -49,12 +49,12 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
     public static final AttributeKey<FullHttpRequest> REQUEST_IN_CHANNEL = AttributeKey.valueOf("request");
 
-    private WebMappingSupporter mappingRuntimeSupporter;
+    private WebMappingSupporter supporter;
 
     private PathMatcher pathMatcher;
 
-    public ServiceHandler(WebMappingSupporter mappingRuntimeSupporter) {
-        this.mappingRuntimeSupporter = mappingRuntimeSupporter;
+    public ServiceHandler(WebMappingSupporter supporter) {
+        this.supporter = supporter;
         this.pathMatcher = new AntPathMatcher();
     }
 
@@ -91,21 +91,32 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
             log.debug("Found mapped resolver {}.", mappingResolver);
             mappingResolver.resolve(ctx, msg);
         } else {
-            // if not mapped, may be request a file
-            log.debug("Not found mapped resolver. Try to find a file in root directory.");
-            if (StringUtil.isBlank(baseUri) || "/".equals(baseUri)) {
+            // if handle file is true
+            if (supporter.getStartupProperties().isHandleFile()) {
+                // if not mapped, may be request a file
+                log.debug("Not found mapped resolver. Try to find a file in root directory.");
+                if (StringUtil.isBlank(baseUri) || "/".equals(baseUri)) {
+                    ServiceHandlerUtil.HttpErrorMessage errorMsg =
+                            new ServiceHandlerUtil.HttpErrorMessage(
+                                    HttpResponseStatus.FORBIDDEN,
+                                    request.uri(),
+                                    null,
+                                    null);
+                    ServiceHandlerUtil.sendError(ctx, request, errorMsg);
+                    return;
+                }
+                String localPath = this.supporter.getStartupProperties().getFileLocation() + baseUri;
+                localPath = localPath.replace("/", File.separator);
+                handleFile(ctx, (FullHttpRequest) msg, localPath);
+            } else {
                 ServiceHandlerUtil.HttpErrorMessage errorMsg =
                         new ServiceHandlerUtil.HttpErrorMessage(
-                                HttpResponseStatus.FORBIDDEN,
+                                HttpResponseStatus.NOT_FOUND,
                                 request.uri(),
                                 null,
                                 null);
-                ServiceHandlerUtil.sendError(ctx, request, errorMsg);
-                return;
+                ServiceHandlerUtil.sendError(ctx, (FullHttpRequest) msg, errorMsg);
             }
-            String localPath = this.mappingRuntimeSupporter.getStartupProperties().getRootLocation() + baseUri;
-            localPath = localPath.replace("/", File.separator);
-            handleFile(ctx, (FullHttpRequest) msg, localPath);
         }
     }
 
@@ -151,13 +162,13 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
     private AbstractMappingResolver getMappingResolver(String uri) {
 
         // get resolver from map
-        AbstractMappingResolver mappingResolver = mappingRuntimeSupporter.getMappingResolverMap().get(uri);
+        AbstractMappingResolver mappingResolver = supporter.getMappingResolverMap().get(uri);
 
         // if not mapped, try to match
         if (mappingResolver == null) {
-            for (String key : mappingRuntimeSupporter.getMappingResolverMap().keySet()) {
+            for (String key : supporter.getMappingResolverMap().keySet()) {
                 if (pathMatcher.match(key, uri)) {
-                    mappingResolver = mappingRuntimeSupporter.getMappingResolverMap().get(key);
+                    mappingResolver = supporter.getMappingResolverMap().get(key);
                     mappingResolver.setPathMatcher(pathMatcher);
                     break;
                 }

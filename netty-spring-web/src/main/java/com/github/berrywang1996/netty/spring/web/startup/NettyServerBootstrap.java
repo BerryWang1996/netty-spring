@@ -68,7 +68,7 @@ public final class NettyServerBootstrap {
 
         // check properties
         log.debug("Checking netty server startup properties.");
-        StartupPropertiesUtil.checkProperties(startupProperties);
+        StartupPropertiesUtil.checkAndImproveProperties(startupProperties);
 
         // start server
         bossGroup = new NioEventLoopGroup();

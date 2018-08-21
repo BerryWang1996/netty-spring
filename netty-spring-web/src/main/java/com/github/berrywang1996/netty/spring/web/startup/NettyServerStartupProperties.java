@@ -46,30 +46,19 @@ public class NettyServerStartupProperties {
     private String configLocation = "classpath:applicationContext.xml";
 
     /**
+     * Handle file if true
+     */
+    private boolean handleFile = false;
+
+    /**
      * Netty Server root file location. Root directory under the current project.
      */
-    private String rootLocation;
-
-    {
-        try {
-            rootLocation = new File("").getCanonicalPath() + File.separatorChar + this.applicationName + "_root";
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
+    private String fileLocation;
 
     /**
      * Netty Server info file location. Root directory under the current project.
      */
     private String infoLocation;
-
-    {
-        try {
-            infoLocation = new File("").getCanonicalPath() + File.separatorChar + this.applicationName + "_info";
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
 
     /**
      * Netty server ssl configure.
@@ -113,12 +102,20 @@ public class NettyServerStartupProperties {
         this.configLocation = configLocation;
     }
 
-    public String getRootLocation() {
-        return rootLocation;
+    public boolean isHandleFile() {
+        return handleFile;
     }
 
-    public void setRootLocation(String rootLocation) {
-        this.rootLocation = rootLocation;
+    public void setHandleFile(boolean handleFile) {
+        this.handleFile = handleFile;
+    }
+
+    public String getFileLocation() {
+        return fileLocation;
+    }
+
+    public void setFileLocation(String fileLocation) {
+        this.fileLocation = fileLocation;
     }
 
     public String getInfoLocation() {

@@ -37,11 +37,11 @@ public enum MessageType {
     ON_CONNECTED,
 
     /**
-     * Ignore return value. The method marked by @MessageMapping(messageType=PING) will be execute when received ping
+     * Ignore return value. The method marked by @MessageMapping(messageType=ON_PING) will be execute when received ping
      * frame. If no method marked by this, the server will response a PongWebSocketFrame. The method marked by
      * \@MessageMapping(messageType=ERROR) will be execute If the method throws an exception.
      */
-    PING,
+    ON_PING,
 
     /**
      * Ignore return value. The method marked by @MessageMapping(messageType=TEXT_MESSAGE) will be execute when
@@ -58,7 +58,7 @@ public enum MessageType {
     BINARY_MESSAGE,
 
     /**
-     * If the method marked by @MessageMapping(messageType=ON_HANDSHAKE/ON_CONNECTED/PING/TEXT_MESSAGE/BINARY_MESSAGE
+     * If the method marked by @MessageMapping(messageType=ON_HANDSHAKE/ON_CONNECTED/ON_PING/TEXT_MESSAGE/BINARY_MESSAGE
      * /OTHER) throws exception. The method marked by @MessageMapping(messageType=ERROR)the will be execute. Also you
      * can throws exception to netty.
      */

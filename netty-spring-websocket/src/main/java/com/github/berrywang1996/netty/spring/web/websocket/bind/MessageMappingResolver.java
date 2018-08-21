@@ -225,13 +225,13 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     }
 
     private void onPing(PingWebSocketFrame msg, MessageSession messageSession) {
-        Method method = getMethod(MessageType.PING);
+        Method method = getMethod(MessageType.ON_PING);
         if (method == null) {
             messageSession.getChannelHandlerContext().channel().write(new PongWebSocketFrame());
         } else {
             try {
                 method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
-                        messageSession, MessageType.PING, null));
+                        messageSession, MessageType.ON_PING, null));
             } catch (IllegalAccessException | InvocationTargetException e) {
                 e.printStackTrace();
             }
@@ -331,7 +331,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             } else if (WebSocketFrame.class.isAssignableFrom(value) && messageType == MessageType.OTHER) {
                 // WebSocketFrame
                 methodParams.add(message);
-            } else if (PingWebSocketFrame.class.isAssignableFrom(value) && messageType == MessageType.PING) {
+            } else if (PingWebSocketFrame.class.isAssignableFrom(value) && messageType == MessageType.ON_PING) {
                 // PingWebSocketFrame
                 methodParams.add(message);
             } else if (CloseWebSocketFrame.class.isAssignableFrom(value) && messageType == MessageType.ON_CLOSE) {

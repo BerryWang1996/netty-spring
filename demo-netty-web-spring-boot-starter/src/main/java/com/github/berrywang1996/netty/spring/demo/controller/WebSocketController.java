@@ -63,7 +63,7 @@ public class WebSocketController {
         log.info("testTextMessage ok, received message: {}", binary.content());
     }
 
-    @MessageMapping(value = TEST_URI, messageType = MessageType.PING)
+    @MessageMapping(value = TEST_URI, messageType = MessageType.ON_PING)
     public void testPing() {
         log.info("get ping");
     }
