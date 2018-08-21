@@ -27,8 +27,6 @@ import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import io.netty.handler.stream.ChunkedFile;
 import io.netty.util.AttributeKey;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.util.AntPathMatcher;
-import org.springframework.util.PathMatcher;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -36,6 +34,7 @@ import java.io.RandomAccessFile;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.concurrent.RejectedExecutionException;
 
 import static io.netty.handler.codec.http.HttpResponseStatus.OK;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
@@ -51,27 +50,49 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
     private WebMappingSupporter supporter;
 
-    private PathMatcher pathMatcher;
-
     public ServiceHandler(WebMappingSupporter supporter) {
         this.supporter = supporter;
-        this.pathMatcher = new AntPathMatcher();
     }
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, Object msg) throws Exception {
+    protected void channelRead0(final ChannelHandlerContext ctx, final Object msg) throws Exception {
+
+        try {
+            this.supporter.getExecutor().submit(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        handle(ctx, msg);
+                    } catch (Exception e) {
+                        log.warn("Execute handler failed! Please catch exception in child handler!", e);
+                    }
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            log.warn("Too many requests.", e);
+            ServiceHandlerUtil.HttpErrorMessage errorMessage =
+                    new ServiceHandlerUtil.HttpErrorMessage(
+                            HttpResponseStatus.TOO_MANY_REQUESTS, null, null, e);
+            ServiceHandlerUtil.sendError(ctx, null, errorMessage);
+        }
+
+    }
+
+    @Override
+    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
+        log.error("Failed to catch exception.", cause);
+        ServiceHandlerUtil.HttpErrorMessage errorMessage =
+                new ServiceHandlerUtil.HttpErrorMessage(
+                        HttpResponseStatus.INTERNAL_SERVER_ERROR, null, null, cause);
+        ServiceHandlerUtil.sendError(ctx, null, errorMessage);
+    }
+
+    private void handle(ChannelHandlerContext ctx, Object msg) throws Exception {
+
         if (msg instanceof FullHttpRequest) {
-            try {
-                handleHttpRequest(ctx, msg);
-            } catch (Exception e) {
-                handleHttpRequestException(ctx, msg);
-            }
+            handleHttpRequest(ctx, msg);
         } else if (msg instanceof WebSocketFrame) {
-            try {
-                handleWebSocketFrame(ctx, msg);
-            } catch (Exception e) {
-                handleWebSocketFrameException(ctx, msg);
-            }
+            handleWebSocketFrame(ctx, msg);
         }
     }
 
@@ -120,10 +141,6 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         }
     }
 
-    private void handleHttpRequestException(ChannelHandlerContext ctx, Object msg) throws Exception {
-
-    }
-
     private void handleWebSocketFrame(ChannelHandlerContext ctx, Object msg) throws Exception {
 
         log.debug("Received a websocket frame.");
@@ -148,17 +165,6 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
     }
 
-    private void handleWebSocketFrameException(ChannelHandlerContext ctx, Object msg) throws Exception {
-    }
-
-    @Override
-    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
-        ServiceHandlerUtil.HttpErrorMessage errorMessage =
-                new ServiceHandlerUtil.HttpErrorMessage(HttpResponseStatus.INTERNAL_SERVER_ERROR, null, null, cause);
-        ServiceHandlerUtil.sendError(ctx, null, errorMessage);
-        super.exceptionCaught(ctx, cause);
-    }
-
     private AbstractMappingResolver getMappingResolver(String uri) {
 
         // get resolver from map
@@ -167,9 +173,8 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         // if not mapped, try to match
         if (mappingResolver == null) {
             for (String key : supporter.getMappingResolverMap().keySet()) {
-                if (pathMatcher.match(key, uri)) {
+                if (this.supporter.getPathMatcher().match(key, uri)) {
                     mappingResolver = supporter.getMappingResolverMap().get(key);
-                    mappingResolver.setPathMatcher(pathMatcher);
                     break;
                 }
             }
@@ -187,6 +192,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
     }
 
     private static void handleFile(ChannelHandlerContext ctx, FullHttpRequest msg, String localPath) throws Exception {
+
         File file = new File(localPath);
         if (file.isHidden() || !file.exists() || file.isDirectory() || !file.isFile()) {
             ServiceHandlerUtil.HttpErrorMessage errorMsg =

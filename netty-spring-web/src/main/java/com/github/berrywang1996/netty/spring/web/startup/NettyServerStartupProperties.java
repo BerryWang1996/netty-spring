@@ -16,9 +16,6 @@
 
 package com.github.berrywang1996.netty.spring.web.startup;
 
-import java.io.File;
-import java.io.IOException;
-
 /**
  * @author berrywang1996
  * @since V1.0.0

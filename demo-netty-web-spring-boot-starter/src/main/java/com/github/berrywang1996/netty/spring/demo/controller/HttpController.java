@@ -3,6 +3,7 @@ package com.github.berrywang1996.netty.spring.demo.controller;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.*;
 import com.github.berrywang1996.netty.spring.web.mvc.context.Cookie;
 import com.github.berrywang1996.netty.spring.web.mvc.context.HttpRequestContext;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Controller;
 
 import java.util.Calendar;
@@ -10,13 +11,14 @@ import java.util.Date;
 import java.util.Map;
 import java.util.UUID;
 
+@Slf4j
 @Controller
 @RequestMapping("/http")
 public class HttpController {
 
     @RequestMapping("/user/{id}/{name}")
     @ResponseBody
-    public String get(@PathVariable("id") Long id, @PathVariable String name) {
+    public String get(@PathVariable("id") Long id, @PathVariable String name) throws InterruptedException {
         return "get" + id + "-" + name;
     }
 

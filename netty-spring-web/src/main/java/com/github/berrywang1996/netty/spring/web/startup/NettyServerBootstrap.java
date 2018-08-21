@@ -28,9 +28,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.support.ClassPathXmlApplicationContext;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
 /**
  * @author berrywang1996
  * @since V1.0.0
@@ -82,12 +79,11 @@ public final class NettyServerBootstrap {
         final ChannelFuture f = b.bind(startupProperties.getPort()).sync();
         log.info("Netty started on port: {} ", startupProperties.getPort());
 
-        ExecutorService netty = Executors.newCachedThreadPool(new DaemonThreadFactory("netty"));
-        netty.submit(new Runnable() {
+        Thread nettyDaemonThread = new DaemonThreadFactory("netty").newThread(new Runnable() {
             @Override
             public void run() {
-                // Wait until the server socket is closed.
                 try {
+                    // Wait until the server socket is closed.
                     f.channel().closeFuture().sync();
                 } catch (InterruptedException e) {
                     e.printStackTrace();
@@ -96,6 +92,8 @@ public final class NettyServerBootstrap {
                 }
             }
         });
+
+        nettyDaemonThread.start();
 
     }
 

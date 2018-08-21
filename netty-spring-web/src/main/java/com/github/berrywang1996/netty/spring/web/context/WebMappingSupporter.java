@@ -18,14 +18,20 @@ package com.github.berrywang1996.netty.spring.web.context;
 
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import com.github.berrywang1996.netty.spring.web.util.ClassUtil;
+import com.github.berrywang1996.netty.spring.web.util.DaemonThreadFactory;
 import com.github.berrywang1996.netty.spring.web.util.MapUtil;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
+import org.springframework.util.AntPathMatcher;
+import org.springframework.util.PathMatcher;
 
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author berrywang1996
@@ -42,20 +48,26 @@ public class WebMappingSupporter implements MappingSupporter {
 
     private final NettyServerStartupProperties startupProperties;
 
+    private final PathMatcher pathMatcher;
+
     private final ApplicationContext applicationContext;
 
     private final Map<String, AbstractMappingResolver> mappingResolverMap;
 
+    private final ThreadPoolExecutor executor;
+
     public WebMappingSupporter(NettyServerStartupProperties startupProperties,
                                ApplicationContext applicationContext) {
         this.startupProperties = startupProperties;
+        this.pathMatcher = new AntPathMatcher();
         this.applicationContext = applicationContext;
-        this.mappingResolverMap =
-                Collections.unmodifiableMap(initMappingResolverMap(startupProperties, applicationContext));
+        this.mappingResolverMap = initMappingResolverMap(startupProperties, applicationContext);
+        this.executor = initHandlerExecutorThreadPool();
     }
 
     @Override
-    public Map<String, ? extends AbstractMappingResolver> initMappingResolverMap(NettyServerStartupProperties startupProperties, ApplicationContext applicationContext) {
+    public Map<String, AbstractMappingResolver> initMappingResolverMap(NettyServerStartupProperties startupProperties,
+                                                                       ApplicationContext applicationContext) {
         Map<String, AbstractMappingResolver> mappingResolverMap = new HashMap<>();
         for (String mappingClass : DEFAULT_MAPPING_CLASSES) {
             if (ClassUtil.isPresent(mappingClass)) {
@@ -70,7 +82,21 @@ public class WebMappingSupporter implements MappingSupporter {
         if (mappingResolverMap.size() == 0) {
             log.warn("No mapping resolvers are mapped.");
         }
-        return mappingResolverMap;
+        for (AbstractMappingResolver resolver : mappingResolverMap.values()) {
+            resolver.setPathMatcher(this.pathMatcher);
+        }
+        return Collections.unmodifiableMap(mappingResolverMap);
+    }
+
+    private ThreadPoolExecutor initHandlerExecutorThreadPool() {
+        // TODO 通过配置对象进行配置
+        return new ThreadPoolExecutor(
+                Runtime.getRuntime().availableProcessors() * 100,
+                Runtime.getRuntime().availableProcessors() * 100 * 8,
+                5L,
+                TimeUnit.SECONDS,
+                new SynchronousQueue<Runnable>(),
+                new DaemonThreadFactory("handler"));
     }
 
 }
