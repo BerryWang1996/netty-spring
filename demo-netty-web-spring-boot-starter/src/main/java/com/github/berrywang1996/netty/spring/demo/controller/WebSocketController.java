@@ -70,7 +70,7 @@ public class WebSocketController {
 
     @MessageMapping(value = TEST_URI, messageType = MessageType.ON_ERROR)
     public void testError(Exception e) {
-        log.info("get exception");
+        log.info("get exception", e);
     }
 
     @RequestMapping("/info")

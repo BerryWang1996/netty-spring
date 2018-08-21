@@ -224,7 +224,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         }
     }
 
-    private void onPing(PingWebSocketFrame msg, MessageSession messageSession) {
+    private void onPing(PingWebSocketFrame msg, MessageSession messageSession) throws Exception {
         Method method = getMethod(MessageType.ON_PING);
         if (method == null) {
             messageSession.getChannelHandlerContext().channel().write(new PongWebSocketFrame());
@@ -232,43 +232,51 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             try {
                 method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
                         messageSession, MessageType.ON_PING, null));
-            } catch (IllegalAccessException | InvocationTargetException e) {
+            } catch (IllegalAccessException e) {
                 e.printStackTrace();
+            } catch (InvocationTargetException e1) {
+                throw (Exception) e1.getCause();
             }
         }
     }
 
-    private void onTextMessage(TextWebSocketFrame msg, MessageSession messageSession) {
+    private void onTextMessage(TextWebSocketFrame msg, MessageSession messageSession) throws Exception {
         Method method = getMethod(MessageType.TEXT_MESSAGE);
         if (method != null) {
             try {
                 method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
                         messageSession, MessageType.TEXT_MESSAGE, null));
-            } catch (IllegalAccessException | InvocationTargetException e) {
+            } catch (IllegalAccessException e) {
                 e.printStackTrace();
+            } catch (InvocationTargetException e1) {
+                throw (Exception) e1.getCause();
             }
         }
     }
 
-    private void onBinaryMessage(BinaryWebSocketFrame msg, MessageSession messageSession) {
+    private void onBinaryMessage(BinaryWebSocketFrame msg, MessageSession messageSession) throws Exception {
         Method method = getMethod(MessageType.BINARY_MESSAGE);
         if (method != null) {
             try {
                 method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
                         messageSession, MessageType.BINARY_MESSAGE, null));
-            } catch (IllegalAccessException | InvocationTargetException e) {
+            } catch (IllegalAccessException e) {
                 e.printStackTrace();
+            } catch (InvocationTargetException e1) {
+                throw (Exception) e1.getCause();
             }
         }
     }
 
-    private void onOtherMessage(WebSocketFrame msg, MessageSession messageSession) {
+    private void onOtherMessage(WebSocketFrame msg, MessageSession messageSession) throws Exception {
         Method method = getMethod(MessageType.OTHER);
         try {
             method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
                     messageSession, MessageType.OTHER, null));
-        } catch (IllegalAccessException | InvocationTargetException e) {
+        } catch (IllegalAccessException e) {
             e.printStackTrace();
+        } catch (InvocationTargetException e1) {
+            throw (Exception) e1.getCause();
         }
     }
 

@@ -26,6 +26,7 @@ import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import io.netty.handler.stream.ChunkedFile;
 import io.netty.util.AttributeKey;
+import io.netty.util.ReferenceCountUtil;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.File;
@@ -58,6 +59,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
     protected void channelRead0(final ChannelHandlerContext ctx, final Object msg) throws Exception {
 
         try {
+            ReferenceCountUtil.retain(msg);
             this.supporter.getExecutor().submit(new Runnable() {
                 @Override
                 public void run() {
@@ -65,6 +67,8 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
                         handle(ctx, msg);
                     } catch (Exception e) {
                         log.warn("Execute handler failed! Please catch exception in child handler!", e);
+                    } finally {
+                        ReferenceCountUtil.release(msg);
                     }
                 }
             });
@@ -75,6 +79,8 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
                             HttpResponseStatus.TOO_MANY_REQUESTS, null, null, e);
             ServiceHandlerUtil.sendError(ctx, null, errorMessage);
         }
+
+        log.debug("Message reference count: {}", ReferenceCountUtil.refCnt(msg));
 
     }
 
@@ -154,7 +160,6 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
         if (mappingResolver != null) {
             // if mapped
-            log.debug("Found mapped resolver {}.", mappingResolver);
             mappingResolver.resolve(ctx, msg);
         } else {
             // if not mapped, close websocket
