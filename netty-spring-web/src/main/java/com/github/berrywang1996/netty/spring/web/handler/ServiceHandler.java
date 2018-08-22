@@ -60,7 +60,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
         try {
             ReferenceCountUtil.retain(msg);
-            this.supporter.getExecutor().submit(new Runnable() {
+            this.supporter.submitHandle(new Runnable() {
                 @Override
                 public void run() {
                     try {
@@ -72,12 +72,10 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
                     }
                 }
             });
+
         } catch (RejectedExecutionException e) {
-            log.warn("Too many requests.", e);
-            ServiceHandlerUtil.HttpErrorMessage errorMessage =
-                    new ServiceHandlerUtil.HttpErrorMessage(
-                            HttpResponseStatus.TOO_MANY_REQUESTS, null, null, e);
-            ServiceHandlerUtil.sendError(ctx, null, errorMessage);
+            log.warn("Too many requests. Close request.", e);
+            ctx.close();
         }
 
         log.debug("Message reference count: {}", ReferenceCountUtil.refCnt(msg));

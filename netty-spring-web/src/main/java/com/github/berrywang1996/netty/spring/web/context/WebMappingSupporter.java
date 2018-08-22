@@ -29,6 +29,7 @@ import org.springframework.util.PathMatcher;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -56,6 +57,8 @@ public class WebMappingSupporter implements MappingSupporter {
 
     private final ThreadPoolExecutor executor;
 
+    private final Semaphore semaphore;
+
     public WebMappingSupporter(NettyServerStartupProperties startupProperties,
                                ApplicationContext applicationContext) {
         this.startupProperties = startupProperties;
@@ -63,6 +66,7 @@ public class WebMappingSupporter implements MappingSupporter {
         this.applicationContext = applicationContext;
         this.mappingResolverMap = initMappingResolverMap(startupProperties, applicationContext);
         this.executor = initHandlerExecutorThreadPool();
+        this.semaphore = initHandlerSemaphore();
     }
 
     @Override
@@ -97,6 +101,27 @@ public class WebMappingSupporter implements MappingSupporter {
                 TimeUnit.SECONDS,
                 new SynchronousQueue<Runnable>(),
                 new DaemonThreadFactory("handler"));
+    }
+
+    private Semaphore initHandlerSemaphore() {
+        // TODO 通过配置对象进行配置
+        return new Semaphore(Runtime.getRuntime().availableProcessors() * 100 * 8);
+    }
+
+    public void submitHandle(final Runnable runnable) {
+        this.executor.submit(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    semaphore.acquire();
+                    runnable.run();
+                } catch (Exception e) {
+                    log.error("Submit handle error.", e);
+                } finally {
+                    semaphore.release();
+                }
+            }
+        });
     }
 
 }
