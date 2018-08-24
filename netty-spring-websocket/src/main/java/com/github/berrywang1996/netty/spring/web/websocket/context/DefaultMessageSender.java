@@ -1,5 +1,6 @@
 package com.github.berrywang1996.netty.spring.web.websocket.context;
 
+import com.github.berrywang1996.netty.spring.web.util.DaemonThreadFactory;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSessionClosedException;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageUriNotDefinedException;
@@ -8,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.*;
 
 /**
  * @author berrywang1996
@@ -15,10 +17,24 @@ import java.util.Set;
  */
 public class DefaultMessageSender implements MessageSender {
 
+    private final ExecutorService executorService;
+
     private final Map<String, MessageMappingResolver> resolverMap;
 
     DefaultMessageSender(Map<String, MessageMappingResolver> resolverMap) {
         this.resolverMap = resolverMap;
+        this.executorService = initHandlerExecutorThreadPool();
+    }
+
+    private ThreadPoolExecutor initHandlerExecutorThreadPool() {
+        // TODO 通过配置对象进行配置
+        return new ThreadPoolExecutor(
+                Runtime.getRuntime().availableProcessors() * 100,
+                Runtime.getRuntime().availableProcessors() * 100 * 8,
+                5L,
+                TimeUnit.SECONDS,
+                new SynchronousQueue<Runnable>(),
+                new DaemonThreadFactory("messageSender"));
     }
 
     @Override
@@ -84,14 +100,19 @@ public class DefaultMessageSender implements MessageSender {
     }
 
     @Override
-    public void topicMessage(String uri, AbstractMessage message) throws MessageUriNotDefinedException {
+    public void topicMessage(String uri, final AbstractMessage message) throws MessageUriNotDefinedException {
         MessageMappingResolver resolver = resolverMap.get(uri);
         if (resolver == null) {
             throw new MessageUriNotDefinedException(uri);
         }
         Map<String, MessageSession> sessionMap = resolver.getSessionMap();
-        for (MessageSession session : sessionMap.values()) {
-            session.getChannelHandlerContext().writeAndFlush(message.responseMsg());
+        for (final MessageSession session : sessionMap.values()) {
+            executorService.submit(new Runnable() {
+                @Override
+                public void run() {
+                    session.getChannelHandlerContext().writeAndFlush(message.responseMsg());
+                }
+            });
         }
     }
 
