@@ -95,8 +95,8 @@ public class WebMappingSupporter implements MappingSupporter {
     private ThreadPoolExecutor initHandlerExecutorThreadPool() {
         // TODO 通过配置对象进行配置
         return new ThreadPoolExecutor(
-                Runtime.getRuntime().availableProcessors() * 100,
                 Runtime.getRuntime().availableProcessors() * 100 * 2,
+                Runtime.getRuntime().availableProcessors() * 100 * 3,
                 5L,
                 TimeUnit.SECONDS,
                 new SynchronousQueue<Runnable>(),
@@ -110,7 +110,7 @@ public class WebMappingSupporter implements MappingSupporter {
 
     public void submitHandle(final Runnable runnable) {
         try {
-            semaphore.acquire();
+            this.semaphore.acquire();
             this.executor.submit(new Runnable() {
                 @Override
                 public void run() {
@@ -124,7 +124,7 @@ public class WebMappingSupporter implements MappingSupporter {
         } catch (InterruptedException e) {
             e.printStackTrace();
         } finally {
-            semaphore.release();
+            this.semaphore.release();
         }
     }
 
