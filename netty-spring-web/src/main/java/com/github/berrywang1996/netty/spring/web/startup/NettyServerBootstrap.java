@@ -16,6 +16,7 @@
 
 package com.github.berrywang1996.netty.spring.web.startup;
 
+import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
 import com.github.berrywang1996.netty.spring.web.context.NettyChannelInitializer;
 import com.github.berrywang1996.netty.spring.web.util.DaemonThreadFactory;
 import com.github.berrywang1996.netty.spring.web.util.StartupPropertiesUtil;
@@ -24,9 +25,12 @@ import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.support.ClassPathXmlApplicationContext;
+
+import java.util.Map;
 
 /**
  * @author berrywang1996
@@ -34,9 +38,6 @@ import org.springframework.context.support.ClassPathXmlApplicationContext;
  */
 @Slf4j
 public final class NettyServerBootstrap {
-
-    public NettyServerBootstrap() {
-    }
 
     public NettyServerBootstrap(ApplicationContext applicationContext) {
         this.applicationContext = applicationContext;
@@ -49,6 +50,9 @@ public final class NettyServerBootstrap {
     private NettyServerStartupProperties startupProperties;
 
     private ApplicationContext applicationContext;
+
+    @Getter
+    private Map<String, AbstractMappingResolver> webSockeMappingtResolverMap;
 
     /**
      * start server.
@@ -72,12 +76,16 @@ public final class NettyServerBootstrap {
         workerGroup = new NioEventLoopGroup();
         ServerBootstrap b = new ServerBootstrap();
         b.option(ChannelOption.SO_BACKLOG, 1024);
+
+        NettyChannelInitializer initializer = new NettyChannelInitializer(this);
+        this.webSockeMappingtResolverMap = initializer.getWebSockeMappingtResolverMap();
+
         b.group(bossGroup, workerGroup)
                 .channel(NioServerSocketChannel.class)
-                .childHandler(new NettyChannelInitializer(this));
+                .childHandler(initializer);
 
         final ChannelFuture f = b.bind(startupProperties.getPort()).sync();
-        log.info("Netty started on port: {} ", startupProperties.getPort());
+        log.debug("Netty started on port: {} ", startupProperties.getPort());
 
         Thread nettyDaemonThread = new DaemonThreadFactory("netty").newThread(new Runnable() {
             @Override
@@ -123,4 +131,5 @@ public final class NettyServerBootstrap {
     public ApplicationContext getApplicationContext() {
         return applicationContext;
     }
+
 }

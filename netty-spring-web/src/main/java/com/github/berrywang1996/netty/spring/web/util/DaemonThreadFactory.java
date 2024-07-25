@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class DaemonThreadFactory implements ThreadFactory {
 
-    private AtomicInteger threadNo = new AtomicInteger(1);
+    private final AtomicInteger threadNo = new AtomicInteger(1);
     private final String nameStart;
 
     public DaemonThreadFactory(String poolName) {

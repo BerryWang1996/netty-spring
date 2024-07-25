@@ -27,9 +27,11 @@ import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.stream.ChunkedWriteHandler;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.File;
+import java.util.Map;
 
 /**
  * @author berrywang1996
@@ -38,11 +40,14 @@ import java.io.File;
 @Slf4j
 public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
 
-    private NettyServerBootstrap nettyServerBootstrap;
+    private final NettyServerBootstrap nettyServerBootstrap;
 
-    private WebMappingSupporter supporter;
+    private final WebMappingSupporter supporter;
 
     private SslContext sslCtx = null;
+
+    @Getter
+    private final Map<String, AbstractMappingResolver> webSockeMappingtResolverMap;
 
     public NettyChannelInitializer(NettyServerBootstrap nettyServerBootstrap) throws Exception {
 
@@ -65,6 +70,7 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
                 nettyServerBootstrap.getStartupProperties(),
                 nettyServerBootstrap.getApplicationContext());
 
+        this.webSockeMappingtResolverMap = supporter.getWebSocketMappingtResolverMap();
     }
 
     @Override

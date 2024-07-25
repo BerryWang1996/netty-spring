@@ -9,11 +9,11 @@ import io.netty.handler.codec.http.FullHttpRequest;
  */
 public class MessageSession {
 
-    private String sessionId;
+    private final String sessionId;
 
-    private ChannelHandlerContext channelHandlerContext;
+    private final ChannelHandlerContext channelHandlerContext;
 
-    private FullHttpRequest firstRequest;
+    private final FullHttpRequest firstRequest;
 
     public MessageSession(String sessionId, ChannelHandlerContext ctx, FullHttpRequest request) {
         this.sessionId = sessionId;

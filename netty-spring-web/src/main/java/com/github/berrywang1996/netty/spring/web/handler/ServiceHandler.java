@@ -47,9 +47,11 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 @Slf4j
 public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
+    protected static final AttributeKey<String> SESSION_ID_IN_CHANNEL = AttributeKey.valueOf("sessionId");
+
     public static final AttributeKey<FullHttpRequest> REQUEST_IN_CHANNEL = AttributeKey.valueOf("request");
 
-    private WebMappingSupporter supporter;
+    private final WebMappingSupporter supporter;
 
     public ServiceHandler(WebMappingSupporter supporter) {
         this.supporter = supporter;
@@ -89,6 +91,14 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
                 new ServiceHandlerUtil.HttpErrorMessage(
                         HttpResponseStatus.INTERNAL_SERVER_ERROR, null, null, cause);
         ServiceHandlerUtil.sendError(ctx, null, errorMessage);
+        String sessionId = ctx.channel().attr(SESSION_ID_IN_CHANNEL).get();
+        if (StringUtil.isNotBlank(sessionId)) {
+            String uri = ctx.channel().attr(REQUEST_IN_CHANNEL).get().uri();
+            AbstractMappingResolver mappingResolver = getMappingResolver(uri);
+            if (mappingResolver != null && "com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver".equals(mappingResolver.getClass().getName())) {
+                mappingResolver.removeSession(sessionId);
+            }
+        }
     }
 
     private void handle(ChannelHandlerContext ctx, Object msg) throws Exception {

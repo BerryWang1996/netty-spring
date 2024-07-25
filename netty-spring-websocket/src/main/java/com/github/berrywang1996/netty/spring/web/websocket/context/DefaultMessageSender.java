@@ -9,7 +9,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author berrywang1996
@@ -21,7 +24,7 @@ public class DefaultMessageSender implements MessageSender {
 
     private final Map<String, MessageMappingResolver> resolverMap;
 
-    DefaultMessageSender(Map<String, MessageMappingResolver> resolverMap) {
+    public DefaultMessageSender(Map<String, MessageMappingResolver> resolverMap) {
         this.resolverMap = resolverMap;
         this.executorService = initHandlerExecutorThreadPool();
     }
@@ -67,7 +70,7 @@ public class DefaultMessageSender implements MessageSender {
             return false;
         }
         for (String sessionId : sessionIds) {
-            boolean contains = resolver.getSessionMap().keySet().contains(sessionId);
+            boolean contains = resolver.getSessionMap().containsKey(sessionId);
             if (contains) {
                 return false;
             }

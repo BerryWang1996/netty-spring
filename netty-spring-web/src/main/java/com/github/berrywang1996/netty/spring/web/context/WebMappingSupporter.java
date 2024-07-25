@@ -59,6 +59,8 @@ public class WebMappingSupporter implements MappingSupporter {
 
     private final Semaphore semaphore;
 
+    private Map<String, AbstractMappingResolver> webSocketMappingtResolverMap;
+
     public WebMappingSupporter(NettyServerStartupProperties startupProperties,
                                ApplicationContext applicationContext) {
         this.startupProperties = startupProperties;
@@ -67,6 +69,7 @@ public class WebMappingSupporter implements MappingSupporter {
         this.mappingResolverMap = initMappingResolverMap(startupProperties, applicationContext);
         this.executor = initHandlerExecutorThreadPool();
         this.semaphore = initHandlerSemaphore();
+
     }
 
     @Override
@@ -79,6 +82,10 @@ public class WebMappingSupporter implements MappingSupporter {
                 MappingSupporter supporter = (MappingSupporter) ClassUtil.newInstance(mappingClass);
                 Map<String, ? extends AbstractMappingResolver> resolverMap =
                         supporter.initMappingResolverMap(startupProperties, applicationContext);
+                // if websocket
+                if ("com.github.berrywang1996.netty.spring.web.websocket.context.MessageMappingSupporter".equals(mappingClass)) {
+                    this.webSocketMappingtResolverMap = Collections.unmodifiableMap(resolverMap);
+                }
                 MapUtil.checkDuplicateKey(mappingResolverMap, resolverMap);
                 mappingResolverMap.putAll(resolverMap);
             }

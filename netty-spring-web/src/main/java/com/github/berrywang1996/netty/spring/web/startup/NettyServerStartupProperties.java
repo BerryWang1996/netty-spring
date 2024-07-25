@@ -67,6 +67,11 @@ public class NettyServerStartupProperties {
      */
     private Gzip gzip = new Gzip();
 
+    /**
+     * Netty server websocket configure.
+     */
+    private WebSocket webSocket = new WebSocket();
+
     public String getApplicationName() {
         return applicationName;
     }
@@ -137,6 +142,14 @@ public class NettyServerStartupProperties {
 
     public void setGzip(Gzip gzip) {
         this.gzip = gzip;
+    }
+
+    public WebSocket getWebSocket() {
+        return webSocket;
+    }
+
+    public void setWebSocket(WebSocket webSocket) {
+        this.webSocket = webSocket;
     }
 
     public static class Ssl {
@@ -266,6 +279,45 @@ public class NettyServerStartupProperties {
 
         public void setContentSizeThreshold(int contentSizeThreshold) {
             this.contentSizeThreshold = contentSizeThreshold;
+        }
+    }
+
+    public static class WebSocket {
+        private int corePoolSize;
+        private int maxPoolSize;
+        private long keepAliveTime;
+        private int queueCapacity;
+
+        public int getCorePoolSize() {
+            return corePoolSize;
+        }
+
+        public void setCorePoolSize(int corePoolSize) {
+            this.corePoolSize = corePoolSize;
+        }
+
+        public int getMaxPoolSize() {
+            return maxPoolSize;
+        }
+
+        public void setMaxPoolSize(int maxPoolSize) {
+            this.maxPoolSize = maxPoolSize;
+        }
+
+        public long getKeepAliveTime() {
+            return keepAliveTime;
+        }
+
+        public void setKeepAliveTime(long keepAliveTime) {
+            this.keepAliveTime = keepAliveTime;
+        }
+
+        public int getQueueCapacity() {
+            return queueCapacity;
+        }
+
+        public void setQueueCapacity(int queueCapacity) {
+            this.queueCapacity = queueCapacity;
         }
     }
 

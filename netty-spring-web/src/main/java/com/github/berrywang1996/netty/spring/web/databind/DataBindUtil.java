@@ -23,11 +23,11 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class DataBindUtil {
 
-    private static Class<DateFormat> DATE_FORMAT_ANNOTATION = DateFormat.class;
+    private static final Class<DateFormat> DATE_FORMAT_ANNOTATION = DateFormat.class;
 
-    private static String DEFAULT_DATEFORMAT_PATTERN = new SimpleDateFormat().toPattern();
+    private static final String DEFAULT_DATEFORMAT_PATTERN = new SimpleDateFormat().toPattern();
 
-    private static Map<Class, BeanInfo> beanInfoMap = new ConcurrentHashMap<>();
+    private static final Map<Class, BeanInfo> beanInfoMap = new ConcurrentHashMap<>();
 
     public static <T> T parseStringToObject(Map<String, String> dataMap, Class<T> targetTypeClz) {
 
@@ -54,18 +54,14 @@ public class DataBindUtil {
 
     public static boolean isBasicType(Class targetTypeClz) {
 
-        if (targetTypeClz == Byte.class ||
+        return targetTypeClz == Byte.class ||
                 targetTypeClz == Short.class ||
                 targetTypeClz == Integer.class ||
                 targetTypeClz == Long.class ||
                 targetTypeClz == Boolean.class ||
                 targetTypeClz == Double.class ||
                 targetTypeClz == Float.class ||
-                targetTypeClz == Character.class) {
-            return true;
-        }
-
-        return false;
+                targetTypeClz == Character.class;
 
     }
 

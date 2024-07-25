@@ -63,13 +63,11 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         end:
         for (Method method : methods.values()) {
             Annotation[][] parameterAnnotations = method.getParameterAnnotations();
-            if (parameterAnnotations.length > 0) {
-                for (Annotation[] parameterAnnotation : parameterAnnotations) {
-                    for (Annotation annotation : parameterAnnotation) {
-                        if (annotation.annotationType() == PathVariable.class) {
-                            isRestfulUrlFlag = true;
-                            break end;
-                        }
+            for (Annotation[] parameterAnnotation : parameterAnnotations) {
+                for (Annotation annotation : parameterAnnotation) {
+                    if (annotation.annotationType() == PathVariable.class) {
+                        isRestfulUrlFlag = true;
+                        break end;
                     }
                 }
             }
@@ -127,6 +125,11 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
             tempMethodParamTypes.put(kMethodEntry.getKey(), methodParams);
         }
         return Collections.unmodifiableMap(tempMethodParamTypes);
+    }
+
+    @Override
+    public void removeSession(String sessionId) {
+        log.debug("HttpSessionManager do not support remove session: {}", sessionId);
     }
 
     @Override

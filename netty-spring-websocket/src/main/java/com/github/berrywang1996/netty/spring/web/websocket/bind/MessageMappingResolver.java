@@ -52,7 +52,7 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 @Slf4j
 public class MessageMappingResolver extends AbstractMappingResolver<Object, MessageType> {
 
-    private static final AttributeKey<String> SESSION_ID_IN_CHANNEL = AttributeKey.valueOf("sessionId");
+    protected static final AttributeKey<String> SESSION_ID_IN_CHANNEL = AttributeKey.valueOf("sessionId");
 
     private static final String WEBSOCKET_UPGRADE_HEADER = "websocket";
 
@@ -101,17 +101,22 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
 
             if (session == null) {
                 log.warn("Session {} has been closed.", sessionId);
-                ctx.writeAndFlush(new TextWebSocketFrame("Session has been closed."));
+                // ctx.writeAndFlush(new TextWebSocketFrame("Session has been closed."));
                 ctx.close();
                 return;
             }
 
             if (msg instanceof CloseWebSocketFrame) {
-                onClose((CloseWebSocketFrame) msg, session);
-                // close session
-                session.getChannelHandlerContext().close();
-                // remove session from session map
-                sessionMap.remove(sessionId);
+                try {
+                    onClose((CloseWebSocketFrame) msg, session);
+                    // close session
+                    session.getChannelHandlerContext().close();
+                    // remove session from session map
+                    sessionMap.remove(sessionId);
+                } catch (Exception e) {
+                    sessionMap.remove(sessionId);
+                    onException(msg, session, e);
+                }
             } else if (msg instanceof PingWebSocketFrame) {
                 try {
                     onPing((PingWebSocketFrame) msg, session);
@@ -141,6 +146,11 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         }
     }
 
+    @Override
+    public void removeSession(String sessionId) {
+        sessionMap.remove(sessionId);
+    }
+
     private boolean isMessageRequestLegal(ChannelHandlerContext ctx, FullHttpRequest request) {
 
         // Handle a bad request.
@@ -156,8 +166,8 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         // check headers contain Upgrade header
         if (request.headers().get(HttpHeaderNames.UPGRADE) == null
                 || request.headers().get(HttpHeaderNames.CONNECTION) == null
-                || !WEBSOCKET_UPGRADE_HEADER.equals(request.headers().get(HttpHeaderNames.UPGRADE).toLowerCase())
-                || !WEBSOCKET_CONNECTION_HEADER.equals(request.headers().get(HttpHeaderNames.CONNECTION).toLowerCase())) {
+                || !WEBSOCKET_UPGRADE_HEADER.equalsIgnoreCase(request.headers().get(HttpHeaderNames.UPGRADE))
+                || !WEBSOCKET_CONNECTION_HEADER.equalsIgnoreCase(request.headers().get(HttpHeaderNames.CONNECTION))) {
             sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, FORBIDDEN));
             return false;
         }

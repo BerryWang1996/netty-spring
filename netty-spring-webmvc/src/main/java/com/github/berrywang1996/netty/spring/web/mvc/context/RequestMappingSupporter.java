@@ -45,7 +45,7 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
 
     private ApplicationContext applicationContext;
 
-    private Map<String, RequestMappingResolver> resolverMap = new HashMap<>();
+    private final Map<String, RequestMappingResolver> resolverMap = new HashMap<>();
 
     @Override
     public Map<String, RequestMappingResolver> initMappingResolverMap(NettyServerStartupProperties startupProperties,

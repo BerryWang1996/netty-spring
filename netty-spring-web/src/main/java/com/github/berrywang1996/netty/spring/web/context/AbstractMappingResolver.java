@@ -103,4 +103,6 @@ public abstract class AbstractMappingResolver<T, K> {
         return Collections.unmodifiableMap(tempMethodParamTypes);
     }
 
+    public abstract void removeSession(String sessionId);
+
 }

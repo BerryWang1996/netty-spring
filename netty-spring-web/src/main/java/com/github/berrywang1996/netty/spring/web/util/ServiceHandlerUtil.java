@@ -169,19 +169,19 @@ public class ServiceHandlerUtil {
 
     public static class HttpErrorMessage {
 
-        private HttpResponseStatus responseStatus;
+        private final HttpResponseStatus responseStatus;
 
-        private String timestrap;
+        private final String timestrap;
 
-        private Integer status;
+        private final Integer status;
 
-        private String error;
+        private final String error;
 
-        private String message;
+        private final String message;
 
-        private String path;
+        private final String path;
 
-        private Throwable cause;
+        private final Throwable cause;
 
         public HttpErrorMessage(HttpResponseStatus responseStatus, String path, String message, Throwable cause) {
             SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX");

@@ -19,7 +19,6 @@ package com.github.berrywang1996.netty.spring.web.websocket.context;
 import com.github.berrywang1996.netty.spring.web.context.MappingSupporter;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
-import com.github.berrywang1996.netty.spring.web.websocket.bind.annotation.AutowiredMessageSender;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.annotation.MessageMapping;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
 import lombok.extern.slf4j.Slf4j;
@@ -27,7 +26,6 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.stereotype.Component;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.*;
 
@@ -42,7 +40,7 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
 
     private ApplicationContext applicationContext;
 
-    private Map<String, MessageMappingResolver> resolverMap = new HashMap<>();
+    private final Map<String, MessageMappingResolver> resolverMap = new HashMap<>();
 
     @Override
     public Map<String, MessageMappingResolver> initMappingResolverMap(NettyServerStartupProperties startupProperties,
@@ -50,9 +48,6 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
 
         this.startupProperties = startupProperties;
         this.applicationContext = applicationContext;
-
-        // inject MessageSender into spring beans
-        injectMessageSender();
 
         Map<String, Object> beans = applicationContext.getBeansWithAnnotation(Component.class);
         log.debug("Find method had annotation \"MessageMapping\"");
@@ -122,33 +117,6 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         }
 
         return resolverMap;
-    }
-
-    private void injectMessageSender() {
-
-        log.debug("Try to inject message sender into object.");
-
-        MessageSender messageSender = new DefaultMessageSender(resolverMap);
-
-        Map<String, Object> beans = this.applicationContext.getBeansWithAnnotation(Component.class);
-        for (Map.Entry<String, Object> objectEntry : beans.entrySet()) {
-            Field[] declaredFields = objectEntry.getValue().getClass().getDeclaredFields();
-            for (Field field : declaredFields) {
-                Class<?> type = field.getType();
-                if (type.isAssignableFrom(MessageSender.class) && field.getAnnotation(AutowiredMessageSender.class) != null) {
-                    field.setAccessible(true);
-                    try {
-                        log.debug("Autowired field message sender into object named {}, class {}",
-                                objectEntry.getKey(), objectEntry.getValue().getClass());
-                        field.set(objectEntry.getValue(), messageSender);
-                    } catch (IllegalAccessException e) {
-                        log.debug("Autowired message sender error {}", e);
-                    }
-                    break;
-                }
-            }
-        }
-
     }
 
     private List<String> getMappingUrls(Method method) {

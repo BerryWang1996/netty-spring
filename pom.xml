@@ -42,15 +42,15 @@
 
     <properties>
         <!-- runtime  -->
-        <netty.version>4.1.28.Final</netty.version>
-        <spring.version>4.3.16.RELEASE</spring.version>
-        <spring-boot.version>1.5.15.RELEASE</spring-boot.version>
-        <jackson.version>2.9.6</jackson.version>
+        <netty.version>4.1.112.Final</netty.version>
+        <spring.version>5.3.31</spring.version>
+        <spring-boot.version>2.7.18</spring-boot.version>
+        <jackson.version>2.13.5</jackson.version>
         <!-- activation -->
         <activation.version>1.1.1</activation.version>
         <!-- log -->
         <slf4j.version>1.7.25</slf4j.version>
-        <logback.version>1.2.3</logback.version>
+        <logback.version>1.2.12</logback.version>
         <!-- provided -->
         <lombok.version>1.18.0</lombok.version>
         <!-- test -->

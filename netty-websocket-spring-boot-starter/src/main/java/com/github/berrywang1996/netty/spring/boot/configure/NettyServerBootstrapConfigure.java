@@ -17,6 +17,7 @@
 package com.github.berrywang1996.netty.spring.boot.configure;
 
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
+import com.github.berrywang1996.netty.spring.web.websocket.support.MessageSenderSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
@@ -47,6 +48,11 @@ public class NettyServerBootstrapConfigure {
             System.exit(1);
         }
         return nettyServerBootstrap;
+    }
+
+    @Bean
+    public MessageSenderSupport messageSenderSupport(NettyServerBootstrap nettyServerBootstrap) {
+        return new MessageSenderSupport(nettyServerBootstrap);
     }
 
 }
