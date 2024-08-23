@@ -162,6 +162,11 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         // get url from channel attribute, set attribute in first handshake
         String uri = ctx.channel().attr(REQUEST_IN_CHANNEL).get().uri();
 
+        // get base uri
+        if (uri.contains("?")) {
+            uri = uri.substring(0, uri.indexOf("?"));
+        }
+
         // get mapping resolver
         log.debug("Get message mapping resolver.");
         AbstractMappingResolver mappingResolver = getMappingResolver(uri);
