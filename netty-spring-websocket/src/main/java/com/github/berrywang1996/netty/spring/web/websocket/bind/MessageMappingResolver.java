@@ -237,7 +237,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     private void onPing(PingWebSocketFrame msg, MessageSession messageSession) throws Exception {
         Method method = getMethod(MessageType.ON_PING);
         if (method == null) {
-            messageSession.getChannelHandlerContext().channel().write(new PongWebSocketFrame());
+            messageSession.getChannelHandlerContext().channel().write(new PongWebSocketFrame(msg.content().retain()));
         } else {
             try {
                 method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
