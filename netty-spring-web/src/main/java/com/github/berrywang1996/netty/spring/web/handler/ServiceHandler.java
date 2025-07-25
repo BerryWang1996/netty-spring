@@ -32,6 +32,8 @@ import lombok.extern.slf4j.Slf4j;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.RandomAccessFile;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -87,17 +89,33 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
         log.error("Failed to catch exception.", cause);
-        ServiceHandlerUtil.HttpErrorMessage errorMessage =
-                new ServiceHandlerUtil.HttpErrorMessage(
-                        HttpResponseStatus.INTERNAL_SERVER_ERROR, null, null, cause);
-        ServiceHandlerUtil.sendError(ctx, null, errorMessage);
-        String sessionId = ctx.channel().attr(SESSION_ID_IN_CHANNEL).get();
-        if (StringUtil.isNotBlank(sessionId)) {
-            String uri = ctx.channel().attr(REQUEST_IN_CHANNEL).get().uri();
-            AbstractMappingResolver mappingResolver = getMappingResolver(uri);
-            if (mappingResolver != null && "com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver".equals(mappingResolver.getClass().getName())) {
-                mappingResolver.removeSession(sessionId);
+        if (cause instanceof Exception) {
+            ServiceHandlerUtil.HttpErrorMessage errorMessage =
+                    new ServiceHandlerUtil.HttpErrorMessage(
+                            HttpResponseStatus.INTERNAL_SERVER_ERROR, null, null, cause);
+            ServiceHandlerUtil.sendError(ctx, null, errorMessage);
+            String sessionId = ctx.channel().attr(SESSION_ID_IN_CHANNEL).get();
+            if (StringUtil.isNotBlank(sessionId)) {
+                String uri = ctx.channel().attr(REQUEST_IN_CHANNEL).get().uri();
+                AbstractMappingResolver mappingResolver = getMappingResolver(uri);
+                if (mappingResolver != null && "com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver".equals(mappingResolver.getClass().getName())) {
+                    try {
+                        Method resolveMethod = mappingResolver.getClass().getMethod(
+                                "resolveWebSocketException",
+                                ChannelHandlerContext.class,
+                                Exception.class
+                        );
+                        resolveMethod.setAccessible(true);
+                        resolveMethod.invoke(mappingResolver, ctx, cause);
+                    } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+                        e.printStackTrace();
+                    }
+                    mappingResolver.removeSession(sessionId);
+                }
             }
+        } else {
+            ctx.close();
+            super.exceptionCaught(ctx, cause);
         }
     }
 

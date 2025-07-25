@@ -52,7 +52,7 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 @Slf4j
 public class MessageMappingResolver extends AbstractMappingResolver<Object, MessageType> {
 
-    protected static final AttributeKey<String> SESSION_ID_IN_CHANNEL = AttributeKey.valueOf("sessionId");
+    public static final AttributeKey<String> SESSION_ID_IN_CHANNEL = AttributeKey.valueOf("sessionId");
 
     private static final String WEBSOCKET_UPGRADE_HEADER = "websocket";
 
@@ -144,6 +144,20 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             }
             ctx.flush();
         }
+    }
+
+    public void resolveWebSocketException(ChannelHandlerContext ctx, Exception e) throws Exception {
+        // if message session not exists, close connection
+        String sessionId = ctx.channel().attr(SESSION_ID_IN_CHANNEL).get();
+        MessageSession session = sessionMap.get(sessionId);
+
+        if (session == null) {
+            log.warn("Session {} has been closed.", sessionId);
+            // ctx.writeAndFlush(new TextWebSocketFrame("Session has been closed."));
+            ctx.close();
+            return;
+        }
+        onException(null, session, e);
     }
 
     @Override
@@ -302,7 +316,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         }
     }
 
-    private void onException(Object msg, MessageSession messageSession, Exception e) throws Exception {
+    public void onException(Object msg, MessageSession messageSession, Exception e) throws Exception {
         Method method = getMethod(MessageType.ON_ERROR);
         if (method != null) {
             if (e instanceof InvocationTargetException) {

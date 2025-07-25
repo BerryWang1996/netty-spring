@@ -141,4 +141,17 @@
         </plugins>
     </build>
 
+    <distributionManagement>
+        <repository>
+            <id>repo-spqjj</id>
+            <url>https://packages.aliyun.com/661fad12d833774c93cbf601/maven/repo-spqjj</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+    </distributionManagement>
+
 </project>
