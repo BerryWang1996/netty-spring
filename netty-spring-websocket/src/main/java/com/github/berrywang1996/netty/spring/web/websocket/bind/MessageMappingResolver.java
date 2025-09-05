@@ -41,8 +41,6 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static io.netty.handler.codec.http.HttpMethod.GET;
-import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
-import static io.netty.handler.codec.http.HttpResponseStatus.FORBIDDEN;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
 /**
@@ -169,24 +167,37 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
 
         // Handle a bad request.
         if (!request.decoderResult().isSuccess()) {
-            sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, BAD_REQUEST));
+            log.warn("WS illegal: decoderResult fail");
+            sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, HttpResponseStatus.BAD_REQUEST)); // 400
             return false;
         }
         // Allow only GET methods.
         if (request.method() != GET) {
-            sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, FORBIDDEN));
+            log.warn("WS illegal: method={}", request.method());
+            sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, HttpResponseStatus.METHOD_NOT_ALLOWED)); // 405
             return false;
         }
-        // check headers contain Upgrade header
-        if (request.headers().get(HttpHeaderNames.UPGRADE) == null
-                || request.headers().get(HttpHeaderNames.CONNECTION) == null
-                || !WEBSOCKET_UPGRADE_HEADER.equalsIgnoreCase(request.headers().get(HttpHeaderNames.UPGRADE))
-                || !WEBSOCKET_CONNECTION_HEADER.equalsIgnoreCase(request.headers().get(HttpHeaderNames.CONNECTION))) {
-            sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, FORBIDDEN));
+
+        String upgrade = request.headers().get(HttpHeaderNames.UPGRADE);
+        String connection = request.headers().get(HttpHeaderNames.CONNECTION);
+        boolean isWs = upgrade != null && "websocket".equalsIgnoreCase(upgrade.trim());
+        boolean hasConnUpgrade = false;
+        if (connection != null) {
+            for (String t : connection.split(",")) {
+                if ("upgrade".equalsIgnoreCase(t.trim())) {
+                    hasConnUpgrade = true;
+                    break;
+                }
+            }
+        }
+        if (!isWs || !hasConnUpgrade) {
+            sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, HttpResponseStatus.UPGRADE_REQUIRED));
             return false;
         }
+
         return true;
     }
+
 
     private MessageSession crateMessageSession(ChannelHandlerContext ctx, FullHttpRequest request) {
 
@@ -221,18 +232,15 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     }
 
     private void onHandshake(ChannelHandlerContext ctx, FullHttpRequest msg) {
-        Method handshakeMethod = getMethod(MessageType.ON_HANDSHAKE);
-        if (handshakeMethod != null) {
-            try {
-                Object invoke = handshakeMethod.invoke(getInvokeRef(), getMethodParam(msg, ctx, null,
-                        MessageType.ON_HANDSHAKE, null));
-                if (invoke instanceof Boolean && !(boolean) invoke) {
-                    ctx.close();
-                }
-            } catch (Exception e) {
-                log.debug("Caught exception when invoke handshake method: {}", e);
-                ctx.close();
+        Method m = getMethod(MessageType.ON_HANDSHAKE);
+        if (m == null) return;
+        try {
+            Object ok = m.invoke(getInvokeRef(), getMethodParam(msg, ctx, null, MessageType.ON_HANDSHAKE, null));
+            if (ok instanceof Boolean && !(boolean) ok) {
+                rejectWithHttp(ctx, msg, HttpResponseStatus.FORBIDDEN, "Forbidden by handshake");
             }
+        } catch (Exception e) {
+            rejectWithHttp(ctx, msg, HttpResponseStatus.INTERNAL_SERVER_ERROR, "Handshake error");
         }
     }
 
@@ -397,6 +405,14 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
 
     public Map<String, MessageSession> getSessionMap() {
         return sessionMap;
+    }
+
+    private boolean rejectWithHttp(ChannelHandlerContext ctx, FullHttpRequest req, HttpResponseStatus status, String msg) {
+        DefaultFullHttpResponse res = new DefaultFullHttpResponse(HTTP_1_1, status,
+                Unpooled.copiedBuffer(msg, CharsetUtil.UTF_8));
+        HttpUtil.setContentLength(res, res.content().readableBytes());
+        ctx.writeAndFlush(res).addListener(ChannelFutureListener.CLOSE);
+        return false;
     }
 
 }

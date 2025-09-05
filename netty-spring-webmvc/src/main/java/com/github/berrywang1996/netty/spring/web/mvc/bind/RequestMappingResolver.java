@@ -163,9 +163,11 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         requestContext.setRequestParameters(requestParameterMap);
 
         // parse path variable
+        String rawUri = msg.uri();
+        String path = new QueryStringDecoder(rawUri).path();
         Map<String, String> pathParameterMap = null;
         if (isRestfulUrl) {
-            pathParameterMap = pathMatcher.extractUriTemplateVariables(pathPattern, msg.uri());
+            pathParameterMap = pathMatcher.extractUriTemplateVariables(pathPattern, path);
         }
 
         // request data bind
