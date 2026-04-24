@@ -17,11 +17,12 @@
 - `P0` 工程基线：已完成。
 - `P1` WebSocket 正确性修复：已完成。
 - `P2` WebSocket 并发与稳定性：已完成，核心限流、线程池配置化、广播背压、错误链路统一、运行时统计、停机时 active session 优雅关闭、重复 start/stop 收口、广播/停机交叉回归、MessageSenderSupport 重启后缓存刷新与停机联动关闭已落地。
-- 当前仓库已完成 `1.0.1` 发布收口，已落地 `P3.1` 的 Starter 启动失败治理与最小集成测试，后续优先进入 `P3.2`，再推进 `P4` Starter 收敛、`P5` WebSocket 产品能力和后续可观测性/示例建设。
+- 当前仓库已完成 `1.0.2` 发布收口，已落地 `P3.2` 的发布检查清单、异常 stop 路径和 startup failure 清理回归，后续优先进入 `P4` Starter 收敛、`P5` WebSocket 产品能力和后续可观测性/示例建设。
 
 ## 文档
 
 - [开发计划与阶段状态](docs/development-plan.md)
+- [1.0.x 发布检查清单](docs/release-checklist.md)
 - [WebSocket 配置说明](docs/websocket-configuration.md)
 
 ## 验证

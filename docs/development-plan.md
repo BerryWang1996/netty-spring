@@ -4,7 +4,7 @@
 
 ## 当前结论
 
-- `1.0.1` 已完成首个发布后治理切片，可作为当前稳定发布版本。
+- `1.0.2` 已完成 `P3.2` 发布后治理收口，可作为当前 `1.0.x` 稳定发布版本。
 - 当前代码最值得优先推进的，不再是继续堆 WebSocket 新功能，而是发布后工程化治理和 Starter 收敛。
 - 后续计划应以“先稳住发布面，再统一入口，再扩能力”为顺序，这比直接进入产品功能扩展更符合仓库当前状态。
 
@@ -21,8 +21,8 @@
 ### 代码里已经暴露出的下一阶段问题
 
 - 三个 Starter 仍然各自维护一套近似重复的 `NettyServerBootstrapConfigure` 和 `NettyServerStartupPropertiesWrapper`。
-- Starter 启动失败时仍直接 `System.exit(1)`，这对库/Starter 场景不够友好，优先级应该高于新增产品功能。
-- Starter 层目前缺少独立的集成测试，后续一旦重构自动配置，回归风险会明显升高。
+- Starter 层虽然已经有最小集成测试，但覆盖面仍偏基础，后续自动配置收敛时还需要补更多装配/兼容场景。
+- controller 在构造注入 `MessageSenderSupport` 时，当前仍可能因为 `NettyServerBootstrap.start()` 阶段会通过 `applicationContext.getBeansWithAnnotation(Component.class)` 提前实例化组件而触发循环依赖，demo 里仍需要 `@Lazy` 规避。
 - WebSocket API 仍偏底层，业务侧主要围绕 `HttpRequest`、`WebSocketFrame`、`MessageSession` 直接编程，还缺少更高层的鉴权、编解码和会话访问抽象。
 - 可观测性目前主要是运行时快照和日志，还没有指标、健康检查、运维友好的暴露面。
 - Demo 只覆盖了基础 HTTP 和简单 WebSocket echo/send，还不足以支撑 `1.x` 阶段的产品能力演示和回归验证。
@@ -82,12 +82,14 @@
 - 收敛重复的 `NettyServerBootstrapConfigure` / `NettyServerStartupPropertiesWrapper`。
 - 明确 MVC/WebSocket 是否启用的开关，而不是依赖模块存在与否隐式决定行为。
 - 统一 `MessageSender` / `MessageSenderSupport` 的 Bean 暴露方式。
+- 调整 mapping 扫描与 resolver 持有模型，避免在 `nettyServer` 启动扫描阶段提前实例化 controller，消除业务侧注入 `MessageSenderSupport` 时必须显式 `@Lazy` 的要求。
 - 避免多个 Starter 中同包同名自动配置类长期并行带来的维护成本。
 
 完成标准：
 
 - Starter 配置入口单一且文档一致。
 - 自动配置职责边界清晰，重复代码明显减少。
+- controller 可以直接构造注入 `MessageSenderSupport`，而不再依赖 `@Lazy` 作为循环依赖规避手段。
 - 引入或移除某个 Starter 时，行为差异可预测、可测试。
 
 ### P5 WebSocket 产品能力增强
@@ -153,8 +155,8 @@
 
 - `1.0.0`：已发布基线，对应 `P0/P1/P2` 收口结果。
 - `1.0.1`：`P3.1`，先修 Starter 启动失败传播、补 Starter 最小集成测试和 demo smoke test。
-- `1.0.2`：`P3.2`，补齐发布清单、异常 stop/重复释放回归和 `1.0.x` 维护基线。
-- `1.1.0`：`P4`，Starter 收敛与配置模型统一。这一阶段会触及配置入口和自动配置结构，适合进入新的 minor 版本。
+- `1.0.2`：已发布，完成 `P3.2` 的发布清单、异常 stop/startup failure 清理回归和 `1.0.x` 维护基线。
+- `1.1.0`：`P4`，Starter 收敛与配置模型统一，并解决 `MessageSenderSupport` 注入仍依赖 `@Lazy` 的启动期循环依赖问题。这一阶段会触及配置入口、自动配置结构和 resolver 持有模型，适合进入新的 minor 版本。
 - `1.2.0`：`P5`，WebSocket 产品能力增强，以新增能力为主。
 - `1.3.0`：`P6`，可观测与运维能力建设。
 - `1.3.x`：`P7`，demo 和文档体系持续补齐，跟随能力版本滚动完善，而不是等到最后一次性补文档。

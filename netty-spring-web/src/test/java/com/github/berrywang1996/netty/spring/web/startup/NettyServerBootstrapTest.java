@@ -20,9 +20,11 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class NettyServerBootstrapTest {
@@ -109,6 +111,69 @@ class NettyServerBootstrapTest {
         }
     }
 
+    @Test
+    void stopContinuesWhenSupporterShutdownThrows() throws Exception {
+        NioEventLoopGroup bossGroup = new NioEventLoopGroup(1);
+        NioEventLoopGroup workerGroup = new NioEventLoopGroup(1);
+        GenericApplicationContext applicationContext = new GenericApplicationContext();
+        applicationContext.refresh();
+        EmbeddedChannel serverChannel = new EmbeddedChannel();
+        AtomicBoolean shutdownCalled = new AtomicBoolean();
+        ExplodingWebMappingSupporter supporter = new ExplodingWebMappingSupporter(applicationContext, shutdownCalled);
+        NettyServerBootstrap bootstrap = new NettyServerBootstrap(null);
+
+        try {
+            setField(NettyServerBootstrap.class, bootstrap, "bossGroup", bossGroup);
+            setField(NettyServerBootstrap.class, bootstrap, "workerGroup", workerGroup);
+            setField(NettyServerBootstrap.class, bootstrap, "applicationContext", applicationContext);
+            setField(NettyServerBootstrap.class, bootstrap, "ownsApplicationContext", true);
+            setField(NettyServerBootstrap.class, bootstrap, "serverChannel", serverChannel);
+            setField(NettyServerBootstrap.class, bootstrap, "webMappingSupporter", supporter);
+            ((AtomicBoolean) getField(NettyServerBootstrap.class, bootstrap, "stopped")).set(false);
+
+            assertDoesNotThrow(bootstrap::stop);
+
+            assertTrue(shutdownCalled.get());
+            assertTrue(supporter.getExecutor().isShutdown());
+            assertTrue(bossGroup.isShutdown() || bossGroup.isTerminated() || bossGroup.isShuttingDown());
+            assertTrue(workerGroup.isShutdown() || workerGroup.isTerminated() || workerGroup.isShuttingDown());
+            assertFalse(applicationContext.isActive());
+            assertFalse(serverChannel.isOpen());
+            assertNull(getField(NettyServerBootstrap.class, bootstrap, "serverChannel"));
+            assertNull(getField(NettyServerBootstrap.class, bootstrap, "webMappingSupporter"));
+            assertNull(getField(NettyServerBootstrap.class, bootstrap, "startupProperties"));
+        } finally {
+            supporter.getExecutor().shutdownNow();
+            bossGroup.shutdownGracefully().syncUninterruptibly();
+            workerGroup.shutdownGracefully().syncUninterruptibly();
+            serverChannel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void startupFailureAfterPartialInitializationCleansOwnedRuntimeState() throws Exception {
+        NettyServerBootstrap bootstrap = new NettyServerBootstrap(null);
+        NettyServerStartupProperties startupProperties = new NettyServerStartupProperties();
+        startupProperties.setLoadSpringApplicationContext(true);
+        startupProperties.setConfigLocation("classpath:restart-test-context.xml");
+
+        try (ServerSocket occupiedPort = new ServerSocket(0)) {
+            startupProperties.setPort(occupiedPort.getLocalPort());
+
+            assertThrows(Exception.class, () -> bootstrap.start(startupProperties));
+
+            assertTrue(((AtomicBoolean) getField(NettyServerBootstrap.class, bootstrap, "stopped")).get());
+            assertNull(bootstrap.getApplicationContext());
+            assertNull(bootstrap.getWebSockeMappingtResolverMap());
+            assertNull(getField(NettyServerBootstrap.class, bootstrap, "bossGroup"));
+            assertNull(getField(NettyServerBootstrap.class, bootstrap, "workerGroup"));
+            assertNull(getField(NettyServerBootstrap.class, bootstrap, "serverChannel"));
+            assertNull(getField(NettyServerBootstrap.class, bootstrap, "webMappingSupporter"));
+            assertNull(getField(NettyServerBootstrap.class, bootstrap, "startupProperties"));
+            assertFalse((Boolean) getField(NettyServerBootstrap.class, bootstrap, "ownsApplicationContext"));
+        }
+    }
+
     private static void setField(Class<?> type, Object target, String name, Object value) throws Exception {
         Field field = type.getDeclaredField(name);
         field.setAccessible(true);
@@ -146,6 +211,23 @@ class NettyServerBootstrapTest {
             return socket.getLocalPort();
         } finally {
             socket.close();
+        }
+    }
+
+    private static final class ExplodingWebMappingSupporter extends WebMappingSupporter {
+
+        private final AtomicBoolean shutdownCalled;
+
+        private ExplodingWebMappingSupporter(ApplicationContext applicationContext, AtomicBoolean shutdownCalled) {
+            super(new NettyServerStartupProperties(), applicationContext);
+            this.shutdownCalled = shutdownCalled;
+        }
+
+        @Override
+        public void shutdown() {
+            this.shutdownCalled.set(true);
+            super.shutdown();
+            throw new IllegalStateException("boom");
         }
     }
 }

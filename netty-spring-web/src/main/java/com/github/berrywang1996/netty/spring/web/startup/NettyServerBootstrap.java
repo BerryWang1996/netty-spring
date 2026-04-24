@@ -132,13 +132,46 @@ public final class NettyServerBootstrap {
             return;
         }
         log.info("Netty is shutting down.");
-        closeServerChannel();
-        notifyStopListeners();
-        shutdownSupporter();
-        shutdownEventLoopGroup(this.bossGroup);
-        shutdownEventLoopGroup(this.workerGroup);
-        closeOwnedApplicationContext();
-        clearRuntimeState();
+        try {
+            runStopAction("closeServerChannel", new Runnable() {
+                @Override
+                public void run() {
+                    closeServerChannel();
+                }
+            });
+            runStopAction("notifyStopListeners", new Runnable() {
+                @Override
+                public void run() {
+                    notifyStopListeners();
+                }
+            });
+            runStopAction("shutdownSupporter", new Runnable() {
+                @Override
+                public void run() {
+                    shutdownSupporter();
+                }
+            });
+            runStopAction("shutdownBossGroup", new Runnable() {
+                @Override
+                public void run() {
+                    shutdownEventLoopGroup(bossGroup);
+                }
+            });
+            runStopAction("shutdownWorkerGroup", new Runnable() {
+                @Override
+                public void run() {
+                    shutdownEventLoopGroup(workerGroup);
+                }
+            });
+            runStopAction("closeOwnedApplicationContext", new Runnable() {
+                @Override
+                public void run() {
+                    closeOwnedApplicationContext();
+                }
+            });
+        } finally {
+            clearRuntimeState();
+        }
     }
 
     private void closeServerChannel() {
@@ -185,6 +218,7 @@ public final class NettyServerBootstrap {
     }
 
     private void clearRuntimeState() {
+        this.startupProperties = null;
         this.serverChannel = null;
         this.webMappingSupporter = null;
         this.webSockeMappingtResolverMap = null;
@@ -221,6 +255,14 @@ public final class NettyServerBootstrap {
             } catch (Exception e) {
                 log.warn("Invoke stop listener failed.", e);
             }
+        }
+    }
+
+    private void runStopAction(String actionName, Runnable action) {
+        try {
+            action.run();
+        } catch (RuntimeException e) {
+            log.warn("Stop action {} failed.", actionName, e);
         }
     }
 
