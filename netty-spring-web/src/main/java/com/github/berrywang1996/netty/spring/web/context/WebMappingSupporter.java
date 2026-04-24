@@ -26,13 +26,16 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.util.PathMatcher;
 
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * @author berrywang1996
@@ -40,7 +43,18 @@ import java.util.concurrent.TimeUnit;
  */
 @Slf4j
 @Getter
-public class WebMappingSupporter implements MappingSupporter {
+public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
+
+    private static final int DEFAULT_HANDLER_CORE_POOL_SIZE =
+            Runtime.getRuntime().availableProcessors() * 100 * 2;
+
+    private static final int DEFAULT_HANDLER_MAX_POOL_SIZE =
+            Runtime.getRuntime().availableProcessors() * 100 * 3;
+
+    private static final long DEFAULT_HANDLER_KEEP_ALIVE_SECONDS = 5L;
+
+    private static final int DEFAULT_HANDLER_PERMIT_LIMIT =
+            Runtime.getRuntime().availableProcessors() * 100 * 2;
 
     private static final String[] DEFAULT_MAPPING_CLASSES =
             new String[]{
@@ -59,17 +73,34 @@ public class WebMappingSupporter implements MappingSupporter {
 
     private final Semaphore semaphore;
 
+    private final int handlerPermitLimit;
+
+    private final AtomicLong permitRejectedCount = new AtomicLong();
+
+    private final AtomicLong executorRejectedCount = new AtomicLong();
+
     private Map<String, AbstractMappingResolver> webSocketMappingtResolverMap;
 
     public WebMappingSupporter(NettyServerStartupProperties startupProperties,
                                ApplicationContext applicationContext) {
+        this(startupProperties, applicationContext, null, null, null);
+    }
+
+    WebMappingSupporter(NettyServerStartupProperties startupProperties,
+                        ApplicationContext applicationContext,
+                        Map<String, AbstractMappingResolver> mappingResolverMap,
+                        ThreadPoolExecutor executor,
+                        Semaphore semaphore) {
         this.startupProperties = startupProperties;
         this.pathMatcher = new AntPathMatcher();
         this.applicationContext = applicationContext;
-        this.mappingResolverMap = initMappingResolverMap(startupProperties, applicationContext);
-        this.executor = initHandlerExecutorThreadPool();
-        this.semaphore = initHandlerSemaphore();
-
+        this.executor = executor == null ? initHandlerExecutorThreadPool() : executor;
+        this.semaphore = semaphore == null ? initHandlerSemaphore() : semaphore;
+        this.handlerPermitLimit = Math.max(0, this.semaphore.availablePermits());
+        this.mappingResolverMap = mappingResolverMap == null
+                ? initMappingResolverMap(startupProperties, applicationContext)
+                : adaptMappingResolverMap(mappingResolverMap);
+        configureHandlerSubmitter(this.mappingResolverMap);
     }
 
     @Override
@@ -101,38 +132,142 @@ public class WebMappingSupporter implements MappingSupporter {
 
     private ThreadPoolExecutor initHandlerExecutorThreadPool() {
         // TODO 通过配置对象进行配置
+        NettyServerStartupProperties.WebSocket webSocketProperties = getWebSocketProperties();
+        int corePoolSize = resolveHandlerCorePoolSize(webSocketProperties);
+        int maxPoolSize = Math.max(corePoolSize, resolveHandlerMaxPoolSize(webSocketProperties));
+        long keepAliveTime = resolveHandlerKeepAliveTime(webSocketProperties);
+        int queueCapacity = resolveHandlerQueueCapacity(webSocketProperties);
         return new ThreadPoolExecutor(
-                Runtime.getRuntime().availableProcessors() * 100 * 2,
-                Runtime.getRuntime().availableProcessors() * 100 * 3,
-                5L,
+                corePoolSize,
+                maxPoolSize,
+                keepAliveTime,
                 TimeUnit.SECONDS,
-                new SynchronousQueue<Runnable>(),
-                new DaemonThreadFactory("handler"));
+                initHandlerQueue(queueCapacity),
+                new DaemonThreadFactory("handler"),
+                new ThreadPoolExecutor.AbortPolicy());
     }
 
     private Semaphore initHandlerSemaphore() {
         // TODO 通过配置对象进行配置
-        return new Semaphore(Runtime.getRuntime().availableProcessors() * 100 * 2);
+        return new Semaphore(resolveHandlerPermitLimit(getWebSocketProperties()));
     }
 
+    private Map<String, AbstractMappingResolver> adaptMappingResolverMap(Map<String, AbstractMappingResolver> mappingResolverMap) {
+        Map<String, AbstractMappingResolver> copiedResolverMap = new HashMap<>(mappingResolverMap);
+        if (copiedResolverMap.size() == 0) {
+            log.warn("No mapping resolvers are mapped.");
+        }
+        for (AbstractMappingResolver resolver : copiedResolverMap.values()) {
+            resolver.setPathMatcher(this.pathMatcher);
+        }
+        return Collections.unmodifiableMap(copiedResolverMap);
+    }
+
+    private void configureHandlerSubmitter(Map<String, AbstractMappingResolver> resolverMap) {
+        for (AbstractMappingResolver resolver : resolverMap.values()) {
+            if (resolver instanceof HandlerSubmitterAware) {
+                ((HandlerSubmitterAware) resolver).setHandlerSubmitter(this);
+            }
+        }
+    }
+
+    @Override
     public void submitHandle(final Runnable runnable) {
+        if (!this.semaphore.tryAcquire()) {
+            this.permitRejectedCount.incrementAndGet();
+            throw new RejectedExecutionException("No handler permits available. " + getRuntimeStats());
+        }
         try {
-            this.semaphore.acquire();
-            this.executor.submit(new Runnable() {
+            this.executor.execute(new Runnable() {
                 @Override
                 public void run() {
                     try {
                         runnable.run();
                     } catch (Exception e) {
                         log.error("Submit handle error.", e);
+                    } finally {
+                        semaphore.release();
                     }
                 }
             });
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        } finally {
+        } catch (RuntimeException e) {
             this.semaphore.release();
+            if (e instanceof RejectedExecutionException) {
+                this.executorRejectedCount.incrementAndGet();
+                throw new RejectedExecutionException("Handler executor rejected task. " + getRuntimeStats(), e);
+            }
+            throw e;
         }
+    }
+
+    public HandlerRuntimeStats getRuntimeStats() {
+        return new HandlerRuntimeStats(
+                ExecutorRuntimeInfo.from(this.executor),
+                this.handlerPermitLimit,
+                this.semaphore.availablePermits(),
+                this.permitRejectedCount.get(),
+                this.executorRejectedCount.get());
+    }
+
+    public void shutdown() {
+        if (this.executor.isShutdown()) {
+            return;
+        }
+        this.executor.shutdown();
+        try {
+            if (!this.executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                this.executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            this.executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private NettyServerStartupProperties.WebSocket getWebSocketProperties() {
+        return this.startupProperties == null ? null : this.startupProperties.getWebSocket();
+    }
+
+    private java.util.concurrent.BlockingQueue<Runnable> initHandlerQueue(int queueCapacity) {
+        if (queueCapacity <= 0) {
+            return new SynchronousQueue<Runnable>();
+        }
+        return new ArrayBlockingQueue<Runnable>(queueCapacity);
+    }
+
+    private int resolveHandlerCorePoolSize(NettyServerStartupProperties.WebSocket webSocketProperties) {
+        if (webSocketProperties == null || webSocketProperties.getHandlerCorePoolSize() <= 0) {
+            return DEFAULT_HANDLER_CORE_POOL_SIZE;
+        }
+        return webSocketProperties.getHandlerCorePoolSize();
+    }
+
+    private int resolveHandlerMaxPoolSize(NettyServerStartupProperties.WebSocket webSocketProperties) {
+        if (webSocketProperties == null || webSocketProperties.getHandlerMaxPoolSize() <= 0) {
+            return DEFAULT_HANDLER_MAX_POOL_SIZE;
+        }
+        return webSocketProperties.getHandlerMaxPoolSize();
+    }
+
+    private long resolveHandlerKeepAliveTime(NettyServerStartupProperties.WebSocket webSocketProperties) {
+        if (webSocketProperties == null || webSocketProperties.getHandlerKeepAliveTime() <= 0L) {
+            return DEFAULT_HANDLER_KEEP_ALIVE_SECONDS;
+        }
+        return webSocketProperties.getHandlerKeepAliveTime();
+    }
+
+    private int resolveHandlerQueueCapacity(NettyServerStartupProperties.WebSocket webSocketProperties) {
+        if (webSocketProperties == null || webSocketProperties.getHandlerQueueCapacity() < 0) {
+            return 0;
+        }
+        return webSocketProperties.getHandlerQueueCapacity();
+    }
+
+    private int resolveHandlerPermitLimit(NettyServerStartupProperties.WebSocket webSocketProperties) {
+        if (webSocketProperties == null || webSocketProperties.getHandlerPermitLimit() <= 0) {
+            return DEFAULT_HANDLER_PERMIT_LIMIT;
+        }
+        return webSocketProperties.getHandlerPermitLimit();
     }
 
 }

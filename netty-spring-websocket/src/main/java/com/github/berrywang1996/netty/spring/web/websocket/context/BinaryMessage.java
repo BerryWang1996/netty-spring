@@ -25,7 +25,7 @@ public class BinaryMessage extends AbstractMessage<BinaryWebSocketFrame> {
 
     @Override
     public BinaryWebSocketFrame responseMsg() {
-        return new BinaryWebSocketFrame(binaryData);
+        return new BinaryWebSocketFrame(binaryData.retainedDuplicate());
     }
 
 }

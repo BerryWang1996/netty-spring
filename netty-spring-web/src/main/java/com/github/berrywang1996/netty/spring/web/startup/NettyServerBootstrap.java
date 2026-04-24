@@ -17,10 +17,13 @@
 package com.github.berrywang1996.netty.spring.web.startup;
 
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
+import com.github.berrywang1996.netty.spring.web.context.HandlerRuntimeStats;
 import com.github.berrywang1996.netty.spring.web.context.NettyChannelInitializer;
+import com.github.berrywang1996.netty.spring.web.context.WebMappingSupporter;
 import com.github.berrywang1996.netty.spring.web.util.DaemonThreadFactory;
 import com.github.berrywang1996.netty.spring.web.util.StartupPropertiesUtil;
 import io.netty.bootstrap.ServerBootstrap;
+import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -28,9 +31,11 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.support.ClassPathXmlApplicationContext;
 
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * @author berrywang1996
@@ -38,10 +43,6 @@ import java.util.Map;
  */
 @Slf4j
 public final class NettyServerBootstrap {
-
-    public NettyServerBootstrap(ApplicationContext applicationContext) {
-        this.applicationContext = applicationContext;
-    }
 
     private NioEventLoopGroup bossGroup;
 
@@ -51,77 +52,124 @@ public final class NettyServerBootstrap {
 
     private ApplicationContext applicationContext;
 
+    private boolean ownsApplicationContext;
+
+    private Channel serverChannel;
+
+    private WebMappingSupporter webMappingSupporter;
+
+    private final AtomicBoolean stopped = new AtomicBoolean(true);
+
     @Getter
     private Map<String, AbstractMappingResolver> webSockeMappingtResolverMap;
+
+    public NettyServerBootstrap(ApplicationContext applicationContext) {
+        this.applicationContext = applicationContext;
+    }
 
     /**
      * start server.
      */
     public void start(NettyServerStartupProperties startupProperties) throws Exception {
-
+        this.stopped.set(false);
         this.startupProperties = startupProperties;
-
-        if (this.applicationContext == null && this.startupProperties.isLoadSpringApplicationContext()) {
-            // load spring application context
-            log.debug("Loading spring application context.");
-            applicationContext = new ClassPathXmlApplicationContext(this.startupProperties.getConfigLocation());
-        }
-
-        // check properties
-        log.debug("Checking netty server startup properties.");
-        StartupPropertiesUtil.checkAndImproveProperties(startupProperties);
-
-        // start server
-        bossGroup = new NioEventLoopGroup();
-        workerGroup = new NioEventLoopGroup();
-        ServerBootstrap b = new ServerBootstrap();
-        b.option(ChannelOption.SO_BACKLOG, 1024);
-
-        NettyChannelInitializer initializer = new NettyChannelInitializer(this);
-        this.webSockeMappingtResolverMap = initializer.getWebSockeMappingtResolverMap();
-
-        b.group(bossGroup, workerGroup)
-                .channel(NioServerSocketChannel.class)
-                .childHandler(initializer);
-
-        final ChannelFuture f = b.bind(startupProperties.getPort()).sync();
-        log.debug("Netty started on port: {} ", startupProperties.getPort());
-
-        Thread nettyDaemonThread = new DaemonThreadFactory("netty").newThread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    // Wait until the server socket is closed.
-                    f.channel().closeFuture().sync();
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                } finally {
-                    stop();
-                }
+        try {
+            if (this.applicationContext == null && this.startupProperties.isLoadSpringApplicationContext()) {
+                log.debug("Loading spring application context.");
+                this.applicationContext = new ClassPathXmlApplicationContext(this.startupProperties.getConfigLocation());
+                this.ownsApplicationContext = true;
             }
-        });
 
-        nettyDaemonThread.start();
+            log.debug("Checking netty server startup properties.");
+            StartupPropertiesUtil.checkAndImproveProperties(startupProperties);
 
+            this.bossGroup = new NioEventLoopGroup();
+            this.workerGroup = new NioEventLoopGroup();
+            ServerBootstrap bootstrap = new ServerBootstrap();
+            bootstrap.option(ChannelOption.SO_BACKLOG, 1024);
+
+            NettyChannelInitializer initializer = new NettyChannelInitializer(this);
+            this.webMappingSupporter = initializer.getSupporter();
+            this.webSockeMappingtResolverMap = initializer.getWebSockeMappingtResolverMap();
+
+            bootstrap.group(this.bossGroup, this.workerGroup)
+                    .channel(NioServerSocketChannel.class)
+                    .childHandler(initializer);
+
+            final ChannelFuture bindFuture = bootstrap.bind(startupProperties.getPort()).sync();
+            this.serverChannel = bindFuture.channel();
+            log.debug("Netty started on port: {} ", startupProperties.getPort());
+
+            Thread nettyDaemonThread = new DaemonThreadFactory("netty").newThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        bindFuture.channel().closeFuture().sync();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        log.warn("Netty close future wait interrupted.", e);
+                    } finally {
+                        stop();
+                    }
+                }
+            });
+            nettyDaemonThread.start();
+        } catch (Exception e) {
+            stop();
+            throw e;
+        }
     }
 
     /**
      * Shut down all event loops to terminate all threads.
      */
     public void stop() {
-
-        // TODO 优雅退出
-
+        if (!this.stopped.compareAndSet(false, true)) {
+            return;
+        }
         log.info("Netty is shutting down.");
-        if (bossGroup.isTerminated() || bossGroup.isShutdown() || bossGroup.isShuttingDown()) {
-            return;
-        }
-        bossGroup.shutdownGracefully();
+        closeServerChannel();
+        shutdownSupporter();
+        shutdownEventLoopGroup(this.bossGroup);
+        shutdownEventLoopGroup(this.workerGroup);
+        closeOwnedApplicationContext();
+    }
 
-        if (workerGroup.isTerminated() || workerGroup.isShutdown() || workerGroup.isShuttingDown()) {
+    private void closeServerChannel() {
+        if (this.serverChannel == null || !this.serverChannel.isOpen()) {
             return;
         }
-        workerGroup.shutdownGracefully();
+        this.serverChannel.close().syncUninterruptibly();
+        this.serverChannel = null;
+    }
+
+    private void shutdownSupporter() {
+        if (this.webMappingSupporter == null) {
+            return;
+        }
+        this.webMappingSupporter.shutdown();
+        this.webMappingSupporter = null;
+    }
+
+    private void shutdownEventLoopGroup(NioEventLoopGroup eventLoopGroup) {
+        if (eventLoopGroup == null
+                || eventLoopGroup.isTerminated()
+                || eventLoopGroup.isShutdown()
+                || eventLoopGroup.isShuttingDown()) {
+            return;
+        }
+        eventLoopGroup.shutdownGracefully().syncUninterruptibly();
+    }
+
+    private void closeOwnedApplicationContext() {
+        if (!this.ownsApplicationContext || !(this.applicationContext instanceof ConfigurableApplicationContext)) {
+            return;
+        }
+        ConfigurableApplicationContext context = (ConfigurableApplicationContext) this.applicationContext;
+        if (context.isActive()) {
+            context.close();
+        }
+        this.ownsApplicationContext = false;
     }
 
     public NettyServerStartupProperties getStartupProperties() {
@@ -130,6 +178,13 @@ public final class NettyServerBootstrap {
 
     public ApplicationContext getApplicationContext() {
         return applicationContext;
+    }
+
+    public HandlerRuntimeStats getHandlerRuntimeStats() {
+        if (this.webMappingSupporter == null) {
+            return HandlerRuntimeStats.empty();
+        }
+        return this.webMappingSupporter.getRuntimeStats();
     }
 
 }

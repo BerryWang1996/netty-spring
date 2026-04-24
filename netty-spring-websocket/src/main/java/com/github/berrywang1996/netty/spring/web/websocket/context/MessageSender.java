@@ -63,4 +63,17 @@ public interface MessageSender {
      */
     void topicMessage(String uri, AbstractMessage message) throws MessageUriNotDefinedException;
 
+    /**
+     * Runtime sender statistics.
+     */
+    default MessageSenderRuntimeStats getRuntimeStats() {
+        return MessageSenderRuntimeStats.empty();
+    }
+
+    /**
+     * Shutdown sender resources when no longer needed.
+     */
+    default void shutdown() {
+    }
+
 }

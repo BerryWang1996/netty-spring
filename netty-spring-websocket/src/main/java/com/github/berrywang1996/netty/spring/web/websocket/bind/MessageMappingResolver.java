@@ -17,7 +17,11 @@
 package com.github.berrywang1996.netty.spring.web.websocket.bind;
 
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
+import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitter;
+import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitterAware;
 import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
+import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
+import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
 import io.netty.buffer.ByteBuf;
@@ -25,6 +29,7 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.handler.codec.TooLongFrameException;
 import io.netty.handler.codec.http.*;
 import io.netty.handler.codec.http.websocketx.*;
 import io.netty.handler.ssl.SslHandler;
@@ -39,6 +44,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
 
 import static io.netty.handler.codec.http.HttpMethod.GET;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
@@ -48,18 +55,33 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
  * @since V1.0.0
  */
 @Slf4j
-public class MessageMappingResolver extends AbstractMappingResolver<Object, MessageType> {
+public class MessageMappingResolver extends AbstractMappingResolver<Object, MessageType>
+        implements HandlerSubmitterAware {
+
+    private static final int DEFAULT_MAX_FRAME_PAYLOAD_LENGTH = 65536;
 
     public static final AttributeKey<String> SESSION_ID_IN_CHANNEL = AttributeKey.valueOf("sessionId");
 
-    private static final String WEBSOCKET_UPGRADE_HEADER = "websocket";
+    private final NettyServerStartupProperties.WebSocket webSocketProperties;
 
-    private static final String WEBSOCKET_CONNECTION_HEADER = "upgrade";
+    private final Semaphore connectionSemaphore;
 
     private final Map<String, MessageSession> sessionMap;
 
+    private volatile HandlerSubmitter handlerSubmitter;
+
     public MessageMappingResolver(String url, Map<MessageType, Method> methods, Object invokeRef) {
+        this(url, methods, invokeRef, null, null);
+    }
+
+    public MessageMappingResolver(String url,
+                                  Map<MessageType, Method> methods,
+                                  Object invokeRef,
+                                  NettyServerStartupProperties.WebSocket webSocketProperties,
+                                  Semaphore connectionSemaphore) {
         super(url, methods, invokeRef);
+        this.webSocketProperties = webSocketProperties;
+        this.connectionSemaphore = connectionSemaphore;
         // create new session map, maintain session relations
         this.sessionMap = new ConcurrentHashMap<>();
     }
@@ -75,79 +97,91 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                 return;
             }
             // on handshake
-            onHandshake(ctx, request);
-            // create session
-            MessageSession session = crateMessageSession(ctx, request);
-            // do handshake
-            if (!doHandshake(ctx, request)) {
+            if (!onHandshake(ctx, request)) {
                 return;
             }
-            // put session into session map
-            sessionMap.put(session.getSessionId(), session);
-            // on connected
-            try {
-                onConnected(request, session);
-            } catch (Exception e) {
-                onException(msg, session, e);
+            Runnable connectionReleaseAction = tryAcquireConnectionSlot(ctx, request);
+            if (connectionReleaseAction == null && connectionSemaphore != null) {
+                return;
             }
+            MessageSession pendingSession = createMessageSession(ctx, request, connectionReleaseAction);
+            // do handshake
+            ChannelFuture handshakeFuture = doHandshake(ctx, request);
+            if (handshakeFuture == null) {
+                pendingSession.release();
+                return;
+            }
+            handshakeFuture.addListener(new ChannelFutureListener() {
+                @Override
+                public void operationComplete(ChannelFuture future) {
+                    if (!future.isSuccess()) {
+                        handleHandshakeFailure(pendingSession, future.cause());
+                        return;
+                    }
+                    registerSession(pendingSession);
+                    dispatchConnectedLifecycle(pendingSession);
+                }
+            });
 
         } else if (msg instanceof WebSocketFrame) {
 
             // if message session not exists, close connection
             String sessionId = ctx.channel().attr(SESSION_ID_IN_CHANNEL).get();
-            MessageSession session = sessionMap.get(sessionId);
+            MessageSession session = StringUtil.isBlank(sessionId) ? null : sessionMap.get(sessionId);
 
-            if (session == null) {
+            if (session == null || session.isClosing()) {
                 log.warn("Session {} has been closed.", sessionId);
                 // ctx.writeAndFlush(new TextWebSocketFrame("Session has been closed."));
                 ctx.close();
                 return;
             }
+            if (isFrameTooLarge((WebSocketFrame) msg)) {
+                handleFrameTooLarge(session, (WebSocketFrame) msg);
+                return;
+            }
 
             if (msg instanceof CloseWebSocketFrame) {
-                try {
-                    onClose((CloseWebSocketFrame) msg, session);
-                    // close session
-                    session.getChannelHandlerContext().close();
-                    // remove session from session map
-                    sessionMap.remove(sessionId);
-                } catch (Exception e) {
-                    sessionMap.remove(sessionId);
-                    onException(msg, session, e);
-                }
+                closeSession(session, (CloseWebSocketFrame) msg, true);
             } else if (msg instanceof PingWebSocketFrame) {
                 try {
                     onPing((PingWebSocketFrame) msg, session);
                 } catch (Exception e) {
-                    onException(msg, session, e);
+                    handleLifecycleException(msg, session, e);
+                }
+            } else if (msg instanceof PongWebSocketFrame) {
+                try {
+                    onPong((PongWebSocketFrame) msg, session);
+                } catch (Exception e) {
+                    handleLifecycleException(msg, session, e);
                 }
             } else if (msg instanceof TextWebSocketFrame) {
                 try {
                     onTextMessage((TextWebSocketFrame) msg, session);
                 } catch (Exception e) {
-                    onException(msg, session, e);
+                    handleLifecycleException(msg, session, e);
                 }
             } else if (msg instanceof BinaryWebSocketFrame) {
                 try {
                     onBinaryMessage((BinaryWebSocketFrame) msg, session);
                 } catch (Exception e) {
-                    onException(msg, session, e);
+                    handleLifecycleException(msg, session, e);
                 }
             } else {
                 try {
                     onOtherMessage((WebSocketFrame) msg, session);
                 } catch (Exception e) {
-                    onException(msg, session, e);
+                    handleLifecycleException(msg, session, e);
                 }
             }
             ctx.flush();
         }
     }
 
-    public void resolveWebSocketException(ChannelHandlerContext ctx, Exception e) throws Exception {
+    @Override
+    public void resolveException(ChannelHandlerContext ctx, Exception e) throws Exception {
         // if message session not exists, close connection
         String sessionId = ctx.channel().attr(SESSION_ID_IN_CHANNEL).get();
-        MessageSession session = sessionMap.get(sessionId);
+        MessageSession session = StringUtil.isBlank(sessionId) ? null : sessionMap.get(sessionId);
 
         if (session == null) {
             log.warn("Session {} has been closed.", sessionId);
@@ -155,12 +189,47 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             ctx.close();
             return;
         }
-        onException(null, session, e);
+        closeSessionOnTransportError(session, e);
     }
 
     @Override
     public void removeSession(String sessionId) {
-        sessionMap.remove(sessionId);
+        MessageSession session = sessionMap.remove(sessionId);
+        if (session == null) {
+            return;
+        }
+        clearChannelAttributes(session.getChannelHandlerContext());
+        releaseSession(session);
+    }
+
+    @Override
+    public void onChannelInactive(ChannelHandlerContext ctx) {
+        MessageSession session = removeSession(ctx);
+        if (session == null) {
+            return;
+        }
+        if (!session.startClosing()) {
+            return;
+        }
+        dispatchInactiveCloseLifecycle(session);
+    }
+
+    public void closeSessionOnTransportError(MessageSession session, Throwable throwable) {
+        if (session == null || !session.startClosing()) {
+            return;
+        }
+        removeSession(session);
+        dispatchLifecycleTask("transportError", session, new Runnable() {
+            @Override
+            public void run() {
+                doCloseSessionOnTransportError(session, throwable);
+            }
+        }, new Runnable() {
+            @Override
+            public void run() {
+                finishDetachedSession(session, null);
+            }
+        });
     }
 
     private boolean isMessageRequestLegal(ChannelHandlerContext ctx, FullHttpRequest request) {
@@ -199,48 +268,53 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     }
 
 
-    private MessageSession crateMessageSession(ChannelHandlerContext ctx, FullHttpRequest request) {
+    private MessageSession createMessageSession(ChannelHandlerContext ctx,
+                                                FullHttpRequest request,
+                                                Runnable cleanupAction) {
 
         // generate session id
         String sessionId = UUID.randomUUID().toString();
         if (sessionMap.containsKey(sessionId)) {
             log.warn("Duplicate session id {}, retry.", sessionId);
-            return crateMessageSession(ctx, request);
+            return createMessageSession(ctx, request, cleanupAction);
         }
 
-        // set attribute request in ChannelHandlerContext, used for ServiceHandler get resolver
-        ctx.channel().attr(ServiceHandler.REQUEST_IN_CHANNEL).set(request);
-
-        // set attribute session id in ChannelHandlerContext, used for get current session
-        ctx.channel().attr(SESSION_ID_IN_CHANNEL).set(sessionId);
-
         // return new message session
-        return new MessageSession(sessionId, ctx, request);
+        return new MessageSession(sessionId, ctx, request, cleanupAction);
     }
 
-    private boolean doHandshake(ChannelHandlerContext ctx, FullHttpRequest request) {
+    private ChannelFuture doHandshake(ChannelHandlerContext ctx, FullHttpRequest request) {
         String protocol = ctx.pipeline().get(SslHandler.class) == null ? "ws://" : "wss://";
         String wsUrl = protocol + request.headers().get(HttpHeaderNames.HOST) + request.uri();
-        WebSocketServerHandshakerFactory wsFactory = new WebSocketServerHandshakerFactory(wsUrl, null, false);
+        WebSocketServerHandshakerFactory wsFactory = new WebSocketServerHandshakerFactory(
+                wsUrl,
+                null,
+                false,
+                resolveMaxFramePayloadLength());
         WebSocketServerHandshaker handShaker = wsFactory.newHandshaker(request);
         if (handShaker == null) {
             WebSocketServerHandshakerFactory.sendUnsupportedVersionResponse(ctx.channel());
-            return false;
+            return null;
         }
-        handShaker.handshake(ctx.channel(), request);
-        return true;
+        return handShaker.handshake(ctx.channel(), request);
     }
 
-    private void onHandshake(ChannelHandlerContext ctx, FullHttpRequest msg) {
+    private boolean onHandshake(ChannelHandlerContext ctx, FullHttpRequest msg) {
         Method m = getMethod(MessageType.ON_HANDSHAKE);
-        if (m == null) return;
+        if (m == null) {
+            return true;
+        }
         try {
             Object ok = m.invoke(getInvokeRef(), getMethodParam(msg, ctx, null, MessageType.ON_HANDSHAKE, null));
             if (ok instanceof Boolean && !(boolean) ok) {
                 rejectWithHttp(ctx, msg, HttpResponseStatus.FORBIDDEN, "Forbidden by handshake");
+                return false;
             }
+            return true;
+        } catch (InvocationTargetException e) {
+            return rejectHandshake(ctx, msg, extractException(e));
         } catch (Exception e) {
-            rejectWithHttp(ctx, msg, HttpResponseStatus.INTERNAL_SERVER_ERROR, "Handshake error");
+            return rejectHandshake(ctx, msg, extractException(e));
         }
     }
 
@@ -259,7 +333,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     private void onPing(PingWebSocketFrame msg, MessageSession messageSession) throws Exception {
         Method method = getMethod(MessageType.ON_PING);
         if (method == null) {
-            messageSession.getChannelHandlerContext().channel().write(new PongWebSocketFrame(msg.content().retain()));
+            messageSession.getChannelHandlerContext().writeAndFlush(new PongWebSocketFrame(msg.content().retain()));
         } else {
             try {
                 method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
@@ -267,9 +341,16 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             } catch (IllegalAccessException e) {
                 e.printStackTrace();
             } catch (InvocationTargetException e1) {
-                throw (Exception) e1.getCause();
+                throw extractException(e1);
             }
         }
+    }
+
+    private void onPong(PongWebSocketFrame msg, MessageSession messageSession) throws Exception {
+        if (getMethod(MessageType.OTHER) == null) {
+            return;
+        }
+        onOtherMessage(msg, messageSession);
     }
 
     private void onTextMessage(TextWebSocketFrame msg, MessageSession messageSession) throws Exception {
@@ -281,7 +362,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             } catch (IllegalAccessException e) {
                 e.printStackTrace();
             } catch (InvocationTargetException e1) {
-                throw (Exception) e1.getCause();
+                throw extractException(e1);
             }
         }
     }
@@ -295,46 +376,54 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             } catch (IllegalAccessException e) {
                 e.printStackTrace();
             } catch (InvocationTargetException e1) {
-                throw (Exception) e1.getCause();
+                throw extractException(e1);
             }
         }
     }
 
     private void onOtherMessage(WebSocketFrame msg, MessageSession messageSession) throws Exception {
         Method method = getMethod(MessageType.OTHER);
+        if (method == null) {
+            return;
+        }
         try {
             method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
                     messageSession, MessageType.OTHER, null));
         } catch (IllegalAccessException e) {
             e.printStackTrace();
         } catch (InvocationTargetException e1) {
-            throw (Exception) e1.getCause();
+            throw extractException(e1);
         }
     }
 
-    private void onClose(CloseWebSocketFrame msg, MessageSession messageSession) {
+    private void onClose(CloseWebSocketFrame msg, MessageSession messageSession) throws Exception {
         Method method = getMethod(MessageType.ON_CLOSE);
         if (method != null) {
             try {
                 method.invoke(getInvokeRef(), getMethodParam(msg,
                         messageSession.getChannelHandlerContext(), messageSession, MessageType.ON_CLOSE, null));
-            } catch (IllegalAccessException | InvocationTargetException e) {
-                e.printStackTrace();
+            } catch (IllegalAccessException e) {
+                throw new IllegalStateException("Invoke close handler failed.", e);
+            } catch (InvocationTargetException e) {
+                throw extractException(e);
             }
         }
     }
 
     public void onException(Object msg, MessageSession messageSession, Exception e) throws Exception {
+        ChannelHandlerContext ctx = messageSession != null ? messageSession.getChannelHandlerContext() : null;
+        onException(msg, ctx, messageSession, e);
+    }
+
+    private void onException(Object msg, ChannelHandlerContext ctx, MessageSession messageSession, Exception e) throws Exception {
         Method method = getMethod(MessageType.ON_ERROR);
         if (method != null) {
-            if (e instanceof InvocationTargetException) {
-                e = (Exception) ((InvocationTargetException) e).getTargetException();
-            }
+            e = extractException(e);
             try {
-                method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
+                method.invoke(getInvokeRef(), getMethodParam(msg, ctx,
                         messageSession, MessageType.ON_ERROR, e));
             } catch (InvocationTargetException e1) {
-                throw (Exception) e1.getTargetException();
+                throw extractException(e1);
             }
         } else {
             throw e;
@@ -361,7 +450,13 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                 methodParams.add(message);
             } else if (HttpRequest.class.isAssignableFrom(value)) {
                 // HttpRequest
-                methodParams.add(session.getFirstRequest());
+                if (session != null) {
+                    methodParams.add(session.getFirstRequest());
+                } else if (message instanceof HttpRequest) {
+                    methodParams.add(message);
+                } else {
+                    methodParams.add(null);
+                }
             } else if (TextWebSocketFrame.class.isAssignableFrom(value) && messageType == MessageType.TEXT_MESSAGE) {
                 // TextWebSocketFrame
                 methodParams.add(message);
@@ -407,12 +502,269 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         return sessionMap;
     }
 
+    private Runnable tryAcquireConnectionSlot(ChannelHandlerContext ctx, FullHttpRequest request) {
+        if (connectionSemaphore == null) {
+            return null;
+        }
+        if (!connectionSemaphore.tryAcquire()) {
+            rejectWithHttp(ctx, request, HttpResponseStatus.SERVICE_UNAVAILABLE, "WebSocket connection limit exceeded");
+            return null;
+        }
+        return new Runnable() {
+            @Override
+            public void run() {
+                connectionSemaphore.release();
+            }
+        };
+    }
+
+    private boolean isFrameTooLarge(WebSocketFrame frame) {
+        return frame.content().readableBytes() > resolveMaxFramePayloadLength();
+    }
+
+    private void handleFrameTooLarge(MessageSession session, WebSocketFrame frame) {
+        int frameLength = frame.content().readableBytes();
+        int maxFramePayloadLength = resolveMaxFramePayloadLength();
+        TooLongFrameException exception = new TooLongFrameException(
+                "WebSocket frame payload too large: " + frameLength + " > " + maxFramePayloadLength);
+        log.warn("Reject websocket frame because payload is too large. sessionId={}, frameLength={}, maxFramePayloadLength={}",
+                session.getSessionId(),
+                frameLength,
+                maxFramePayloadLength);
+        closeSessionOnTransportErrorInline(session, exception);
+    }
+
+    private int resolveMaxFramePayloadLength() {
+        if (webSocketProperties == null || webSocketProperties.getMaxFramePayloadLength() <= 0) {
+            return DEFAULT_MAX_FRAME_PAYLOAD_LENGTH;
+        }
+        return webSocketProperties.getMaxFramePayloadLength();
+    }
+
     private boolean rejectWithHttp(ChannelHandlerContext ctx, FullHttpRequest req, HttpResponseStatus status, String msg) {
         DefaultFullHttpResponse res = new DefaultFullHttpResponse(HTTP_1_1, status,
                 Unpooled.copiedBuffer(msg, CharsetUtil.UTF_8));
         HttpUtil.setContentLength(res, res.content().readableBytes());
         ctx.writeAndFlush(res).addListener(ChannelFutureListener.CLOSE);
         return false;
+    }
+
+    private boolean rejectHandshake(ChannelHandlerContext ctx, FullHttpRequest request, Exception e) {
+        try {
+            onException(request, ctx, null, e);
+        } catch (Exception ex) {
+            log.warn("Handle handshake exception failed.", ex);
+        }
+        return rejectWithHttp(ctx, request, HttpResponseStatus.INTERNAL_SERVER_ERROR, "Handshake error");
+    }
+
+    private void registerSession(MessageSession session) {
+        sessionMap.put(session.getSessionId(), session);
+        session.getChannelHandlerContext().channel().attr(ServiceHandler.REQUEST_IN_CHANNEL).set(session.getFirstRequest());
+        session.getChannelHandlerContext().channel().attr(SESSION_ID_IN_CHANNEL).set(session.getSessionId());
+    }
+
+    private MessageSession removeSession(ChannelHandlerContext ctx) {
+        String sessionId = ctx.channel().attr(SESSION_ID_IN_CHANNEL).get();
+        clearChannelAttributes(ctx);
+        if (StringUtil.isBlank(sessionId)) {
+            return null;
+        }
+        return sessionMap.remove(sessionId);
+    }
+
+    private void removeSession(MessageSession session) {
+        if (session == null) {
+            return;
+        }
+        clearChannelAttributes(session.getChannelHandlerContext());
+        sessionMap.remove(session.getSessionId(), session);
+    }
+
+    private void clearChannelAttributes(ChannelHandlerContext ctx) {
+        ctx.channel().attr(SESSION_ID_IN_CHANNEL).set(null);
+        ctx.channel().attr(ServiceHandler.REQUEST_IN_CHANNEL).set(null);
+    }
+
+    private void releaseSession(MessageSession session) {
+        if (session != null) {
+            session.release();
+        }
+    }
+
+    @Override
+    public void setHandlerSubmitter(HandlerSubmitter handlerSubmitter) {
+        this.handlerSubmitter = handlerSubmitter;
+    }
+
+    private void closeSession(MessageSession session, CloseWebSocketFrame closeFrame, boolean notifyClose) {
+        if (session == null || !session.startClosing()) {
+            return;
+        }
+        try {
+            if (notifyClose) {
+                notifyCloseLifecycle(closeFrame, session);
+            }
+        } finally {
+            cleanupClosedSession(session, closeFrame);
+        }
+    }
+
+    private void notifyCloseLifecycle(CloseWebSocketFrame closeFrame, MessageSession session) {
+        try {
+            onClose(closeFrame, session);
+        } catch (Exception e) {
+            handleLifecycleException(closeFrame, session, e);
+        }
+    }
+
+    private void handleHandshakeFailure(MessageSession pendingSession, Throwable throwable) {
+        dispatchLifecycleTask("handshakeFailure", pendingSession, new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    onException(pendingSession.getFirstRequest(),
+                            pendingSession.getChannelHandlerContext(),
+                            null,
+                            extractException(throwable));
+                } catch (Exception e) {
+                    log.warn("Handle handshake future failure failed.", e);
+                } finally {
+                    pendingSession.release();
+                    pendingSession.getChannelHandlerContext().close();
+                }
+            }
+        }, new Runnable() {
+            @Override
+            public void run() {
+                pendingSession.release();
+                pendingSession.getChannelHandlerContext().close();
+            }
+        });
+    }
+
+    private void handleLifecycleException(Object msg, MessageSession session, Exception e) {
+        try {
+            onException(msg, session, e);
+        } catch (Exception ex) {
+            log.warn("Handle websocket lifecycle exception failed.", ex);
+        }
+    }
+
+    private void cleanupClosedSession(MessageSession session, CloseWebSocketFrame closeFrame) {
+        removeSession(session);
+        releaseSession(session);
+        if (closeFrame == null) {
+            session.getChannelHandlerContext().close();
+        } else {
+            session.getChannelHandlerContext()
+                    .writeAndFlush(closeFrame.retain())
+                    .addListener(ChannelFutureListener.CLOSE);
+        }
+    }
+
+    private void finishDetachedSession(MessageSession session, CloseWebSocketFrame closeFrame) {
+        releaseSession(session);
+        if (closeFrame == null) {
+            session.getChannelHandlerContext().close();
+        } else {
+            session.getChannelHandlerContext()
+                    .writeAndFlush(closeFrame.retain())
+                    .addListener(ChannelFutureListener.CLOSE);
+        }
+    }
+
+    private void dispatchConnectedLifecycle(final MessageSession session) {
+        dispatchLifecycleTask("onConnected", session, new Runnable() {
+            @Override
+            public void run() {
+                if (!isRegisteredSession(session)) {
+                    return;
+                }
+                try {
+                    onConnected(session.getFirstRequest(), session);
+                } catch (Exception e) {
+                    handleLifecycleException(session.getFirstRequest(), session, e);
+                    closeSession(session, null, true);
+                }
+            }
+        }, new Runnable() {
+            @Override
+            public void run() {
+                removeSession(session);
+                finishDetachedSession(session, null);
+            }
+        });
+    }
+
+    private void dispatchInactiveCloseLifecycle(final MessageSession session) {
+        dispatchLifecycleTask("inactiveClose", session, new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    notifyCloseLifecycle(null, session);
+                } finally {
+                    releaseSession(session);
+                }
+            }
+        }, new Runnable() {
+            @Override
+            public void run() {
+                releaseSession(session);
+            }
+        });
+    }
+
+    private void closeSessionOnTransportErrorInline(MessageSession session, Throwable throwable) {
+        if (session == null || !session.startClosing()) {
+            return;
+        }
+        removeSession(session);
+        doCloseSessionOnTransportError(session, throwable);
+    }
+
+    private void doCloseSessionOnTransportError(MessageSession session, Throwable throwable) {
+        try {
+            handleLifecycleException(null, session, extractException(throwable));
+            notifyCloseLifecycle(null, session);
+        } finally {
+            finishDetachedSession(session, null);
+        }
+    }
+
+    private boolean isRegisteredSession(MessageSession session) {
+        return session != null && sessionMap.get(session.getSessionId()) == session;
+    }
+
+    private void dispatchLifecycleTask(String taskName,
+                                       MessageSession session,
+                                       Runnable task,
+                                       Runnable rejectedTask) {
+        HandlerSubmitter submitter = this.handlerSubmitter;
+        if (submitter == null) {
+            task.run();
+            return;
+        }
+        try {
+            submitter.submitHandle(task);
+        } catch (RejectedExecutionException e) {
+            log.warn("Reject websocket lifecycle task {}. sessionId={}, reason={}",
+                    taskName,
+                    session == null ? null : session.getSessionId(),
+                    e.getMessage());
+            rejectedTask.run();
+        }
+    }
+
+    private Exception extractException(Throwable throwable) {
+        Throwable target = throwable;
+        if (throwable instanceof InvocationTargetException) {
+            target = ((InvocationTargetException) throwable).getTargetException();
+        }
+        if (target instanceof Exception) {
+            return (Exception) target;
+        }
+        return new RuntimeException(target);
     }
 
 }

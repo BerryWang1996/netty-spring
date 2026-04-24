@@ -40,7 +40,7 @@ public class NettyServerBootstrapConfigure {
     @Autowired
     private ApplicationContext applicationContext;
 
-    @Bean
+    @Bean(destroyMethod = "stop")
     @ConditionalOnMissingBean
     public NettyServerBootstrap nettyServer() {
         final NettyServerBootstrap nettyServerBootstrap = new NettyServerBootstrap(applicationContext);
@@ -53,7 +53,7 @@ public class NettyServerBootstrapConfigure {
         return nettyServerBootstrap;
     }
 
-    @Bean
+    @Bean(destroyMethod = "shutdown")
     @ConditionalOnMissingBean
     @ConditionalOnBean(NettyServerBootstrap.class)
     public MessageSenderSupport messageSenderSupport(NettyServerBootstrap nettyServerBootstrap) {

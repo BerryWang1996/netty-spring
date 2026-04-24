@@ -42,6 +42,7 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
 
     private final NettyServerBootstrap nettyServerBootstrap;
 
+    @Getter
     private final WebMappingSupporter supporter;
 
     private SslContext sslCtx = null;

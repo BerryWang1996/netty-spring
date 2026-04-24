@@ -37,7 +37,7 @@ public class NettyServerBootstrapConfigure {
     @Autowired
     private ApplicationContext applicationContext;
 
-    @Bean
+    @Bean(destroyMethod = "stop")
     public NettyServerBootstrap nettyServer() {
         final NettyServerBootstrap nettyServerBootstrap = new NettyServerBootstrap(applicationContext);
         try {

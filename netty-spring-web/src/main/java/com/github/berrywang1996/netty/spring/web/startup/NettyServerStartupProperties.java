@@ -283,10 +283,72 @@ public class NettyServerStartupProperties {
     }
 
     public static class WebSocket {
+        /**
+         * Message sender executor core pool size.
+         */
         private int corePoolSize;
+
+        /**
+         * Message sender executor max pool size.
+         */
         private int maxPoolSize;
+
+        /**
+         * Message sender executor keep alive time in seconds.
+         */
         private long keepAliveTime;
+
+        /**
+         * Message sender executor queue capacity. 0 means use a synchronous queue.
+         */
         private int queueCapacity;
+
+        /**
+         * Broadcast behavior when a channel is not writable.
+         */
+        private BroadcastNonWritableChannelPolicy broadcastNonWritableChannelPolicy =
+                BroadcastNonWritableChannelPolicy.SKIP;
+
+        /**
+         * Broadcast behavior when sender executor rejects a task.
+         */
+        private BroadcastRejectedExecutionPolicy broadcastRejectedExecutionPolicy =
+                BroadcastRejectedExecutionPolicy.DROP;
+
+        /**
+         * Handler executor core pool size.
+         */
+        private int handlerCorePoolSize;
+
+        /**
+         * Handler executor max pool size.
+         */
+        private int handlerMaxPoolSize;
+
+        /**
+         * Handler executor keep alive time in seconds.
+         */
+        private long handlerKeepAliveTime;
+
+        /**
+         * Handler executor queue capacity. 0 means use a synchronous queue.
+         */
+        private int handlerQueueCapacity;
+
+        /**
+         * Max handler tasks allowed to run or wait for execution.
+         */
+        private int handlerPermitLimit;
+
+        /**
+         * Max websocket connections. 0 or negative means unlimited.
+         */
+        private int maxConnections;
+
+        /**
+         * Max websocket frame payload length. 0 or negative means use the default.
+         */
+        private int maxFramePayloadLength;
 
         public int getCorePoolSize() {
             return corePoolSize;
@@ -318,6 +380,88 @@ public class NettyServerStartupProperties {
 
         public void setQueueCapacity(int queueCapacity) {
             this.queueCapacity = queueCapacity;
+        }
+
+        public BroadcastNonWritableChannelPolicy getBroadcastNonWritableChannelPolicy() {
+            return broadcastNonWritableChannelPolicy;
+        }
+
+        public void setBroadcastNonWritableChannelPolicy(BroadcastNonWritableChannelPolicy broadcastNonWritableChannelPolicy) {
+            this.broadcastNonWritableChannelPolicy = broadcastNonWritableChannelPolicy;
+        }
+
+        public BroadcastRejectedExecutionPolicy getBroadcastRejectedExecutionPolicy() {
+            return broadcastRejectedExecutionPolicy;
+        }
+
+        public void setBroadcastRejectedExecutionPolicy(BroadcastRejectedExecutionPolicy broadcastRejectedExecutionPolicy) {
+            this.broadcastRejectedExecutionPolicy = broadcastRejectedExecutionPolicy;
+        }
+
+        public int getHandlerCorePoolSize() {
+            return handlerCorePoolSize;
+        }
+
+        public void setHandlerCorePoolSize(int handlerCorePoolSize) {
+            this.handlerCorePoolSize = handlerCorePoolSize;
+        }
+
+        public int getHandlerMaxPoolSize() {
+            return handlerMaxPoolSize;
+        }
+
+        public void setHandlerMaxPoolSize(int handlerMaxPoolSize) {
+            this.handlerMaxPoolSize = handlerMaxPoolSize;
+        }
+
+        public long getHandlerKeepAliveTime() {
+            return handlerKeepAliveTime;
+        }
+
+        public void setHandlerKeepAliveTime(long handlerKeepAliveTime) {
+            this.handlerKeepAliveTime = handlerKeepAliveTime;
+        }
+
+        public int getHandlerQueueCapacity() {
+            return handlerQueueCapacity;
+        }
+
+        public void setHandlerQueueCapacity(int handlerQueueCapacity) {
+            this.handlerQueueCapacity = handlerQueueCapacity;
+        }
+
+        public int getHandlerPermitLimit() {
+            return handlerPermitLimit;
+        }
+
+        public void setHandlerPermitLimit(int handlerPermitLimit) {
+            this.handlerPermitLimit = handlerPermitLimit;
+        }
+
+        public int getMaxConnections() {
+            return maxConnections;
+        }
+
+        public void setMaxConnections(int maxConnections) {
+            this.maxConnections = maxConnections;
+        }
+
+        public int getMaxFramePayloadLength() {
+            return maxFramePayloadLength;
+        }
+
+        public void setMaxFramePayloadLength(int maxFramePayloadLength) {
+            this.maxFramePayloadLength = maxFramePayloadLength;
+        }
+
+        public enum BroadcastNonWritableChannelPolicy {
+            SKIP,
+            CLOSE
+        }
+
+        public enum BroadcastRejectedExecutionPolicy {
+            DROP,
+            CALLER_RUNS
         }
     }
 

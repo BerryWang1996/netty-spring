@@ -1,0 +1,657 @@
+package com.github.berrywang1996.netty.spring.web.websocket.context;
+
+import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitter;
+import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
+import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
+import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
+import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
+import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSessionClosedException;
+import io.netty.channel.ChannelHandler;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.channel.ChannelOutboundHandlerAdapter;
+import io.netty.channel.ChannelPromise;
+import io.netty.channel.embedded.EmbeddedChannel;
+import io.netty.handler.codec.http.DefaultFullHttpRequest;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.HttpVersion;
+import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
+import io.netty.util.ReferenceCountUtil;
+import org.junit.jupiter.api.Test;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
+import static io.netty.handler.codec.http.HttpMethod.GET;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class DefaultMessageSenderTest {
+
+    @Test
+    void aggregatesSessionCountAndAliveStatus() {
+        MessageMappingResolver fooResolver = emptyResolver("/ws/foo");
+        MessageMappingResolver barResolver = emptyResolver("/ws/bar");
+        SessionFixture fooSession1 = addSession(fooResolver, "/ws/foo", "foo-1");
+        SessionFixture fooSession2 = addSession(fooResolver, "/ws/foo", "foo-2");
+        SessionFixture barSession = addSession(barResolver, "/ws/bar", "bar-1");
+        DefaultMessageSender sender = new DefaultMessageSender(mapOf(
+                "/ws/foo", fooResolver,
+                "/ws/bar", barResolver));
+
+        try {
+            assertEquals(3, sender.getSessionNums());
+            assertEquals(2, sender.getSessionNums("/ws/foo"));
+            assertTrue(sender.isSessionAlive("/ws/foo", "foo-1", "foo-2"));
+            assertFalse(sender.isSessionAlive("/ws/foo", "foo-1", "missing"));
+        } finally {
+            cleanup(fooResolver, fooSession1, fooSession2);
+            cleanup(barResolver, barSession);
+        }
+    }
+
+    @Test
+    void sendMessageReportsClosedSessionsAndCleansThemUp() {
+        MessageMappingResolver resolver = emptyResolver("/ws/foo");
+        SessionFixture activeSession = addSession(resolver, "/ws/foo", "active");
+        SessionFixture closedSession = addSession(resolver, "/ws/foo", "closed");
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+        closedSession.channel.close();
+
+        try {
+            MessageSessionClosedException exception = assertThrows(
+                    MessageSessionClosedException.class,
+                    () -> sender.sendMessage("/ws/foo", new TextMessage("hello"), "active", "closed"));
+
+            assertEquals(Collections.singletonList("closed"), exception.getSessionIds());
+            Object outbound = activeSession.channel.readOutbound();
+            try {
+                assertTrue(outbound instanceof TextWebSocketFrame);
+                assertEquals("hello", ((TextWebSocketFrame) outbound).text());
+            } finally {
+                ReferenceCountUtil.release(outbound);
+            }
+            assertFalse(resolver.getSessionMap().containsKey("closed"));
+            assertTrue(sender.isSessionAlive("/ws/foo", "active"));
+        } finally {
+            cleanup(resolver, activeSession, closedSession);
+        }
+    }
+
+    @Test
+    void sendMessageWriteFailureDispatchesErrorThenCloseLifecycle() throws Exception {
+        LifecycleEndpoint endpoint = new LifecycleEndpoint();
+        MessageMappingResolver resolver = lifecycleResolver("/ws/foo", endpoint);
+        CountDownLatch failedWriteLatch = new CountDownLatch(1);
+        SessionFixture session = addSession(
+                resolver,
+                "/ws/foo",
+                "failing",
+                new SignalingWriteHandler(failedWriteLatch, true));
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+
+        try {
+            sender.sendMessage("/ws/foo", new TextMessage("hello"), "failing");
+
+            assertTrue(awaitLatch(failedWriteLatch, session));
+            assertTrue(awaitLatch(endpoint.errorLatch, session));
+            assertTrue(awaitLatch(endpoint.closeLatch, session));
+            assertEquals(1, endpoint.errorCount);
+            assertEquals(1, endpoint.closeCount);
+            assertEquals(1L, sender.getRuntimeStats().getWriteFailureCount());
+            assertEquals("write failed", endpoint.lastErrorMessage);
+            assertFalse(resolver.getSessionMap().containsKey("failing"));
+            assertFalse(session.channel.isActive());
+        } finally {
+            cleanup(resolver, session);
+        }
+    }
+
+    @Test
+    void sendMessageWriteFailureRunsLifecycleThroughHandlerSubmitter() throws Exception {
+        LifecycleEndpoint endpoint = new LifecycleEndpoint();
+        MessageMappingResolver resolver = lifecycleResolver("/ws/foo", endpoint);
+        RecordingHandlerSubmitter submitter = new RecordingHandlerSubmitter();
+        resolver.setHandlerSubmitter(submitter);
+        CountDownLatch failedWriteLatch = new CountDownLatch(1);
+        SessionFixture session = addSession(
+                resolver,
+                "/ws/foo",
+                "failing",
+                new SignalingWriteHandler(failedWriteLatch, true));
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+
+        try {
+            sender.sendMessage("/ws/foo", new TextMessage("hello"), "failing");
+
+            assertTrue(awaitLatch(failedWriteLatch, session));
+            assertEquals(0, endpoint.errorCount);
+            assertEquals(0, endpoint.closeCount);
+            assertEquals(1, submitter.size());
+            session.channel.close();
+
+            submitter.runNext();
+
+            assertEquals(1, endpoint.errorCount);
+            assertEquals(1, endpoint.closeCount);
+            assertEquals("write failed", endpoint.lastErrorMessage);
+            assertEquals(1, endpoint.lastErrorRequestRefCnt);
+            assertFalse(resolver.getSessionMap().containsKey("failing"));
+            assertFalse(session.channel.isActive());
+        } finally {
+            resolver.setHandlerSubmitter(null);
+            cleanup(resolver, session);
+        }
+    }
+
+    @Test
+    void topicMessageRemovesSessionWhenWriteFails() throws Exception {
+        MessageMappingResolver resolver = emptyResolver("/ws/foo");
+        CountDownLatch activeWriteLatch = new CountDownLatch(1);
+        CountDownLatch failedWriteLatch = new CountDownLatch(1);
+        SessionFixture activeSession = addSession(
+                resolver,
+                "/ws/foo",
+                "active",
+                new SignalingWriteHandler(activeWriteLatch, false));
+        SessionFixture failingSession = addSession(
+                resolver,
+                "/ws/foo",
+                "failing",
+                new SignalingWriteHandler(failedWriteLatch, true));
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+
+        try {
+            sender.topicMessage("/ws/foo", new TextMessage("hello"));
+
+            assertTrue(awaitLatch(activeWriteLatch, activeSession, failingSession));
+            assertTrue(awaitLatch(failedWriteLatch, activeSession, failingSession));
+            awaitSessionAbsent(resolver, "failing", activeSession, failingSession);
+
+            Object outbound = activeSession.channel.readOutbound();
+            try {
+                assertTrue(outbound instanceof TextWebSocketFrame);
+                assertEquals("hello", ((TextWebSocketFrame) outbound).text());
+            } finally {
+                ReferenceCountUtil.release(outbound);
+            }
+        } finally {
+            cleanup(resolver, activeSession, failingSession);
+        }
+    }
+
+    @Test
+    void topicMessageSkipsNonWritableSessions() throws Exception {
+        MessageMappingResolver resolver = emptyResolver("/ws/foo");
+        CountDownLatch writableWriteLatch = new CountDownLatch(1);
+        SessionFixture writableSession = addSession(
+                resolver,
+                "/ws/foo",
+                "writable",
+                new SignalingWriteHandler(writableWriteLatch, false));
+        SessionFixture nonWritableSession = addSession(resolver, "/ws/foo", "non-writable", false);
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+
+        try {
+            sender.topicMessage("/ws/foo", new TextMessage("hello"));
+            assertTrue(awaitLatch(writableWriteLatch, writableSession, nonWritableSession));
+
+            Object writableOutbound = writableSession.channel.readOutbound();
+            try {
+                assertTrue(writableOutbound instanceof TextWebSocketFrame);
+                assertEquals("hello", ((TextWebSocketFrame) writableOutbound).text());
+            } finally {
+                ReferenceCountUtil.release(writableOutbound);
+            }
+            assertFalse(nonWritableSession.channel.readOutbound() instanceof TextWebSocketFrame);
+            assertTrue(resolver.getSessionMap().containsKey("non-writable"));
+            assertEquals(1L, sender.getRuntimeStats().getNonWritableSkipCount());
+            assertEquals(0L, sender.getRuntimeStats().getNonWritableCloseCount());
+        } finally {
+            cleanup(resolver, writableSession, nonWritableSession);
+        }
+    }
+
+    @Test
+    void topicMessageClosesNonWritableSessionsWhenConfigured() throws Exception {
+        LifecycleEndpoint endpoint = new LifecycleEndpoint();
+        MessageMappingResolver resolver = lifecycleResolver("/ws/foo", endpoint);
+        CountDownLatch writableWriteLatch = new CountDownLatch(1);
+        SessionFixture writableSession = addSession(
+                resolver,
+                "/ws/foo",
+                "writable",
+                new SignalingWriteHandler(writableWriteLatch, false));
+        SessionFixture nonWritableSession = addSession(resolver, "/ws/foo", "non-writable", false);
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setBroadcastNonWritableChannelPolicy(
+                NettyServerStartupProperties.WebSocket.BroadcastNonWritableChannelPolicy.CLOSE);
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver), properties);
+
+        try {
+            sender.topicMessage("/ws/foo", new TextMessage("hello"));
+
+            assertTrue(awaitLatch(writableWriteLatch, writableSession, nonWritableSession));
+            assertTrue(awaitLatch(endpoint.errorLatch, writableSession, nonWritableSession));
+            assertTrue(awaitLatch(endpoint.closeLatch, writableSession, nonWritableSession));
+            assertEquals(1, endpoint.errorCount);
+            assertEquals(1, endpoint.closeCount);
+            assertEquals("Channel is not writable.", endpoint.lastErrorMessage);
+            assertEquals(1L, sender.getRuntimeStats().getNonWritableCloseCount());
+            assertFalse(resolver.getSessionMap().containsKey("non-writable"));
+            assertFalse(nonWritableSession.channel.isActive());
+        } finally {
+            cleanup(resolver, writableSession, nonWritableSession);
+        }
+    }
+
+    @Test
+    void topicMessageDropsTasksWhenSenderExecutorIsSaturated() throws Exception {
+        MessageMappingResolver resolver = emptyResolver("/ws/foo");
+        CountDownLatch releaseWrites = new CountDownLatch(1);
+        AtomicInteger writeCount = new AtomicInteger();
+        SessionFixture session1 = addSession(
+                resolver,
+                "/ws/foo",
+                "s1",
+                new BlockingWriteHandler(null, releaseWrites, writeCount));
+        SessionFixture session2 = addSession(
+                resolver,
+                "/ws/foo",
+                "s2",
+                new BlockingWriteHandler(null, releaseWrites, writeCount));
+        SessionFixture session3 = addSession(
+                resolver,
+                "/ws/foo",
+                "s3",
+                new BlockingWriteHandler(null, releaseWrites, writeCount));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setCorePoolSize(1);
+        properties.setMaxPoolSize(1);
+        properties.setQueueCapacity(1);
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver), properties);
+
+        ThreadPoolExecutor executor = extractExecutor(sender);
+        try {
+            sender.topicMessage("/ws/foo", new TextMessage("hello"));
+
+            awaitQueueSize(executor, 1);
+            assertEquals(1, executor.getMaximumPoolSize());
+            assertEquals(1, executor.getQueue().size());
+            assertEquals(1L, sender.getRuntimeStats().getRejectedBroadcastCount());
+            assertEquals(1L, sender.getRuntimeStats().getDroppedBroadcastCount());
+            assertEquals(0L, sender.getRuntimeStats().getCallerRunsFallbackCount());
+
+            releaseWrites.countDown();
+            awaitWriteCount(writeCount, 2, session1, session2, session3);
+            assertEquals(2, writeCount.get());
+        } finally {
+            releaseWrites.countDown();
+            executor.shutdownNow();
+            cleanup(resolver, session1, session2, session3);
+        }
+    }
+
+    @Test
+    void topicMessageRunsInCallerWhenConfiguredAndSenderExecutorIsSaturated() throws Exception {
+        MessageMappingResolver resolver = emptyResolver("/ws/foo");
+        CountDownLatch startedWrites = new CountDownLatch(2);
+        CountDownLatch releaseWrites = new CountDownLatch(1);
+        AtomicInteger writeCount = new AtomicInteger();
+        SessionFixture session1 = addSession(
+                resolver,
+                "/ws/foo",
+                "s1",
+                new BlockingWriteHandler(startedWrites, releaseWrites, writeCount));
+        SessionFixture session2 = addSession(
+                resolver,
+                "/ws/foo",
+                "s2",
+                new BlockingWriteHandler(startedWrites, releaseWrites, writeCount));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setCorePoolSize(1);
+        properties.setMaxPoolSize(1);
+        properties.setQueueCapacity(0);
+        properties.setBroadcastRejectedExecutionPolicy(
+                NettyServerStartupProperties.WebSocket.BroadcastRejectedExecutionPolicy.CALLER_RUNS);
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver), properties);
+
+        ThreadPoolExecutor executor = extractExecutor(sender);
+        Thread callerThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                sender.topicMessage("/ws/foo", new TextMessage("hello"));
+            }
+        });
+
+        try {
+            callerThread.start();
+            assertTrue(awaitLatch(startedWrites, session1, session2));
+            assertTrue(callerThread.isAlive());
+            assertEquals(1, executor.getMaximumPoolSize());
+            assertEquals(0, executor.getQueue().size());
+            assertEquals(1L, sender.getRuntimeStats().getRejectedBroadcastCount());
+            assertEquals(1L, sender.getRuntimeStats().getCallerRunsFallbackCount());
+            assertEquals(0L, sender.getRuntimeStats().getDroppedBroadcastCount());
+
+            releaseWrites.countDown();
+            callerThread.join(2000L);
+            awaitWriteCount(writeCount, 2, session1, session2);
+            assertEquals(2, writeCount.get());
+            assertFalse(callerThread.isAlive());
+        } finally {
+            releaseWrites.countDown();
+            executor.shutdownNow();
+            cleanup(resolver, session1, session2);
+        }
+    }
+
+    @Test
+    void usesConfiguredExecutorProperties() throws Exception {
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setCorePoolSize(1);
+        properties.setMaxPoolSize(3);
+        properties.setKeepAliveTime(7L);
+        properties.setQueueCapacity(5);
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.<String, MessageMappingResolver>emptyMap(), properties);
+
+        ThreadPoolExecutor executor = extractExecutor(sender);
+        try {
+            assertEquals(1, executor.getCorePoolSize());
+            assertEquals(3, executor.getMaximumPoolSize());
+            assertEquals(7L, executor.getKeepAliveTime(TimeUnit.SECONDS));
+            assertEquals(5, executor.getQueue().remainingCapacity());
+            assertEquals(NettyServerStartupProperties.WebSocket.BroadcastNonWritableChannelPolicy.SKIP,
+                    properties.getBroadcastNonWritableChannelPolicy());
+            assertEquals(NettyServerStartupProperties.WebSocket.BroadcastRejectedExecutionPolicy.DROP,
+                    properties.getBroadcastRejectedExecutionPolicy());
+            assertEquals(5, sender.getRuntimeStats().getExecutor().getQueueRemainingCapacity());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void usesSynchronousQueueWhenQueueCapacityIsZero() throws Exception {
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setQueueCapacity(0);
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.<String, MessageMappingResolver>emptyMap(), properties);
+
+        ThreadPoolExecutor executor = extractExecutor(sender);
+        try {
+            assertEquals(SynchronousQueue.class, executor.getQueue().getClass());
+            assertEquals(0, executor.getQueue().remainingCapacity());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private static MessageMappingResolver emptyResolver(String uri) {
+        return new MessageMappingResolver(uri, Collections.<MessageType, java.lang.reflect.Method>emptyMap(), new Object());
+    }
+
+    private static MessageMappingResolver lifecycleResolver(String uri, LifecycleEndpoint endpoint) throws Exception {
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CLOSE, method(endpoint, "onClose", CloseWebSocketFrame.class, MessageSession.class));
+        methods.put(MessageType.ON_ERROR, method(endpoint, "onError", HttpRequest.class, MessageSession.class, Exception.class));
+        return new MessageMappingResolver(uri, methods, endpoint);
+    }
+
+    private static SessionFixture addSession(MessageMappingResolver resolver, String uri, String sessionId) {
+        return addSession(resolver, uri, sessionId, new ChannelHandler[0]);
+    }
+
+    private static SessionFixture addSession(MessageMappingResolver resolver,
+                                             String uri,
+                                             String sessionId,
+                                             boolean writable,
+                                             ChannelHandler... extraHandlers) {
+        ContextHolder holder = new ContextHolder();
+        ArrayList<ChannelHandler> handlers = new ArrayList<>();
+        handlers.addAll(java.util.Arrays.asList(extraHandlers));
+        handlers.add(holder);
+        EmbeddedChannel channel = writable
+                ? new EmbeddedChannel(handlers.toArray(new ChannelHandler[0]))
+                : new NonWritableEmbeddedChannel(handlers.toArray(new ChannelHandler[0]));
+        FullHttpRequest request = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, GET, uri);
+        MessageSession session = new MessageSession(sessionId, holder.ctx, request);
+        holder.ctx.channel().attr(ServiceHandler.REQUEST_IN_CHANNEL).set(session.getFirstRequest());
+        holder.ctx.channel().attr(MessageMappingResolver.SESSION_ID_IN_CHANNEL).set(sessionId);
+        request.release();
+        resolver.getSessionMap().put(sessionId, session);
+        return new SessionFixture(channel, sessionId);
+    }
+
+    private static SessionFixture addSession(MessageMappingResolver resolver,
+                                             String uri,
+                                             String sessionId,
+                                             ChannelHandler... extraHandlers) {
+        return addSession(resolver, uri, sessionId, true, extraHandlers);
+    }
+
+    private static void cleanup(MessageMappingResolver resolver, SessionFixture... sessions) {
+        for (SessionFixture session : sessions) {
+            resolver.removeSession(session.sessionId);
+            session.channel.attr(ServiceHandler.REQUEST_IN_CHANNEL).set(null);
+            session.channel.attr(MessageMappingResolver.SESSION_ID_IN_CHANNEL).set(null);
+            session.channel.finishAndReleaseAll();
+        }
+    }
+
+    private static Map<String, MessageMappingResolver> mapOf(String key1, MessageMappingResolver value1,
+                                                             String key2, MessageMappingResolver value2) {
+        Map<String, MessageMappingResolver> map = new HashMap<>();
+        map.put(key1, value1);
+        map.put(key2, value2);
+        return map;
+    }
+
+    private static ThreadPoolExecutor extractExecutor(DefaultMessageSender sender) throws Exception {
+        Field field = DefaultMessageSender.class.getDeclaredField("executorService");
+        field.setAccessible(true);
+        return (ThreadPoolExecutor) field.get(sender);
+    }
+
+    private static Method method(Object target, String methodName, Class<?>... parameterTypes) throws Exception {
+        return target.getClass().getMethod(methodName, parameterTypes);
+    }
+
+    private static final class SessionFixture {
+        private final EmbeddedChannel channel;
+        private final String sessionId;
+
+        private SessionFixture(EmbeddedChannel channel, String sessionId) {
+            this.channel = channel;
+            this.sessionId = sessionId;
+        }
+    }
+
+    private static final class ContextHolder extends ChannelInboundHandlerAdapter {
+        private ChannelHandlerContext ctx;
+
+        @Override
+        public void handlerAdded(ChannelHandlerContext ctx) {
+            this.ctx = ctx;
+        }
+    }
+
+    private static final class RecordingHandlerSubmitter implements HandlerSubmitter {
+        private final ArrayList<Runnable> tasks = new ArrayList<>();
+
+        @Override
+        public void submitHandle(Runnable runnable) {
+            tasks.add(runnable);
+        }
+
+        private int size() {
+            return tasks.size();
+        }
+
+        private void runNext() {
+            Runnable task = tasks.remove(0);
+            task.run();
+        }
+    }
+
+    public static final class LifecycleEndpoint {
+        private final CountDownLatch errorLatch = new CountDownLatch(1);
+        private final CountDownLatch closeLatch = new CountDownLatch(1);
+        private int errorCount;
+        private int closeCount;
+        private String lastErrorMessage;
+        private int lastErrorRequestRefCnt;
+
+        public void onClose(CloseWebSocketFrame frame, MessageSession session) {
+            closeCount++;
+            closeLatch.countDown();
+        }
+
+        public void onError(HttpRequest request, MessageSession session, Exception exception) {
+            errorCount++;
+            lastErrorMessage = exception.getMessage();
+            if (request instanceof FullHttpRequest) {
+                lastErrorRequestRefCnt = ((FullHttpRequest) request).refCnt();
+            }
+            errorLatch.countDown();
+        }
+    }
+
+    private static final class SignalingWriteHandler extends ChannelOutboundHandlerAdapter {
+        private final CountDownLatch latch;
+        private final boolean fail;
+
+        private SignalingWriteHandler(CountDownLatch latch, boolean fail) {
+            this.latch = latch;
+            this.fail = fail;
+        }
+
+        @Override
+        public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
+            if (fail) {
+                ReferenceCountUtil.release(msg);
+                promise.setFailure(new IllegalStateException("write failed"));
+                latch.countDown();
+                return;
+            }
+            ctx.write(msg, promise);
+            latch.countDown();
+        }
+    }
+
+    private static final class BlockingWriteHandler extends ChannelOutboundHandlerAdapter {
+        private final CountDownLatch startedLatch;
+        private final CountDownLatch releaseLatch;
+        private final AtomicInteger writeCount;
+
+        private BlockingWriteHandler(CountDownLatch startedLatch,
+                                     CountDownLatch releaseLatch,
+                                     AtomicInteger writeCount) {
+            this.startedLatch = startedLatch;
+            this.releaseLatch = releaseLatch;
+            this.writeCount = writeCount;
+        }
+
+        @Override
+        public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
+            if (startedLatch != null) {
+                startedLatch.countDown();
+            }
+            await(releaseLatch);
+            writeCount.incrementAndGet();
+            ctx.write(msg, promise);
+        }
+    }
+
+    private static final class NonWritableEmbeddedChannel extends EmbeddedChannel {
+        private NonWritableEmbeddedChannel(ChannelHandler... handlers) {
+            super(handlers);
+        }
+
+        @Override
+        public boolean isWritable() {
+            return false;
+        }
+    }
+
+    private static boolean awaitLatch(CountDownLatch latch, SessionFixture... sessions) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (System.nanoTime() < deadline) {
+            drainChannels(sessions);
+            if (latch.await(10L, TimeUnit.MILLISECONDS)) {
+                drainChannels(sessions);
+                return true;
+            }
+        }
+        drainChannels(sessions);
+        return latch.getCount() == 0L;
+    }
+
+    private static void awaitWriteCount(AtomicInteger counter, int expected, SessionFixture... sessions) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (System.nanoTime() < deadline) {
+            drainChannels(sessions);
+            if (counter.get() >= expected) {
+                return;
+            }
+            Thread.sleep(10L);
+        }
+        drainChannels(sessions);
+        assertEquals(expected, counter.get());
+    }
+
+    private static void awaitSessionAbsent(MessageMappingResolver resolver,
+                                           String sessionId,
+                                           SessionFixture... sessions) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (System.nanoTime() < deadline) {
+            drainChannels(sessions);
+            if (!resolver.getSessionMap().containsKey(sessionId)) {
+                return;
+            }
+            Thread.sleep(10L);
+        }
+        drainChannels(sessions);
+        assertFalse(resolver.getSessionMap().containsKey(sessionId));
+    }
+
+    private static void awaitQueueSize(ThreadPoolExecutor executor, int expected) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (System.nanoTime() < deadline) {
+            if (executor.getQueue().size() >= expected) {
+                return;
+            }
+            Thread.sleep(10L);
+        }
+        assertEquals(expected, executor.getQueue().size());
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(e);
+        }
+    }
+
+    private static void drainChannels(SessionFixture... sessions) {
+        for (SessionFixture session : sessions) {
+            session.channel.runPendingTasks();
+            session.channel.runScheduledPendingTasks();
+        }
+    }
+}

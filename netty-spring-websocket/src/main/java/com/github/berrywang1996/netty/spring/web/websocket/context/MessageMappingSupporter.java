@@ -28,6 +28,7 @@ import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Method;
 import java.util.*;
+import java.util.concurrent.Semaphore;
 
 /**
  * @author berrywang1996
@@ -42,12 +43,15 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
 
     private final Map<String, MessageMappingResolver> resolverMap = new HashMap<>();
 
+    private Semaphore connectionSemaphore;
+
     @Override
     public Map<String, MessageMappingResolver> initMappingResolverMap(NettyServerStartupProperties startupProperties,
                                                                       ApplicationContext applicationContext) {
 
         this.startupProperties = startupProperties;
         this.applicationContext = applicationContext;
+        this.connectionSemaphore = initConnectionSemaphore(startupProperties);
 
         Map<String, Object> beans = applicationContext.getBeansWithAnnotation(Component.class);
         log.debug("Find method had annotation \"MessageMapping\"");
@@ -101,14 +105,15 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
                             // put new message type but same url
                             Map<MessageType, Method> methodMap = new HashMap<>(this.resolverMap.get(url).getMethods());
                             methodMap.put(annotation.messageType(), method);
-                            this.resolverMap.put(url, new MessageMappingResolver(url, methodMap,
-                                    controllerBean.getValue()));
+                            this.resolverMap.put(url, newResolver(url, methodMap, controllerBean.getValue()));
 
                         } else {
 
                             // if url is not mapped, continue
-                            this.resolverMap.put(url, new MessageMappingResolver(url, Collections.singletonMap(
-                                    annotation.messageType(), method), controllerBean.getValue()));
+                            this.resolverMap.put(url, newResolver(
+                                    url,
+                                    Collections.singletonMap(annotation.messageType(), method),
+                                    controllerBean.getValue()));
 
                         }
                     }
@@ -148,6 +153,26 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
             return new String[0];
         }
         return methodAnno.value();
+    }
+
+    private MessageMappingResolver newResolver(String url, Map<MessageType, Method> methods, Object invokeRef) {
+        return new MessageMappingResolver(
+                url,
+                methods,
+                invokeRef,
+                this.startupProperties == null ? null : this.startupProperties.getWebSocket(),
+                this.connectionSemaphore);
+    }
+
+    private Semaphore initConnectionSemaphore(NettyServerStartupProperties startupProperties) {
+        if (startupProperties == null || startupProperties.getWebSocket() == null) {
+            return null;
+        }
+        int maxConnections = startupProperties.getWebSocket().getMaxConnections();
+        if (maxConnections <= 0) {
+            return null;
+        }
+        return new Semaphore(maxConnections);
     }
 
 }

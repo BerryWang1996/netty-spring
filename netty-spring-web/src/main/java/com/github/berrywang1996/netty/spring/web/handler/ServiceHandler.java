@@ -78,7 +78,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
             });
 
         } catch (RejectedExecutionException e) {
-            log.warn("Too many requests. Close request.", e);
+            log.warn("Too many requests. Close request. reason={}", e.getMessage());
             ctx.close();
         }
 
@@ -90,33 +90,24 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
         log.error("Failed to catch exception.", cause);
         if (cause instanceof Exception) {
+            Exception exception = (Exception) cause;
+            if (handleWebSocketException(ctx, exception)) {
+                return;
+            }
             ServiceHandlerUtil.HttpErrorMessage errorMessage =
                     new ServiceHandlerUtil.HttpErrorMessage(
                             HttpResponseStatus.INTERNAL_SERVER_ERROR, null, null, cause);
             ServiceHandlerUtil.sendError(ctx, null, errorMessage);
-            String sessionId = ctx.channel().attr(SESSION_ID_IN_CHANNEL).get();
-            if (StringUtil.isNotBlank(sessionId)) {
-                String uri = ctx.channel().attr(REQUEST_IN_CHANNEL).get().uri();
-                AbstractMappingResolver mappingResolver = getMappingResolver(uri);
-                if (mappingResolver != null && "com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver".equals(mappingResolver.getClass().getName())) {
-                    try {
-                        Method resolveMethod = mappingResolver.getClass().getMethod(
-                                "resolveWebSocketException",
-                                ChannelHandlerContext.class,
-                                Exception.class
-                        );
-                        resolveMethod.setAccessible(true);
-                        resolveMethod.invoke(mappingResolver, ctx, cause);
-                    } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
-                        e.printStackTrace();
-                    }
-                    mappingResolver.removeSession(sessionId);
-                }
-            }
         } else {
             ctx.close();
             super.exceptionCaught(ctx, cause);
         }
+    }
+
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        cleanupInactiveSession(ctx);
+        super.channelInactive(ctx);
     }
 
     private void handle(ChannelHandlerContext ctx, Object msg) throws Exception {
@@ -178,7 +169,13 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         log.debug("Received a websocket frame.");
 
         // get url from channel attribute, set attribute in first handshake
-        String uri = ctx.channel().attr(REQUEST_IN_CHANNEL).get().uri();
+        FullHttpRequest request = ctx.channel().attr(REQUEST_IN_CHANNEL).get();
+        if (request == null) {
+            log.warn("Missing websocket request context, close channel.");
+            ctx.close();
+            return;
+        }
+        String uri = request.uri();
 
         // get base uri
         if (uri.contains("?")) {
@@ -217,6 +214,41 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         }
 
         return mappingResolver;
+    }
+
+    private boolean handleWebSocketException(ChannelHandlerContext ctx, Exception cause) {
+        AbstractMappingResolver mappingResolver = getChannelMappingResolver(ctx);
+        if (mappingResolver == null) {
+            return false;
+        }
+        try {
+            mappingResolver.resolveException(ctx, cause);
+        } catch (Exception e) {
+            log.warn("Handle websocket exception failed.", e);
+            ctx.close();
+        }
+        return true;
+    }
+
+    private void cleanupInactiveSession(ChannelHandlerContext ctx) {
+        AbstractMappingResolver mappingResolver = getChannelMappingResolver(ctx);
+        if (mappingResolver == null) {
+            return;
+        }
+        try {
+            mappingResolver.onChannelInactive(ctx);
+        } catch (Exception e) {
+            log.warn("Cleanup inactive session failed.", e);
+        }
+    }
+
+    private AbstractMappingResolver getChannelMappingResolver(ChannelHandlerContext ctx) {
+        String sessionId = ctx.channel().attr(SESSION_ID_IN_CHANNEL).get();
+        FullHttpRequest request = ctx.channel().attr(REQUEST_IN_CHANNEL).get();
+        if (StringUtil.isBlank(sessionId) || request == null) {
+            return null;
+        }
+        return getMappingResolver(getBaseUri(request));
     }
 
     private static String getBaseUri(FullHttpRequest request) {
