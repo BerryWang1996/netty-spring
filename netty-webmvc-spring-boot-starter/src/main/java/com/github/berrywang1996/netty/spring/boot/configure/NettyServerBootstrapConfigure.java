@@ -44,7 +44,7 @@ public class NettyServerBootstrapConfigure {
             nettyServerBootstrap.start(startupProperties);
         } catch (Exception e) {
             log.error("Netty startup failed!", e);
-            System.exit(1);
+            throw new IllegalStateException("Netty startup failed.", e);
         }
         return nettyServerBootstrap;
     }

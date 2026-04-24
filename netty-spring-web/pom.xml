@@ -9,7 +9,7 @@
     <parent>
         <groupId>com.github.berrywang1996</groupId>
         <artifactId>netty-spring-parent</artifactId>
-        <version>1.0.0</version>
+        <version>1.0.1</version>
     </parent>
 
     <artifactId>netty-spring-web</artifactId>
