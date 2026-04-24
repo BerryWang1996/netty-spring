@@ -35,6 +35,7 @@ import io.netty.handler.codec.http.websocketx.*;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.util.AttributeKey;
 import io.netty.util.CharsetUtil;
+import io.netty.util.ReferenceCountUtil;
 import lombok.extern.slf4j.Slf4j;
 
 import java.lang.reflect.InvocationTargetException;
@@ -59,6 +60,10 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         implements HandlerSubmitterAware {
 
     private static final int DEFAULT_MAX_FRAME_PAYLOAD_LENGTH = 65536;
+
+    private static final int SHUTDOWN_CLOSE_STATUS_CODE = 1001;
+
+    private static final String SHUTDOWN_CLOSE_REASON = "Server shutting down";
 
     public static final AttributeKey<String> SESSION_ID_IN_CHANNEL = AttributeKey.valueOf("sessionId");
 
@@ -230,6 +235,18 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                 finishDetachedSession(session, null);
             }
         });
+    }
+
+    @Override
+    public void shutdown() {
+        if (sessionMap.isEmpty()) {
+            return;
+        }
+        List<MessageSession> sessions = new ArrayList<>(sessionMap.values());
+        log.info("Shutting down websocket resolver {} with {} active sessions.", getUrl(), sessions.size());
+        for (MessageSession session : sessions) {
+            shutdownSession(session);
+        }
     }
 
     private boolean isMessageRequestLegal(ChannelHandlerContext ctx, FullHttpRequest request) {
@@ -715,6 +732,36 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         });
     }
 
+    private void shutdownSession(final MessageSession session) {
+        if (session == null || !session.startClosing()) {
+            return;
+        }
+        dispatchLifecycleTask("shutdownClose", session, new Runnable() {
+            @Override
+            public void run() {
+                doShutdownClose(session);
+            }
+        }, new Runnable() {
+            @Override
+            public void run() {
+                doShutdownClose(session);
+            }
+        });
+    }
+
+    private void doShutdownClose(MessageSession session) {
+        CloseWebSocketFrame lifecycleFrame = newShutdownCloseFrame();
+        CloseWebSocketFrame outboundFrame = newShutdownCloseFrame();
+        try {
+            notifyCloseLifecycle(lifecycleFrame, session);
+        } finally {
+            ReferenceCountUtil.release(lifecycleFrame);
+            removeSession(session);
+            releaseSession(session);
+            closeChannel(session, outboundFrame);
+        }
+    }
+
     private void closeSessionOnTransportErrorInline(MessageSession session, Throwable throwable) {
         if (session == null || !session.startClosing()) {
             return;
@@ -765,6 +812,25 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             return (Exception) target;
         }
         return new RuntimeException(target);
+    }
+
+    private CloseWebSocketFrame newShutdownCloseFrame() {
+        return new CloseWebSocketFrame(SHUTDOWN_CLOSE_STATUS_CODE, SHUTDOWN_CLOSE_REASON);
+    }
+
+    private void closeChannel(MessageSession session, CloseWebSocketFrame closeFrame) {
+        if (closeFrame == null) {
+            session.getChannelHandlerContext().close();
+            return;
+        }
+        if (!session.getChannelHandlerContext().channel().isActive()) {
+            ReferenceCountUtil.release(closeFrame);
+            session.getChannelHandlerContext().close();
+            return;
+        }
+        session.getChannelHandlerContext()
+                .writeAndFlush(closeFrame)
+                .addListener(ChannelFutureListener.CLOSE);
     }
 
 }

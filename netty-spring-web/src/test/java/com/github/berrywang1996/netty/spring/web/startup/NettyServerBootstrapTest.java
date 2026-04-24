@@ -5,11 +5,15 @@ import com.github.berrywang1996.netty.spring.web.context.WebMappingSupporter;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.support.GenericApplicationContext;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.net.ServerSocket;
 import java.util.Collections;
+import java.util.Map;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -17,6 +21,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class NettyServerBootstrapTest {
@@ -35,7 +41,10 @@ class NettyServerBootstrapTest {
                 0L,
                 TimeUnit.MILLISECONDS,
                 new LinkedBlockingQueue<Runnable>());
-        WebMappingSupporter supporter = newSupporter(executor);
+        WebMappingSupporter supporter = newSupporter(new NettyServerStartupProperties(),
+                executor,
+                Collections.<String, AbstractMappingResolver>emptyMap(),
+                new Semaphore(1));
         NioEventLoopGroup bossGroup = new NioEventLoopGroup(1);
         NioEventLoopGroup workerGroup = new NioEventLoopGroup(1);
         GenericApplicationContext applicationContext = new GenericApplicationContext();
@@ -66,13 +75,50 @@ class NettyServerBootstrapTest {
         }
     }
 
+    @Test
+    void ownedApplicationContextCanRestartAfterStop() throws Exception {
+        NettyServerBootstrap bootstrap = new NettyServerBootstrap(null);
+        NettyServerStartupProperties startupProperties = new NettyServerStartupProperties();
+        startupProperties.setLoadSpringApplicationContext(true);
+        startupProperties.setConfigLocation("classpath:restart-test-context.xml");
+        startupProperties.setPort(findAvailablePort());
+
+        ApplicationContext firstContext = null;
+        try {
+            bootstrap.start(startupProperties);
+            firstContext = bootstrap.getApplicationContext();
+
+            assertTrue(firstContext instanceof ConfigurableApplicationContext);
+            assertTrue(((ConfigurableApplicationContext) firstContext).isActive());
+            assertFalse(((AtomicBoolean) getField(NettyServerBootstrap.class, bootstrap, "stopped")).get());
+
+            bootstrap.stop();
+
+            assertNull(bootstrap.getApplicationContext());
+            assertNull(bootstrap.getWebSockeMappingtResolverMap());
+
+            startupProperties.setPort(findAvailablePort());
+            bootstrap.start(startupProperties);
+            ApplicationContext secondContext = bootstrap.getApplicationContext();
+
+            assertTrue(secondContext instanceof ConfigurableApplicationContext);
+            assertTrue(((ConfigurableApplicationContext) secondContext).isActive());
+            assertNotSame(firstContext, secondContext);
+        } finally {
+            bootstrap.stop();
+        }
+    }
+
     private static void setField(Class<?> type, Object target, String name, Object value) throws Exception {
         Field field = type.getDeclaredField(name);
         field.setAccessible(true);
         field.set(target, value);
     }
 
-    private static WebMappingSupporter newSupporter(ThreadPoolExecutor executor) throws Exception {
+    private static WebMappingSupporter newSupporter(NettyServerStartupProperties startupProperties,
+                                                    ThreadPoolExecutor executor,
+                                                    Map<String, AbstractMappingResolver> mappingResolverMap,
+                                                    Semaphore semaphore) throws Exception {
         Constructor<WebMappingSupporter> constructor = WebMappingSupporter.class.getDeclaredConstructor(
                 NettyServerStartupProperties.class,
                 org.springframework.context.ApplicationContext.class,
@@ -81,16 +127,25 @@ class NettyServerBootstrapTest {
                 Semaphore.class);
         constructor.setAccessible(true);
         return constructor.newInstance(
-                new NettyServerStartupProperties(),
+                startupProperties,
                 null,
-                Collections.<String, AbstractMappingResolver>emptyMap(),
+                mappingResolverMap,
                 executor,
-                new Semaphore(1));
+                semaphore);
     }
 
     private static Object getField(Class<?> type, Object target, String name) throws Exception {
         Field field = type.getDeclaredField(name);
         field.setAccessible(true);
         return field.get(target);
+    }
+
+    private static int findAvailablePort() throws Exception {
+        ServerSocket socket = new ServerSocket(0);
+        try {
+            return socket.getLocalPort();
+        } finally {
+            socket.close();
+        }
     }
 }

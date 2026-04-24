@@ -420,6 +420,49 @@ class MessageMappingResolverTest {
     }
 
     @Test
+    void shutdownClosesActiveSessionsAndReleasesConnectionSlots() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        methods.put(MessageType.ON_CLOSE, method(endpoint, "onClose", CloseWebSocketFrame.class, MessageSession.class));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setMaxConnections(1);
+        Semaphore connectionSemaphore = new Semaphore(1);
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint, properties, connectionSemaphore);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        assertEquals(0, connectionSemaphore.availablePermits());
+        assertEquals(1, resolver.getSessionMap().size());
+
+        resolver.shutdown();
+        drainChannel(testChannel.channel);
+
+        Object closeResponse = testChannel.channel.readOutbound();
+        try {
+            assertTrue(closeResponse instanceof CloseWebSocketFrame);
+            assertEquals(1001, ((CloseWebSocketFrame) closeResponse).statusCode());
+            assertEquals("Server shutting down", ((CloseWebSocketFrame) closeResponse).reasonText());
+        } finally {
+            ReferenceCountUtil.release(closeResponse);
+        }
+
+        assertEquals(1, endpoint.closeCount);
+        assertTrue(resolver.getSessionMap().isEmpty());
+        assertEquals(1, connectionSemaphore.availablePermits());
+        assertNull(testChannel.channel.attr(ServiceHandler.REQUEST_IN_CHANNEL).get());
+        assertNull(testChannel.channel.attr(MessageMappingResolver.SESSION_ID_IN_CHANNEL).get());
+        assertFalse(testChannel.channel.isActive());
+        testChannel.finish();
+    }
+
+    @Test
     void oversizedFrameDispatchesErrorThenCloseLifecycle() throws Exception {
         RecordingEndpoint endpoint = new RecordingEndpoint();
         Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);

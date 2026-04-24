@@ -6,9 +6,9 @@
 
 - `P0` 已完成，工程基线已经建立，项目具备一键测试能力。
 - `P1` 已完成，WebSocket 主链路正确性问题已经收口。
-- `P2` 正在推进，工作重点已经从“修正基本正确性”转向“并发治理、过载行为和停机稳定性”。
+- `P2` 已完成，WebSocket 并发治理、过载行为和停机稳定性已收口，可作为 `1.0.0` 发布基线。
 
-## 已完成范围
+## 1.0.0 已完成范围
 
 ### P0 工程基线
 
@@ -26,7 +26,7 @@
 - 修复了 `submitHandle()` permit 生命周期过早释放的问题。
 - 已补齐 `MessageMappingResolver`、`DefaultMessageSender` 等核心回归测试。
 
-### P2 已落地项
+### P2 WebSocket 并发与稳定性
 
 - 已将 handler 与 message sender 线程池参数配置化。
 - 已为 handler 执行链引入有界执行模型，避免在业务线程池外直接执行用户回调。
@@ -40,37 +40,14 @@
 - 已增加 handler/message sender 的运行时快照对象与饱和计数器，可观测 permit、queue、active count 和 reject 行为。
 - 已修复无 `@MessageMapping` 场景下 `MessageSenderSupport` 的空指针问题，改为安全空实现。
 - 已补充 `NettyServerBootstrap.stop()` 的资源关闭逻辑，包括 server channel、handler 线程池、event loop group 和自建 Spring 上下文。
-- 已新增启动/停止和关键错误路径的单元测试。
+- 已支持服务停止时主动关闭 active websocket session，并走统一的 `ON_CLOSE`/session 清理链路。
+- 已修复自建 Spring 上下文 stop 后无法再次 start 的问题，并在停机时清理旧 resolver/runtime 引用。
+- 已修复 `MessageSenderSupport` 在 bootstrap stop/start 后继续持有旧 sender/resolver 的问题，支持按 resolver source 变化自动重建 sender。
+- 已补充 `NettyServerBootstrap.stop()` 对 `MessageSenderSupport` 的停机联动，确保手动 stop 时旧 sender 线程池也会及时关闭。
+- 已补充 repeated `stop()` 幂等关闭和广播/停机交叉场景的稳定性回归测试。
 - 已在当前本地环境完成全量 `mvn test` 验证。
 
-## P2 剩余工作
-
-### P2-1 过载可观测性
-
-- 已补充统一的运行时快照和饱和诊断日志。
-- 下一步评估是否增加轻量级指标导出，而不只是日志和快照读取。
-- 继续细化不同过载路径的行为文档和示例，避免“配置已存在但行为不可见”。
-
-### P2-2 停机与会话收口
-
-- 在 `NettyServerBootstrap.stop()` 场景下，进一步评估 active websocket session 的优雅关闭策略。
-- 明确停机时 `ON_ERROR`、`ON_CLOSE`、session 清理之间的顺序与幂等性。
-- 补充“服务停止时仍有活跃连接”的回归测试。
-
-### P2-3 压测与回归补强
-
-- 增加针对背压、拒绝策略、连接上限、帧大小上限的回归测试。
-- 增加 repeated start/stop、资源重复关闭、并发广播等稳定性测试。
-- 审查是否仍存在其他无界并发、无界缓存或在 event loop 上执行用户代码的遗漏点。
-
-## 下一轮开发顺序
-
-1. 先完成线程池饱和与背压的可观测性补强，让过载行为可诊断、可验收。
-2. 再完善停机时的 websocket session 优雅关闭与资源回收。
-3. 然后补齐 P2 稳定性回归测试，形成可持续验收基线。
-4. P2 关单后，再进入 P3 产品能力扩展。
-
-## P2 关单标准
+## 1.0.0 基线状态
 
 - 过载时不会阻塞 Netty event loop。
 - 用户生命周期回调不会逃逸到 I/O 完成线程直接执行。
@@ -78,7 +55,7 @@
 - 启动、停止、重复关闭等关键生命周期具备可预测且幂等的行为。
 - 全量 `mvn test` 持续通过，且关键并发/失败场景有专门回归用例覆盖。
 
-## 后续阶段规划
+## 1.0.0 之后的推进方向
 
 ### P3 WebSocket 产品能力
 
@@ -101,7 +78,13 @@
 - 提供完整 demo，例如聊天室或推送服务。
 - 以 WebSocket 快速接入为核心重写 README/示例文档。
 
+## 下一轮开发顺序
+
+1. 先推进 P3，补齐鉴权、编解码、心跳和会话信息读取等产品能力。
+2. 再推进 P4，统一 Starter 配置入口和 Bean 暴露方式。
+3. 然后推进 P5，补足指标、示例和发布文档。
+
 ## 说明
 
 - 当前计划以仓库中的最新代码状态为准，不再按早期 review 数量统计阶段结论。
-- P2 当前不是“从零开始”，而是在已有稳定性底座上继续做观测、停机治理和压力回归收口。
+- `1.0.0` 版本以当前 P0/P1/P2 收口结果为发布基线，后续能力扩展在此基础上继续演进。

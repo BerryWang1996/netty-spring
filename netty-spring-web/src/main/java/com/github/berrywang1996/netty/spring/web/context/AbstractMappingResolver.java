@@ -93,6 +93,9 @@ public abstract class AbstractMappingResolver<T, K> {
     public void onChannelInactive(ChannelHandlerContext ctx) throws Exception {
     }
 
+    public void shutdown() throws Exception {
+    }
+
     public Map<K, Map<String, Class>> parseMethodParameters() {
         Map<K, Map<String, Class>> tempMethodParamTypes = new HashMap<>();
         for (Map.Entry<K, Method> kMethodEntry : methods.entrySet()) {

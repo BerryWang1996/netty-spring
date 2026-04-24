@@ -78,7 +78,7 @@ class DefaultMessageSenderTest {
                     () -> sender.sendMessage("/ws/foo", new TextMessage("hello"), "active", "closed"));
 
             assertEquals(Collections.singletonList("closed"), exception.getSessionIds());
-            Object outbound = activeSession.channel.readOutbound();
+            Object outbound = awaitOutbound(activeSession);
             try {
                 assertTrue(outbound instanceof TextWebSocketFrame);
                 assertEquals("hello", ((TextWebSocketFrame) outbound).text());
@@ -210,7 +210,7 @@ class DefaultMessageSenderTest {
             sender.topicMessage("/ws/foo", new TextMessage("hello"));
             assertTrue(awaitLatch(writableWriteLatch, writableSession, nonWritableSession));
 
-            Object writableOutbound = writableSession.channel.readOutbound();
+            Object writableOutbound = awaitOutbound(writableSession);
             try {
                 assertTrue(writableOutbound instanceof TextWebSocketFrame);
                 assertEquals("hello", ((TextWebSocketFrame) writableOutbound).text());
@@ -356,6 +356,49 @@ class DefaultMessageSenderTest {
         } finally {
             releaseWrites.countDown();
             executor.shutdownNow();
+            cleanup(resolver, session1, session2);
+        }
+    }
+
+    @Test
+    void topicMessageDoesNotReviveClosedSessionsAfterResolverShutdown() throws Exception {
+        LifecycleEndpoint endpoint = new LifecycleEndpoint();
+        MessageMappingResolver resolver = lifecycleResolver("/ws/foo", endpoint);
+        SessionFixture session1 = addSession(resolver, "/ws/foo", "s1");
+        SessionFixture session2 = addSession(resolver, "/ws/foo", "s2");
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setCorePoolSize(1);
+        properties.setMaxPoolSize(1);
+        properties.setQueueCapacity(1);
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver), properties);
+        ThreadPoolExecutor executor = extractExecutor(sender);
+        CountDownLatch responseStarted = new CountDownLatch(1);
+        CountDownLatch releaseResponse = new CountDownLatch(1);
+        AtomicInteger responseCount = new AtomicInteger();
+
+        try {
+            sender.topicMessage("/ws/foo", new BlockingTextMessage("hello", responseStarted, releaseResponse, responseCount));
+
+            assertTrue(awaitLatch(responseStarted, session1, session2));
+            awaitQueueSize(executor, 1);
+
+            resolver.shutdown();
+            drainChannels(session1, session2);
+
+            releaseResponse.countDown();
+            awaitExecutorIdle(executor, session1, session2);
+
+            assertEquals(2, endpoint.closeCount);
+            assertEquals(0, endpoint.errorCount);
+            assertTrue(resolver.getSessionMap().isEmpty());
+            assertEquals(1, responseCount.get());
+            assertOnlyCloseFrames(session1);
+            assertOnlyCloseFrames(session2);
+            assertFalse(session1.channel.isActive());
+            assertFalse(session2.channel.isActive());
+        } finally {
+            releaseResponse.countDown();
+            sender.shutdown();
             cleanup(resolver, session1, session2);
         }
     }
@@ -576,6 +619,31 @@ class DefaultMessageSenderTest {
         }
     }
 
+    private static final class BlockingTextMessage extends AbstractMessage<TextWebSocketFrame> {
+        private final String text;
+        private final CountDownLatch startedLatch;
+        private final CountDownLatch releaseLatch;
+        private final AtomicInteger responseCount;
+
+        private BlockingTextMessage(String text,
+                                    CountDownLatch startedLatch,
+                                    CountDownLatch releaseLatch,
+                                    AtomicInteger responseCount) {
+            this.text = text;
+            this.startedLatch = startedLatch;
+            this.releaseLatch = releaseLatch;
+            this.responseCount = responseCount;
+        }
+
+        @Override
+        public TextWebSocketFrame responseMsg() {
+            startedLatch.countDown();
+            await(releaseLatch);
+            responseCount.incrementAndGet();
+            return new TextWebSocketFrame(text);
+        }
+    }
+
     private static final class NonWritableEmbeddedChannel extends EmbeddedChannel {
         private NonWritableEmbeddedChannel(ChannelHandler... handlers) {
             super(handlers);
@@ -637,6 +705,55 @@ class DefaultMessageSenderTest {
             Thread.sleep(10L);
         }
         assertEquals(expected, executor.getQueue().size());
+    }
+
+    private static Object awaitOutbound(SessionFixture session) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (System.nanoTime() < deadline) {
+            drainChannels(session);
+            Object outbound = session.channel.readOutbound();
+            if (outbound != null) {
+                return outbound;
+            }
+            try {
+                Thread.sleep(10L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            }
+        }
+        drainChannels(session);
+        return session.channel.readOutbound();
+    }
+
+    private static void awaitExecutorIdle(ThreadPoolExecutor executor, SessionFixture... sessions) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (System.nanoTime() < deadline) {
+            drainChannels(sessions);
+            if (executor.getActiveCount() == 0 && executor.getQueue().isEmpty()) {
+                return;
+            }
+            Thread.sleep(10L);
+        }
+        drainChannels(sessions);
+        assertEquals(0, executor.getActiveCount());
+        assertTrue(executor.getQueue().isEmpty());
+    }
+
+    private static void assertOnlyCloseFrames(SessionFixture session) {
+        int closeFrameCount = 0;
+        Object outbound;
+        while ((outbound = session.channel.readOutbound()) != null) {
+            try {
+                assertFalse(outbound instanceof TextWebSocketFrame);
+                if (outbound instanceof CloseWebSocketFrame) {
+                    closeFrameCount++;
+                }
+            } finally {
+                ReferenceCountUtil.release(outbound);
+            }
+        }
+        assertEquals(1, closeFrameCount);
     }
 
     private static void await(CountDownLatch latch) {

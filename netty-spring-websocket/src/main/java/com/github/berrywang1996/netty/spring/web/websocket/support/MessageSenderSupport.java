@@ -54,16 +54,26 @@ public class MessageSenderSupport implements MessageSender {
 
     private MessageSender messageSender;
 
+    private Map<String, AbstractMappingResolver> resolverSource;
+
     public MessageSenderSupport(NettyServerBootstrap nettyServerBootstrap) {
         this.nettyServerBootstrap = nettyServerBootstrap;
+        this.nettyServerBootstrap.addStopListener(new Runnable() {
+            @Override
+            public void run() {
+                shutdown();
+            }
+        });
     }
 
     public synchronized MessageSender getMessageSender() {
-        if (this.messageSender != null) {
+        Map<String, AbstractMappingResolver> resolverMap = this.nettyServerBootstrap.getWebSockeMappingtResolverMap();
+        if (this.messageSender != null && this.resolverSource == resolverMap) {
             return this.messageSender;
         }
-        Map<String, AbstractMappingResolver> resolverMap = this.nettyServerBootstrap.getWebSockeMappingtResolverMap();
+        resetCachedSender();
         if (resolverMap == null || resolverMap.isEmpty()) {
+            this.resolverSource = resolverMap;
             this.messageSender = EMPTY_MESSAGE_SENDER;
             return this.messageSender;
         }
@@ -71,6 +81,7 @@ public class MessageSenderSupport implements MessageSender {
         for (Map.Entry<String, AbstractMappingResolver> entry : resolverMap.entrySet()) {
             map.put(entry.getKey(), (MessageMappingResolver) entry.getValue());
         }
+        this.resolverSource = resolverMap;
         this.messageSender = new DefaultMessageSender(
                 map,
                 this.nettyServerBootstrap.getStartupProperties() == null
@@ -116,11 +127,15 @@ public class MessageSenderSupport implements MessageSender {
 
     @Override
     public synchronized void shutdown() {
-        if (this.messageSender == null) {
-            return;
+        resetCachedSender();
+    }
+
+    private void resetCachedSender() {
+        if (this.messageSender != null) {
+            this.messageSender.shutdown();
+            this.messageSender = null;
         }
-        this.messageSender.shutdown();
-        this.messageSender = null;
+        this.resolverSource = null;
     }
 
 }

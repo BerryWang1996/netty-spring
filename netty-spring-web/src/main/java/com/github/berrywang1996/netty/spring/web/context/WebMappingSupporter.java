@@ -210,6 +210,7 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
     }
 
     public void shutdown() {
+        shutdownResolvers();
         if (this.executor.isShutdown()) {
             return;
         }
@@ -221,6 +222,16 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
         } catch (InterruptedException e) {
             this.executor.shutdownNow();
             Thread.currentThread().interrupt();
+        }
+    }
+
+    private void shutdownResolvers() {
+        for (AbstractMappingResolver resolver : this.mappingResolverMap.values()) {
+            try {
+                resolver.shutdown();
+            } catch (Exception e) {
+                log.warn("Shutdown mapping resolver failed. resolver={}", resolver.getClass().getName(), e);
+            }
         }
     }
 

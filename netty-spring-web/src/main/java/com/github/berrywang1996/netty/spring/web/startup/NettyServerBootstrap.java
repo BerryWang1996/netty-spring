@@ -34,7 +34,9 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.support.ClassPathXmlApplicationContext;
 
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -59,6 +61,8 @@ public final class NettyServerBootstrap {
     private WebMappingSupporter webMappingSupporter;
 
     private final AtomicBoolean stopped = new AtomicBoolean(true);
+
+    private final List<Runnable> stopListeners = new CopyOnWriteArrayList<>();
 
     @Getter
     private Map<String, AbstractMappingResolver> webSockeMappingtResolverMap;
@@ -129,10 +133,12 @@ public final class NettyServerBootstrap {
         }
         log.info("Netty is shutting down.");
         closeServerChannel();
+        notifyStopListeners();
         shutdownSupporter();
         shutdownEventLoopGroup(this.bossGroup);
         shutdownEventLoopGroup(this.workerGroup);
         closeOwnedApplicationContext();
+        clearRuntimeState();
     }
 
     private void closeServerChannel() {
@@ -162,14 +168,28 @@ public final class NettyServerBootstrap {
     }
 
     private void closeOwnedApplicationContext() {
-        if (!this.ownsApplicationContext || !(this.applicationContext instanceof ConfigurableApplicationContext)) {
+        if (!this.ownsApplicationContext) {
             return;
         }
-        ConfigurableApplicationContext context = (ConfigurableApplicationContext) this.applicationContext;
-        if (context.isActive()) {
-            context.close();
+        try {
+            if (this.applicationContext instanceof ConfigurableApplicationContext) {
+                ConfigurableApplicationContext context = (ConfigurableApplicationContext) this.applicationContext;
+                if (context.isActive()) {
+                    context.close();
+                }
+            }
+        } finally {
+            this.applicationContext = null;
+            this.ownsApplicationContext = false;
         }
-        this.ownsApplicationContext = false;
+    }
+
+    private void clearRuntimeState() {
+        this.serverChannel = null;
+        this.webMappingSupporter = null;
+        this.webSockeMappingtResolverMap = null;
+        this.bossGroup = null;
+        this.workerGroup = null;
     }
 
     public NettyServerStartupProperties getStartupProperties() {
@@ -180,11 +200,28 @@ public final class NettyServerBootstrap {
         return applicationContext;
     }
 
+    public void addStopListener(Runnable listener) {
+        if (listener == null) {
+            return;
+        }
+        this.stopListeners.add(listener);
+    }
+
     public HandlerRuntimeStats getHandlerRuntimeStats() {
         if (this.webMappingSupporter == null) {
             return HandlerRuntimeStats.empty();
         }
         return this.webMappingSupporter.getRuntimeStats();
+    }
+
+    private void notifyStopListeners() {
+        for (Runnable listener : this.stopListeners) {
+            try {
+                listener.run();
+            } catch (Exception e) {
+                log.warn("Invoke stop listener failed.", e);
+            }
+        }
     }
 
 }
