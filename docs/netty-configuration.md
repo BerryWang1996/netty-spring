@@ -46,6 +46,8 @@ server:
         enable: true
         certificate: ./cert/server.crt
         certificate-key: ./cert/server.key
+        protocols: TLSv1.2,TLSv1.3
+        ciphers: TLS_AES_128_GCM_SHA256 TLS_AES_256_GCM_SHA384
 ```
 
 - `http.handle-file`：未匹配到 MVC/WebSocket mapping 时，是否尝试按静态文件处理。
@@ -60,13 +62,15 @@ server:
 - `http.idle-timeout-seconds`：读写全空闲超时时间，单位秒，默认 `0` 表示关闭；配置小于 `0` 时启动失败，触发后关闭 channel。
 - `http.gzip.*`：HTTP 响应压缩配置。
 - `http.ssl.*`：SSL 证书配置。启用 SSL 时会在启动期校验证书和私钥路径，随后在 Netty channel 初始化阶段读取证书文件。
+- `http.ssl.protocols`：可选 TLS 协议白名单，支持逗号或空白分隔；为空时使用 Netty/JDK 默认值。
+- `http.ssl.ciphers`：可选 cipher suite 白名单，支持逗号或空白分隔；为空时使用 Netty/JDK 默认值。
 
 ## 生产边界说明
 
 - 启用静态文件服务时，请始终把 `http.file-location` 指向专用公开目录；框架会对请求路径做 URL decode、canonical path 和根目录包含校验，拒绝 `..` 或编码后的路径穿越。
 - `max-initial-line-length`、`max-header-size`、`max-chunk-size`、`max-content-length` 是 HTTP 请求容量边界，生产环境建议按业务实际请求大小显式配置。
 - `read-timeout-seconds`、`write-timeout-seconds`、`idle-timeout-seconds` 是 HTTP 连接时间边界，生产环境建议显式开启，避免慢请求或异常连接长期占用资源。
-- 启用 `http.ssl.enable=true` 时，必须同时配置 `http.ssl.certificate` 和 `http.ssl.certificate-key`，并且二者都必须是已存在的普通文件。
+- 启用 `http.ssl.enable=true` 时，必须同时配置 `http.ssl.certificate` 和 `http.ssl.certificate-key`，并且二者都必须是已存在的普通文件；生产环境建议显式配置 `http.ssl.protocols` 和 `http.ssl.ciphers`，避免依赖运行时默认 TLS 策略。
 - MVC 响应和静态文件发送失败时会记录 warn 日志并关闭 channel，避免失败连接继续占用资源；同时可通过 `NettyServerBootstrap#getHttpRuntimeStats()` 读取 HTTP 响应写失败、静态文件拒绝/写失败、idle 关闭、WebSocket handshake/origin 拒绝等轻量运行时计数。
 
 ## 兼容策略

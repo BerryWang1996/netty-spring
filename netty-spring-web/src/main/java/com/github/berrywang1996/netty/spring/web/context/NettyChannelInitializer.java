@@ -35,6 +35,9 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -72,7 +75,9 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
         if (httpProperties.getSsl() != null && httpProperties.getSsl().isEnable()) {
             File certificateFile = new File(httpProperties.getSsl().getCertificate());
             File privateKeyFile = new File(httpProperties.getSsl().getCertificateKey());
-            sslCtx = SslContextBuilder.forServer(certificateFile, privateKeyFile).build();
+            SslContextBuilder sslContextBuilder = SslContextBuilder.forServer(certificateFile, privateKeyFile);
+            configureSslContextBuilder(sslContextBuilder, httpProperties.getSsl());
+            sslCtx = sslContextBuilder.build();
             log.debug("Enable ssl, certificate file:{}, private key file:{}",
                     certificateFile.getPath(),
                     privateKeyFile.getCanonicalPath());
@@ -175,6 +180,35 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
             return 0L;
         }
         return httpProperties.getIdleTimeoutSeconds();
+    }
+
+    static void configureSslContextBuilder(SslContextBuilder sslContextBuilder,
+                                           NettyServerStartupProperties.Ssl sslProperties) {
+        if (sslContextBuilder == null || sslProperties == null) {
+            return;
+        }
+        List<String> protocols = resolveDelimitedConfig(sslProperties.getProtocols());
+        if (!protocols.isEmpty()) {
+            sslContextBuilder.protocols(protocols.toArray(new String[0]));
+        }
+        List<String> ciphers = resolveDelimitedConfig(sslProperties.getCiphers());
+        if (!ciphers.isEmpty()) {
+            sslContextBuilder.ciphers(ciphers);
+        }
+    }
+
+    static List<String> resolveDelimitedConfig(String configValue) {
+        if (configValue == null || configValue.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+        String[] tokens = configValue.trim().split("[,\\s]+");
+        List<String> values = new ArrayList<>(tokens.length);
+        for (String token : tokens) {
+            if (token != null && !token.trim().isEmpty()) {
+                values.add(token.trim());
+            }
+        }
+        return values;
     }
 
 }

@@ -36,7 +36,9 @@ class NettyServerStartupPropertiesWrapperTest {
                         "server.netty.http.gzip.types=text/plain application/json",
                         "server.netty.http.ssl.enable=true",
                         "server.netty.http.ssl.certificate=server.crt",
-                        "server.netty.http.ssl.certificate-key=server.key")
+                        "server.netty.http.ssl.certificate-key=server.key",
+                        "server.netty.http.ssl.protocols=TLSv1.2,TLSv1.3",
+                        "server.netty.http.ssl.ciphers=TLS_AES_128_GCM_SHA256 TLS_AES_256_GCM_SHA384")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     NettyServerStartupPropertiesWrapper properties =
@@ -68,6 +70,12 @@ class NettyServerStartupPropertiesWrapperTest {
                     assertThat(properties.getSsl().getCertificate()).isEqualTo("server.crt");
                     assertThat(properties.getHttp().getSsl().getCertificateKey()).isEqualTo("server.key");
                     assertThat(properties.getSsl().getCertificateKey()).isEqualTo("server.key");
+                    assertThat(properties.getHttp().getSsl().getProtocols()).isEqualTo("TLSv1.2,TLSv1.3");
+                    assertThat(properties.getSsl().getProtocols()).isEqualTo("TLSv1.2,TLSv1.3");
+                    assertThat(properties.getHttp().getSsl().getCiphers())
+                            .isEqualTo("TLS_AES_128_GCM_SHA256 TLS_AES_256_GCM_SHA384");
+                    assertThat(properties.getSsl().getCiphers())
+                            .isEqualTo("TLS_AES_128_GCM_SHA256 TLS_AES_256_GCM_SHA384");
                 });
     }
 

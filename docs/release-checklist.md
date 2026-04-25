@@ -28,9 +28,9 @@
    WebSocket controller 可直接构造注入 `MessageSender` 或 `MessageSenderSupport`，不需要显式 `@Lazy`。
 7. `1.1.0` 正式版还需要确认 P4.1 生产准入门槛：
    静态文件服务启用时不能通过 `..`、URL 编码或路径规范化绕过根目录。
-   HTTP request line、header、chunk、body、超时、TLS 等生产关键参数有配置入口和回归测试。
+   HTTP request line、header、chunk、body、超时、TLS 证书、TLS 协议、TLS cipher suite 等生产关键参数有配置入口和回归测试。
    `read-timeout-seconds` / `write-timeout-seconds` / `idle-timeout-seconds` 在生产环境有明确配置，不能让异常连接长期占用资源。
-   启用 SSL 时证书和私钥文件必须在启动期通过校验，不能把缺失证书留到运行期失败。
+   启用 SSL 时证书和私钥文件必须在启动期通过校验，不能把缺失证书留到运行期失败；生产环境需要评估是否显式配置 `http.ssl.protocols` 和 `http.ssl.ciphers`。
    WebSocket 生产部署需要显式评估 `allowed-origins`，避免默认兼容模式误放跨站握手。
    MVC 响应、静态文件发送、WebSocket 写失败和过载拒绝有统一日志、关闭策略、计数或指标；至少确认 `getHandlerRuntimeStats()`、`getHttpRuntimeStats()` 和 MessageSender runtime stats 的关键计数可读。
    handler/sender 线程池配置有启动期校验，非法容量和 `max < core` 不会静默兜底。

@@ -191,6 +191,16 @@ public class NettyServerStartupProperties {
          */
         private String certificateKey;
 
+        /**
+         * Enabled TLS protocols, separated by comma or whitespace. Empty means Netty/JDK defaults.
+         */
+        private String protocols;
+
+        /**
+         * Enabled TLS cipher suites, separated by comma or whitespace. Empty means Netty/JDK defaults.
+         */
+        private String ciphers;
+
         public boolean isEnable() {
             return enable;
         }
@@ -213,6 +223,22 @@ public class NettyServerStartupProperties {
 
         public void setCertificateKey(String certificateKey) {
             this.certificateKey = certificateKey;
+        }
+
+        public String getProtocols() {
+            return protocols;
+        }
+
+        public void setProtocols(String protocols) {
+            this.protocols = protocols;
+        }
+
+        public String getCiphers() {
+            return ciphers;
+        }
+
+        public void setCiphers(String ciphers) {
+            this.ciphers = ciphers;
         }
     }
 

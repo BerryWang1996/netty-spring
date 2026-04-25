@@ -4,6 +4,7 @@ import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupPrope
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 
 class NettyChannelInitializerTest {
 
@@ -70,5 +71,18 @@ class NettyChannelInitializerTest {
         assertEquals(0L, NettyChannelInitializer.resolveReadTimeoutSeconds(properties.getHttp()));
         assertEquals(0L, NettyChannelInitializer.resolveWriteTimeoutSeconds(properties.getHttp()));
         assertEquals(0L, NettyChannelInitializer.resolveIdleTimeoutSeconds(properties.getHttp()));
+    }
+
+    @Test
+    void resolveDelimitedConfigSupportsCommaAndWhitespaceSeparatedValues() {
+        assertIterableEquals(
+                java.util.Arrays.asList("TLSv1.2", "TLSv1.3"),
+                NettyChannelInitializer.resolveDelimitedConfig("TLSv1.2, TLSv1.3"));
+        assertIterableEquals(
+                java.util.Arrays.asList("TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384"),
+                NettyChannelInitializer.resolveDelimitedConfig(
+                        "TLS_AES_128_GCM_SHA256 TLS_AES_256_GCM_SHA384"));
+        assertEquals(0, NettyChannelInitializer.resolveDelimitedConfig(null).size());
+        assertEquals(0, NettyChannelInitializer.resolveDelimitedConfig("   ").size());
     }
 }
