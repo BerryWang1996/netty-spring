@@ -161,4 +161,35 @@ class StartupPropertiesUtilTest {
 
         StartupPropertiesUtil.checkAndImproveProperties(properties);
     }
+
+    @Test
+    void managementPathsMustBeValidWhenEnabled() {
+        NettyServerStartupProperties blankPathProperties = new NettyServerStartupProperties();
+        blankPathProperties.getManagement().setEnable(true);
+        blankPathProperties.getManagement().setHealthPath("");
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> StartupPropertiesUtil.checkAndImproveProperties(blankPathProperties));
+        assertTrue(exception.getMessage().contains("management health path"));
+
+        NettyServerStartupProperties relativePathProperties = new NettyServerStartupProperties();
+        relativePathProperties.getManagement().setEnable(true);
+        relativePathProperties.getManagement().setStatusPath("netty/status");
+
+        exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> StartupPropertiesUtil.checkAndImproveProperties(relativePathProperties));
+        assertTrue(exception.getMessage().contains("management status path"));
+
+        NettyServerStartupProperties samePathProperties = new NettyServerStartupProperties();
+        samePathProperties.getManagement().setEnable(true);
+        samePathProperties.getManagement().setHealthPath("/netty/status");
+        samePathProperties.getManagement().setStatusPath("/netty/status");
+
+        exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> StartupPropertiesUtil.checkAndImproveProperties(samePathProperties));
+        assertTrue(exception.getMessage().contains("must not be same"));
+    }
 }

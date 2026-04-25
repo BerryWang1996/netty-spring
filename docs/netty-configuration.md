@@ -25,6 +25,10 @@ server:
 ```yaml
 server:
   netty:
+    management:
+      enable: false
+      health-path: /netty/health
+      status-path: /netty/status
     http:
       handle-file: true
       file-location: ./public
@@ -64,6 +68,9 @@ server:
 - `http.ssl.*`：SSL 证书配置。启用 SSL 时会在启动期校验证书和私钥路径，随后在 Netty channel 初始化阶段读取证书文件。
 - `http.ssl.protocols`：可选 TLS 协议白名单，支持逗号或空白分隔；为空时使用 Netty/JDK 默认值。
 - `http.ssl.ciphers`：可选 cipher suite 白名单，支持逗号或空白分隔；为空时使用 Netty/JDK 默认值。
+- `management.enable`：是否开启内置轻量管理端点，默认 `false`，避免默认暴露运行时信息。
+- `management.health-path`：健康检查路径，默认 `/netty/health`，开启后返回 `{"status":"UP"}`。
+- `management.status-path`：状态快照路径，默认 `/netty/status`，开启后返回 handler/http 运行时快照和 mapping 数量。
 
 ## 生产边界说明
 
@@ -72,6 +79,7 @@ server:
 - `read-timeout-seconds`、`write-timeout-seconds`、`idle-timeout-seconds` 是 HTTP 连接时间边界，生产环境建议显式开启，避免慢请求或异常连接长期占用资源。
 - 启用 `http.ssl.enable=true` 时，必须同时配置 `http.ssl.certificate` 和 `http.ssl.certificate-key`，并且二者都必须是已存在的普通文件；生产环境建议显式配置 `http.ssl.protocols` 和 `http.ssl.ciphers`，避免依赖运行时默认 TLS 策略。
 - MVC 响应和静态文件发送失败时会记录 warn 日志并关闭 channel，避免失败连接继续占用资源；同时可通过 `NettyServerBootstrap#getHttpRuntimeStats()` 读取 HTTP 响应写失败、静态文件拒绝/写失败、idle 关闭、WebSocket handshake/origin 拒绝等轻量运行时计数。
+- 管理端点默认关闭；生产环境如需开启，建议仅在内网、网关保护或独立监听策略下暴露，并按实际运维规范配置 `health-path` / `status-path`。
 
 ## 兼容策略
 

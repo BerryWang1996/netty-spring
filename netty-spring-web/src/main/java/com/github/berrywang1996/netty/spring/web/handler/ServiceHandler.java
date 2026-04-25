@@ -16,6 +16,8 @@
 
 package com.github.berrywang1996.netty.spring.web.handler;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
 import com.github.berrywang1996.netty.spring.web.context.HttpRuntimeRecorder;
 import com.github.berrywang1996.netty.spring.web.context.WebMappingSupporter;
@@ -41,8 +43,10 @@ import java.lang.reflect.Method;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.LinkedHashMap;
 import java.util.Date;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.RejectedExecutionException;
 
 import static io.netty.handler.codec.http.HttpResponseStatus.OK;
@@ -58,6 +62,8 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
     public static final AttributeKey<String> SESSION_ID_IN_CHANNEL = AttributeKey.valueOf("sessionId");
 
     public static final AttributeKey<FullHttpRequest> REQUEST_IN_CHANNEL = AttributeKey.valueOf("request");
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final WebMappingSupporter supporter;
 
@@ -144,6 +150,10 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         FullHttpRequest request = (FullHttpRequest) msg;
         String baseUri = getBaseUri(request);
 
+        if (handleManagementRequest(ctx, request, baseUri)) {
+            return;
+        }
+
         // get mapping resolver
         log.debug("Get request mapping resolver.");
         AbstractMappingResolver mappingResolver = getMappingResolver(baseUri);
@@ -191,6 +201,82 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
                                 null);
                 ServiceHandlerUtil.sendError(ctx, (FullHttpRequest) msg, errorMsg);
             }
+        }
+    }
+
+    private boolean handleManagementRequest(ChannelHandlerContext ctx,
+                                            FullHttpRequest request,
+                                            String baseUri) throws JsonProcessingException {
+        NettyServerStartupProperties.Management managementProperties = getManagementProperties();
+        if (managementProperties == null || !managementProperties.isEnable()) {
+            return false;
+        }
+        if (!isManagementPath(managementProperties, baseUri)) {
+            return false;
+        }
+        if (!HttpMethod.GET.equals(request.method())) {
+            ServiceHandlerUtil.HttpErrorMessage errorMsg =
+                    new ServiceHandlerUtil.HttpErrorMessage(
+                            HttpResponseStatus.METHOD_NOT_ALLOWED,
+                            request.uri(),
+                            null,
+                            null);
+            ServiceHandlerUtil.sendError(ctx, request, errorMsg);
+            return true;
+        }
+        if (matchesPath(managementProperties.getHealthPath(), baseUri)) {
+            sendJson(ctx, request, healthBody());
+            return true;
+        }
+        sendJson(ctx, request, statusBody());
+        return true;
+    }
+
+    private boolean isManagementPath(NettyServerStartupProperties.Management managementProperties, String baseUri) {
+        return matchesPath(managementProperties.getHealthPath(), baseUri)
+                || matchesPath(managementProperties.getStatusPath(), baseUri);
+    }
+
+    private boolean matchesPath(String configuredPath, String baseUri) {
+        return StringUtil.isNotBlank(configuredPath) && configuredPath.equals(baseUri);
+    }
+
+    private Map<String, Object> healthBody() {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", "UP");
+        return body;
+    }
+
+    private Map<String, Object> statusBody() {
+        Map<String, Object> body = healthBody();
+        body.put("handler", supporter == null ? null : supporter.getRuntimeStats());
+        body.put("http", supporter == null ? null : supporter.getHttpRuntimeStats());
+        body.put("mappingCount", supporter == null ? 0 : supporter.getMappingResolverMap().size());
+        return body;
+    }
+
+    private void sendJson(ChannelHandlerContext ctx, FullHttpRequest request, Map<String, Object> body)
+            throws JsonProcessingException {
+        byte[] content = OBJECT_MAPPER.writeValueAsBytes(body);
+        FullHttpResponse response = new DefaultFullHttpResponse(
+                HTTP_1_1,
+                OK,
+                ctx.alloc().buffer(content.length).writeBytes(content));
+        response.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/json; charset=UTF-8");
+        HttpUtil.setContentLength(response, content.length);
+        ChannelFuture future = ctx.writeAndFlush(response);
+        future.addListener(new ChannelFutureListener() {
+            @Override
+            public void operationComplete(ChannelFuture future) {
+                if (!future.isSuccess()) {
+                    getHttpRuntimeRecorder().recordHttpResponseWriteFailure();
+                    log.warn("Write management response failed, close channel. uri={}", request.uri(), future.cause());
+                    future.channel().close();
+                }
+            }
+        });
+        if (!HttpUtil.isKeepAlive(request)) {
+            future.addListener(ChannelFutureListener.CLOSE);
         }
     }
 
@@ -449,6 +535,12 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
             return HttpRuntimeRecorder.noop();
         }
         return this.supporter.getHttpRuntimeRecorder();
+    }
+
+    private NettyServerStartupProperties.Management getManagementProperties() {
+        return this.supporter == null || this.supporter.getStartupProperties() == null
+                ? null
+                : this.supporter.getStartupProperties().getManagement();
     }
 
 }

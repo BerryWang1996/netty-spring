@@ -32,7 +32,8 @@
    `read-timeout-seconds` / `write-timeout-seconds` / `idle-timeout-seconds` 在生产环境有明确配置，不能让异常连接长期占用资源。
    启用 SSL 时证书和私钥文件必须在启动期通过校验，不能把缺失证书留到运行期失败；生产环境需要评估是否显式配置 `http.ssl.protocols` 和 `http.ssl.ciphers`。
    WebSocket 生产部署需要显式评估 `allowed-origins`，避免默认兼容模式误放跨站握手。
-   MVC 响应、静态文件发送、WebSocket 写失败和过载拒绝有统一日志、关闭策略、计数或指标；至少确认 `getHandlerRuntimeStats()`、`getHttpRuntimeStats()` 和 MessageSender runtime stats 的关键计数可读。
+   MVC 响应、静态文件发送、WebSocket 写失败和过载拒绝有统一日志、关闭策略、计数或指标；至少确认 `getHandlerRuntimeStats()`、`getHttpRuntimeStats()`、MessageSender runtime stats 和内置 health/status 管理端点的关键计数可读。
+   如启用 `server.netty.management.enable=true`，必须确认管理端点只在受保护网络、网关或等效访问控制下暴露。
    handler/sender 线程池配置有启动期校验，非法容量和 `max < core` 不会静默兜底。
    发布前完成依赖漏洞扫描，处理或记录 GitHub Dependabot/等效扫描告警。
    README、配置文档和 demo 明确安全接入方式，不把 RC 候选描述为企业生产默认部署版本。

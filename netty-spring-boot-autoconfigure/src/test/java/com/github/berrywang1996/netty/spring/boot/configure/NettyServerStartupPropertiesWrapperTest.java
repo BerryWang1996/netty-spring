@@ -120,4 +120,22 @@ class NettyServerStartupPropertiesWrapperTest {
                             .isEqualTo("https://a.example,https://b.example");
                 });
     }
+
+    @Test
+    void managementNamespaceBindsHealthAndStatusPaths() {
+        this.contextRunner
+                .withPropertyValues(
+                        "server.netty.management.enable=true",
+                        "server.netty.management.health-path=/internal/health",
+                        "server.netty.management.status-path=/internal/status")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    NettyServerStartupPropertiesWrapper properties =
+                            context.getBean(NettyServerStartupPropertiesWrapper.class);
+
+                    assertThat(properties.getManagement().isEnable()).isTrue();
+                    assertThat(properties.getManagement().getHealthPath()).isEqualTo("/internal/health");
+                    assertThat(properties.getManagement().getStatusPath()).isEqualTo("/internal/status");
+                });
+    }
 }

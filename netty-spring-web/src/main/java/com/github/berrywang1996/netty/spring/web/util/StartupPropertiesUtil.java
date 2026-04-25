@@ -57,6 +57,7 @@ public class StartupPropertiesUtil {
         validateSslProperties(httpProperties.getSsl());
         validateHttpTimeoutProperties(httpProperties);
         validateWebSocketExecutorProperties(properties.getWebSocket());
+        validateManagementProperties(properties.getManagement());
 
 //        createDirectory(properties.getInfoLocation());
 //        log.info("Netty server {} directory is \"{}\"", "info", properties.getInfoLocation());
@@ -117,6 +118,26 @@ public class StartupPropertiesUtil {
                 webSocketProperties.getHandlerQueueCapacity());
         if (webSocketProperties.getHandlerPermitLimit() < 0) {
             throw new IllegalArgumentException("Websocket handler permit limit must greater than or equal to 0.");
+        }
+    }
+
+    private static void validateManagementProperties(NettyServerStartupProperties.Management managementProperties) {
+        if (managementProperties == null || !managementProperties.isEnable()) {
+            return;
+        }
+        validateManagementPath("management health path", managementProperties.getHealthPath());
+        validateManagementPath("management status path", managementProperties.getStatusPath());
+        if (managementProperties.getHealthPath().equals(managementProperties.getStatusPath())) {
+            throw new IllegalArgumentException("management health path and status path must not be same.");
+        }
+    }
+
+    private static void validateManagementPath(String name, String path) {
+        if (StringUtil.isBlank(path)) {
+            throw new IllegalArgumentException(name + " should not be blank when management is enabled.");
+        }
+        if (!path.startsWith("/")) {
+            throw new IllegalArgumentException(name + " should start with '/'.");
         }
     }
 

@@ -6,7 +6,7 @@
 
 - `1.0.2` 已完成 `P3.2` 发布后治理收口，可作为当前 `1.0.x` 稳定发布版本。
 - 开发线已切到 `1.1.0-SNAPSHOT`，`P4` 已推进到第五刀：resolver 延迟获取 controller bean，先消除 `MessageSenderSupport` 构造注入仍依赖 `@Lazy` 的启动期循环依赖；新增 `netty-spring-boot-autoconfigure` 共用模块，把三套 Starter 里重复的 `nettyServer + properties` 自动装配骨架先收敛到一处；再把 `MessageSenderSupport` 自动配置并回公共 autoconfigure，同时打通 `server.netty.mvc.enable` / `server.netty.websocket.enable` 开关，用 demo 与 starter 回归测试明确 `MessageSender` 接口注入语义，并开始把 HTTP/file/gzip/ssl 配置收敛到 `server.netty.http.*` 且保留旧键兼容。
-- 当前代码已具备框架功能层面的 `1.1.0-RC1` 候选条件：P4 配置边界、自动配置兼容性、`@Lazy` 依赖消除和全量 `mvn test` 均已完成验证；`P4.1` 生产准入硬化已继续推进，已覆盖静态文件根目录逃逸保护、HTTP 聚合/解码/超时边界配置化、TLS 证书/协议/套件配置、WebSocket Origin 白名单、MVC/静态文件写失败关闭、HTTP 失败路径运行时统计，以及 handler/sender 线程池配置校验。但整体仍未达到企业生产环境默认部署标准，正式版应继续补齐剩余安全扩展、指标/健康检查和依赖治理门禁。
+- 当前代码已具备框架功能层面的 `1.1.0-RC1` 候选条件：P4 配置边界、自动配置兼容性、`@Lazy` 依赖消除和全量 `mvn test` 均已完成验证；`P4.1` 生产准入硬化已继续推进，已覆盖静态文件根目录逃逸保护、HTTP 聚合/解码/超时边界配置化、TLS 证书/协议/套件配置、WebSocket Origin 白名单、MVC/静态文件写失败关闭、HTTP 失败路径运行时统计、内置 health/status 管理端点，以及 handler/sender 线程池配置校验。但整体仍未达到企业生产环境默认部署标准，正式版应继续补齐剩余安全扩展、指标深化和依赖治理门禁。
 - 后续计划应以“先稳住发布面，再统一入口，再扩能力”为顺序，这比直接进入产品功能扩展更符合仓库当前状态。
 
 ## 当前发版判断
@@ -35,10 +35,10 @@ P4.1 首批已完成：
 仍需继续补齐的生产准入缺口：
 
 - HTTP 请求容量与超时边界已有基础配置入口：body/request line/header/chunk 上限和 idle/read/write timeout 已配置化；后续需要继续结合真实部署压测调整推荐默认值和示例。
-- HTTP/静态文件失败路径已有轻量运行时计数：MVC 写失败、静态文件拒绝/写失败、idle 关闭、WebSocket handshake/origin 拒绝可通过 `NettyServerBootstrap#getHttpRuntimeStats()` 读取；后续仍需接入 Micrometer/Actuator 或状态端点，并补齐关闭原因维度。
+- HTTP/静态文件失败路径已有轻量运行时计数：MVC 写失败、静态文件拒绝/写失败、idle 关闭、WebSocket handshake/origin 拒绝可通过 `NettyServerBootstrap#getHttpRuntimeStats()` 读取；内置 health/status 管理端点已提供运维读取入口，后续仍需接入 Micrometer/Actuator，并补齐关闭原因维度。
 - 线程池配置校验已有基础约束，后续还需要把校验错误接入更清晰的 starter 启动失败诊断和文档示例。
 - 安全基线尚未完全产品化：TLS 证书文件校验和 Origin 白名单已补齐，但目前仍主要依赖业务侧 `ON_HANDSHAKE` 自行拒绝连接，框架层还缺少标准握手鉴权扩展、完整 CORS 策略、TLS 协议/套件配置和安全示例。
-- 可观测性仍停留在快照/API 层：已有 handler/http/sender runtime stats，但还没有 Micrometer/Actuator 指标、健康检查、拒绝/过载/写失败统一事件和运维友好的暴露面。
+- 可观测性已从快照/API 层推进到轻量管理端点：已有 handler/http/sender runtime stats，且 handler/http 可通过内置 health/status 读取；后续还缺 Micrometer/Actuator 指标、拒绝/过载/写失败统一事件和更完整的关闭原因维度。
 - 依赖与供应链治理未纳入发布门禁：根 POM 仍使用 Spring Boot `2.7.18`，且 GitHub push 时已提示默认分支存在 Dependabot 漏洞告警。正式生产发布前需要完成依赖扫描、SBOM 或等效清单、漏洞分级处理和升级策略。
 - Demo 仍是基础示例：demo 中仍有 `printStackTrace` 和极简 echo/send 用法，不足以作为企业接入、安全配置和运维排障示范。
 
@@ -62,7 +62,7 @@ P4.1 首批已完成：
 - `server.netty.mvc.enable` / `server.netty.websocket.enable` 已接入真实 mapping 初始化路径，并补了 starter 级回归测试验证开关生效。
 - `server.netty.http.*` 已作为 HTTP/file/gzip/ssl 的推荐新命名空间引入，旧的 `server.netty.gzip.*`、`server.netty.file-location` 等顶层配置继续兼容。
 - 已补 `server.netty.http.*` 新旧配置绑定测试，覆盖静态文件、gzip、SSL；并补 `StartupPropertiesUtil` 运行时校验测试，确认静态文件路径读取统一走 HTTP 配置视图。
-- `P4.1` 已继续落地生产硬化：静态文件根目录逃逸保护、HTTP 聚合/解码/超时边界配置化、TLS 证书/协议/套件配置、WebSocket Origin 白名单、MVC/静态文件写失败关闭、HTTP 失败路径运行时计数、handler 默认线程/permit 收敛、handler/sender 配置校验均已有回归测试。
+- `P4.1` 已继续落地生产硬化：静态文件根目录逃逸保护、HTTP 聚合/解码/超时边界配置化、TLS 证书/协议/套件配置、WebSocket Origin 白名单、MVC/静态文件写失败关闭、HTTP 失败路径运行时计数、内置 health/status 管理端点、handler 默认线程/permit 收敛、handler/sender 配置校验均已有回归测试。
 - 当前仓库已在本地 `GraalVM JDK 17.0.11 + Maven 3.9.9` 环境完成全量 `mvn test` 验证。
 
 ### 代码里已经暴露出的下一阶段问题
@@ -156,6 +156,8 @@ P4.1 首批已完成：
 - 第五刀新增回归覆盖 Origin 不匹配拒绝、匹配放行、`*` 放行，以及 Boot 配置绑定。
 - 已完成第六刀：`server.netty.http.ssl.protocols` / `server.netty.http.ssl.ciphers` 接入 TLS 协议和 cipher suite 白名单，默认保持 Netty/JDK 行为，生产环境可显式收紧 TLS 策略。
 - 第六刀新增回归覆盖 TLS 协议/套件配置绑定和逗号/空白分隔解析。
+- 已完成第七刀：`server.netty.management.*` 接入内置 health/status 管理端点，默认关闭，开启后可读取健康状态和 handler/http 运行时快照。
+- 第七刀新增回归覆盖管理端点配置绑定、路径校验、health 响应和 status runtime snapshot 响应。
 
 重点项：
 
@@ -163,7 +165,7 @@ P4.1 首批已完成：
 - 继续补齐 HTTP/MVC 写失败处理：MVC 响应和静态文件发送失败已处理，轻量失败计数已接入 `getHttpRuntimeStats()`，后续补关闭原因维度和指标暴露。
 - 继续收敛线程池默认值与配置校验：handler 默认 core/max/permit 已调整，handler/sender 已补基础启动期校验，后续补更完整的错误提示和 starter 诊断。
 - 建立安全基线：TLS 证书路径校验、TLS 协议/套件配置和 Origin 白名单已补齐；后续继续提供握手鉴权扩展点、完整 CORS 策略、安全失败响应策略和安全接入示例。
-- 建立生产观测基线：短期已通过运行时快照暴露 handler/http/sender 计数；后续通过 Micrometer/Actuator 或轻量状态端点暴露连接数、拒绝数、写失败数、线程池状态、广播耗时和关闭原因。
+- 建立生产观测基线：短期已通过运行时快照和内置 health/status 管理端点暴露 handler/http 计数与线程池状态；后续通过 Micrometer/Actuator 暴露连接数、拒绝数、写失败数、广播耗时和关闭原因。
 - 建立依赖治理门禁：补依赖漏洞扫描流程、SBOM 或等效依赖清单、Dependabot 告警处理规则和版本升级策略。
 
 完成标准：

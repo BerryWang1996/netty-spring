@@ -82,6 +82,11 @@ public class NettyServerStartupProperties {
      */
     private WebSocket webSocket = new WebSocket();
 
+    /**
+     * Netty server lightweight management endpoints.
+     */
+    private Management management = new Management();
+
     public String getApplicationName() {
         return applicationName;
     }
@@ -172,6 +177,14 @@ public class NettyServerStartupProperties {
 
     public void setWebSocket(WebSocket webSocket) {
         this.webSocket = webSocket;
+    }
+
+    public Management getManagement() {
+        return management;
+    }
+
+    public void setManagement(Management management) {
+        this.management = management;
     }
 
     public static class Ssl {
@@ -343,6 +356,48 @@ public class NettyServerStartupProperties {
 
         public void setEnable(boolean enable) {
             this.enable = enable;
+        }
+    }
+
+    public static class Management {
+
+        /**
+         * Enable built-in management endpoints.
+         */
+        private boolean enable = false;
+
+        /**
+         * Lightweight health endpoint path.
+         */
+        private String healthPath = "/netty/health";
+
+        /**
+         * Runtime status endpoint path.
+         */
+        private String statusPath = "/netty/status";
+
+        public boolean isEnable() {
+            return enable;
+        }
+
+        public void setEnable(boolean enable) {
+            this.enable = enable;
+        }
+
+        public String getHealthPath() {
+            return healthPath;
+        }
+
+        public void setHealthPath(String healthPath) {
+            this.healthPath = healthPath;
+        }
+
+        public String getStatusPath() {
+            return statusPath;
+        }
+
+        public void setStatusPath(String statusPath) {
+            this.statusPath = statusPath;
         }
     }
 
