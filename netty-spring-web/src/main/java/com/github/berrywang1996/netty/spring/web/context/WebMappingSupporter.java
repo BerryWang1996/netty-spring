@@ -46,15 +46,15 @@ import java.util.concurrent.atomic.AtomicLong;
 public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
 
     private static final int DEFAULT_HANDLER_CORE_POOL_SIZE =
-            Runtime.getRuntime().availableProcessors() * 100 * 2;
+            Math.max(2, Runtime.getRuntime().availableProcessors());
 
     private static final int DEFAULT_HANDLER_MAX_POOL_SIZE =
-            Runtime.getRuntime().availableProcessors() * 100 * 3;
+            Math.max(DEFAULT_HANDLER_CORE_POOL_SIZE, Runtime.getRuntime().availableProcessors() * 2);
 
     private static final long DEFAULT_HANDLER_KEEP_ALIVE_SECONDS = 5L;
 
     private static final int DEFAULT_HANDLER_PERMIT_LIMIT =
-            Runtime.getRuntime().availableProcessors() * 100 * 2;
+            DEFAULT_HANDLER_MAX_POOL_SIZE * 2;
 
     private static final String[] DEFAULT_MAPPING_CLASSES =
             new String[]{

@@ -32,9 +32,12 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -151,9 +154,18 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
                     ServiceHandlerUtil.sendError(ctx, request, errorMsg);
                     return;
                 }
-                String localPath = httpProperties.getFileLocation() + baseUri;
-                localPath = localPath.replace("/", File.separator);
-                handleFile(ctx, (FullHttpRequest) msg, localPath);
+                File localFile = resolveStaticFile(httpProperties.getFileLocation(), baseUri);
+                if (localFile == null) {
+                    ServiceHandlerUtil.HttpErrorMessage errorMsg =
+                            new ServiceHandlerUtil.HttpErrorMessage(
+                                    HttpResponseStatus.FORBIDDEN,
+                                    request.uri(),
+                                    null,
+                                    null);
+                    ServiceHandlerUtil.sendError(ctx, request, errorMsg);
+                    return;
+                }
+                handleFile(ctx, (FullHttpRequest) msg, localFile);
             } else {
                 ServiceHandlerUtil.HttpErrorMessage errorMsg =
                         new ServiceHandlerUtil.HttpErrorMessage(
@@ -261,9 +273,34 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         return uri.substring(0, uri.indexOf("?"));
     }
 
-    private static void handleFile(ChannelHandlerContext ctx, FullHttpRequest msg, String localPath) throws Exception {
+    static File resolveStaticFile(String fileLocation, String requestPath) throws IOException {
+        if (StringUtil.isBlank(fileLocation) || StringUtil.isBlank(requestPath)) {
+            return null;
+        }
+        File root = new File(fileLocation).getCanonicalFile();
+        String decodedPath;
+        try {
+            decodedPath = URLDecoder.decode(requestPath, StandardCharsets.UTF_8.name());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        decodedPath = decodedPath.replace('\\', '/');
+        while (decodedPath.startsWith("/")) {
+            decodedPath = decodedPath.substring(1);
+        }
+        File file = new File(root, decodedPath).getCanonicalFile();
+        if (!isSameOrChild(root, file)) {
+            return null;
+        }
+        return file;
+    }
 
-        File file = new File(localPath);
+    private static boolean isSameOrChild(File root, File file) {
+        return file.toPath().equals(root.toPath()) || file.toPath().startsWith(root.toPath());
+    }
+
+    private static void handleFile(ChannelHandlerContext ctx, FullHttpRequest msg, File file) throws Exception {
+
         if (file.isHidden() || !file.exists() || file.isDirectory() || !file.isFile()) {
             ServiceHandlerUtil.HttpErrorMessage errorMsg =
                     new ServiceHandlerUtil.HttpErrorMessage(

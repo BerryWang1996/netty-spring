@@ -37,12 +37,12 @@ server:
 
 ## Handler 执行模型
 
-- `handler-core-pool-size`：handler 线程池核心线程数。默认值为 `CPU 核数 * 200`。
-- `handler-max-pool-size`：handler 线程池最大线程数。默认值为 `CPU 核数 * 300`。
+- `handler-core-pool-size`：handler 线程池核心线程数。默认值为 `max(2, CPU 核数)`。
+- `handler-max-pool-size`：handler 线程池最大线程数。默认值为 `max(handler-core-pool-size, CPU 核数 * 2)`。
 - `handler-keep-alive-time`：handler 线程空闲存活时间，单位秒。默认值为 `5`。
 - `handler-queue-capacity`：handler 线程池队列容量。
 - `handler-queue-capacity <= 0`：使用 `SynchronousQueue`。
-- `handler-permit-limit`：handler 总准入上限，覆盖运行中与已提交待执行任务。默认值为 `CPU 核数 * 200`。
+- `handler-permit-limit`：handler 总准入上限，覆盖运行中与已提交待执行任务。默认值为 `handler-max-pool-size * 2`。
 
 ## 背压与过载策略
 

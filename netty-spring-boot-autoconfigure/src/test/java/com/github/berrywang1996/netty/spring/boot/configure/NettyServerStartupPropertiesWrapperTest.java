@@ -21,6 +21,7 @@ class NettyServerStartupPropertiesWrapperTest {
                         "server.netty.http.handle-file=true",
                         "server.netty.http.file-location=public",
                         "server.netty.http.info-location=WEB-INF",
+                        "server.netty.http.max-content-length=131072",
                         "server.netty.http.gzip.enable=true",
                         "server.netty.http.gzip.compression-level=7",
                         "server.netty.http.gzip.window-bits=13",
@@ -41,6 +42,7 @@ class NettyServerStartupPropertiesWrapperTest {
                     assertThat(properties.getFileLocation()).isEqualTo("public");
                     assertThat(properties.getHttp().getInfoLocation()).isEqualTo("WEB-INF");
                     assertThat(properties.getInfoLocation()).isEqualTo("WEB-INF");
+                    assertThat(properties.getHttp().getMaxContentLength()).isEqualTo(131072);
                     assertThat(properties.getHttp().getGzip().isEnable()).isTrue();
                     assertThat(properties.getGzip().isEnable()).isTrue();
                     assertThat(properties.getHttp().getGzip().getCompressionLevel()).isEqualTo(7);

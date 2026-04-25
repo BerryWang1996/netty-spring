@@ -28,6 +28,7 @@ server:
     http:
       handle-file: true
       file-location: ./public
+      max-content-length: 65536
       gzip:
         enable: true
         compression-level: 6
@@ -44,6 +45,7 @@ server:
 - `http.handle-file`：未匹配到 MVC/WebSocket mapping 时，是否尝试按静态文件处理。
 - `http.file-location`：静态文件根目录。启用 `handle-file` 时必须配置。
 - `http.info-location`：预留的信息目录配置，当前不参与运行时强校验。
+- `http.max-content-length`：HTTP 聚合请求体最大长度，默认 `65536`；配置小于等于 `0` 时回退默认值。
 - `http.gzip.*`：HTTP 响应压缩配置。
 - `http.ssl.*`：SSL 证书配置。启用 SSL 时会在 Netty channel 初始化阶段读取证书文件。
 

@@ -322,6 +322,11 @@ public class NettyServerStartupProperties {
 
     public class Http {
 
+        /**
+         * Max aggregated HTTP content length in bytes.
+         */
+        private int maxContentLength = 65536;
+
         public boolean isHandleFile() {
             return NettyServerStartupProperties.this.handleFile;
         }
@@ -360,6 +365,14 @@ public class NettyServerStartupProperties {
 
         public void setGzip(Gzip gzip) {
             NettyServerStartupProperties.this.gzip = gzip;
+        }
+
+        public int getMaxContentLength() {
+            return maxContentLength;
+        }
+
+        public void setMaxContentLength(int maxContentLength) {
+            this.maxContentLength = maxContentLength;
         }
     }
 

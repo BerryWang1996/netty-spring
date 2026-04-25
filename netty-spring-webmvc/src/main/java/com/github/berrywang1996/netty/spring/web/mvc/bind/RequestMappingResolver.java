@@ -27,6 +27,8 @@ import com.github.berrywang1996.netty.spring.web.mvc.view.AbstractViewHandler;
 import com.github.berrywang1996.netty.spring.web.util.ServiceHandlerUtil;
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.handler.codec.http.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
@@ -258,7 +260,16 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         if (requestContext.getResponseHeaders() != null) {
             response.headers().setAll(requestContext.getResponseHeaders());
         }
-        ctx.writeAndFlush(response);
+        ChannelFuture writeFuture = ctx.writeAndFlush(response);
+        writeFuture.addListener(new ChannelFutureListener() {
+            @Override
+            public void operationComplete(ChannelFuture future) {
+                if (!future.isSuccess()) {
+                    log.warn("Write http response failed, close channel. uri={}", msg.uri(), future.cause());
+                    future.channel().close();
+                }
+            }
+        });
 
     }
 

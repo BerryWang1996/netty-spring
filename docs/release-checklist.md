@@ -26,6 +26,12 @@
    `server.netty.mvc.enable` / `server.netty.websocket.enable` 与真实 mapping 初始化、sender Bean 装配一致。
    `server.netty.http.*` 新命名空间可用，旧的 HTTP/file/gzip/ssl 顶层配置键继续兼容。
    WebSocket controller 可直接构造注入 `MessageSender` 或 `MessageSenderSupport`，不需要显式 `@Lazy`。
+7. `1.1.0` 正式版还需要确认 P4.1 生产准入门槛：
+   静态文件服务启用时不能通过 `..`、URL 编码或路径规范化绕过根目录。
+   HTTP body/header/超时/TLS 等生产关键参数有配置入口和回归测试。
+   MVC 响应、静态文件发送、WebSocket 写失败和过载拒绝有统一日志、计数或指标。
+   发布前完成依赖漏洞扫描，处理或记录 GitHub Dependabot/等效扫描告警。
+   README、配置文档和 demo 明确安全接入方式，不把 RC 候选描述为企业生产默认部署版本。
 
 ## 发布动作
 

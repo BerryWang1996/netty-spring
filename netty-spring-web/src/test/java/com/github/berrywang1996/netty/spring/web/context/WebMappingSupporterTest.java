@@ -154,6 +154,29 @@ class WebMappingSupporterTest {
     }
 
     @Test
+    void usesConservativeDefaultHandlerExecutorAndPermitProperties() throws Exception {
+        int processors = Runtime.getRuntime().availableProcessors();
+        int expectedCorePoolSize = Math.max(2, processors);
+        int expectedMaxPoolSize = Math.max(expectedCorePoolSize, processors * 2);
+        int expectedPermitLimit = expectedMaxPoolSize * 2;
+        WebMappingSupporter supporter = new WebMappingSupporter(
+                new NettyServerStartupProperties(),
+                null,
+                Collections.<String, AbstractMappingResolver>emptyMap(),
+                null,
+                null);
+
+        try {
+            assertEquals(expectedCorePoolSize, supporter.getExecutor().getCorePoolSize());
+            assertEquals(expectedMaxPoolSize, supporter.getExecutor().getMaximumPoolSize());
+            assertEquals(expectedPermitLimit, supporter.getSemaphore().availablePermits());
+        } finally {
+            supporter.getExecutor().shutdownNow();
+            supporter.getExecutor().awaitTermination(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void shutdownClosesExecutorIdempotently() throws Exception {
         ThreadPoolExecutor executor = new ThreadPoolExecutor(
                 1,

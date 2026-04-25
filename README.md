@@ -18,8 +18,9 @@
 - `P0` 工程基线：已完成。
 - `P1` WebSocket 正确性修复：已完成。
 - `P2` WebSocket 并发与稳定性：已完成，核心限流、线程池配置化、广播背压、错误链路统一、运行时统计、停机时 active session 优雅关闭、重复 start/stop 收口、广播/停机交叉回归、MessageSenderSupport 重启后缓存刷新与停机联动关闭已落地。
-- 当前稳定版本仍是 `1.0.2`，开发线已切到 `1.1.0-SNAPSHOT`；当前代码已通过全量测试，适合作为 `1.1.0-RC1` 候选，暂不建议直接发 `1.1.0` 正式版。
+- 当前稳定版本仍是 `1.0.2`，开发线已切到 `1.1.0-SNAPSHOT`；当前代码已通过全量测试，适合作为 `1.1.0-RC1` 预发布候选，但尚不建议作为企业生产环境默认部署版本。
 - `P4` 已完成主要目标：mapping resolver 延迟获取 controller bean，移除业务侧对 `@Lazy MessageSenderSupport` 的依赖；抽出共用 `netty-spring-boot-autoconfigure` 模块，收敛三套 Starter 里重复的 `nettyServer + properties` 自动装配骨架；把 `MessageSenderSupport` 自动配置并回公共 autoconfigure，同时补上 `server.netty.mvc.enable` / `server.netty.websocket.enable` 开关，明确 starter 场景优先按 `MessageSender` 接口注入，并把 HTTP/file/gzip/ssl 配置收敛到 `server.netty.http.*` 且保留旧键兼容。
+- `P4.1` 已完成首批生产准入硬化：静态文件根目录逃逸保护、`server.netty.http.max-content-length`、MVC 写失败关闭和更保守的 handler 默认线程/permit。
 
 ## 文档
 

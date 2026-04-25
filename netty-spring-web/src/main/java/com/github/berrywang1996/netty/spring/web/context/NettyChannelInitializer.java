@@ -41,6 +41,8 @@ import java.util.Map;
 @Slf4j
 public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
 
+    private static final int DEFAULT_MAX_HTTP_CONTENT_LENGTH = 65536;
+
     private final NettyServerBootstrap nettyServerBootstrap;
 
     @Getter
@@ -92,9 +94,16 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
                     httpProperties.getGzip().getTypes())
             );
         }
-        p.addLast(new HttpObjectAggregator(65536));
+        p.addLast(new HttpObjectAggregator(resolveMaxHttpContentLength(httpProperties)));
         p.addLast(new ChunkedWriteHandler());
         p.addLast(new ServiceHandler(supporter));
+    }
+
+    static int resolveMaxHttpContentLength(NettyServerStartupProperties.Http httpProperties) {
+        if (httpProperties == null || httpProperties.getMaxContentLength() <= 0) {
+            return DEFAULT_MAX_HTTP_CONTENT_LENGTH;
+        }
+        return httpProperties.getMaxContentLength();
     }
 
 }
