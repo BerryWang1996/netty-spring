@@ -54,10 +54,15 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
         this.startupProperties = startupProperties;
         this.applicationContext = applicationContext;
 
-        Map<String, Object> beans = applicationContext.getBeansWithAnnotation(Component.class);
+        String[] beanNames = applicationContext.getBeanNamesForAnnotation(Component.class);
         log.debug("Find method had annotation \"DeleteMapping\" \"GetMapping\" \"PostMapping\" \"PutMapping\" or " +
                 "\"RequestMapping\"");
-        for (Map.Entry<String, Object> controllerBean : beans.entrySet()) {
+        for (String beanName : beanNames) {
+            Class<?> beanType = applicationContext.getType(beanName);
+            if (beanType == null) {
+                log.debug("Skip bean {} because bean type is not resolvable yet.", beanName);
+                continue;
+            }
             /*
                find method had annotation
                    DeleteMapping
@@ -66,7 +71,7 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
                    PutMapping
                    RequestMapping
              */
-            Method[] methods = controllerBean.getValue().getClass().getMethods();
+            Method[] methods = beanType.getMethods();
             for (Method method : methods) {
 
                 RequestMapping annotation = AnnotatedElementUtils.findMergedAnnotation(method, RequestMapping.class);
@@ -122,7 +127,7 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
                                 }
                             }
                             this.resolverMap.put(url, new RequestMappingResolver(url, methodMap,
-                                    controllerBean.getValue(), getViewHandler(method)));
+                                    this.applicationContext, beanName, getViewHandler(method)));
 
                         } else {
 
@@ -138,7 +143,7 @@ public class RequestMappingSupporter implements MappingSupporter<RequestMappingR
                                 }
                             }
                             this.resolverMap.put(url, new RequestMappingResolver(url, methodMap,
-                                    controllerBean.getValue(), getViewHandler(method)));
+                                    this.applicationContext, beanName, getViewHandler(method)));
 
                         }
                     }

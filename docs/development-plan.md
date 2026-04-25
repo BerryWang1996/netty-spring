@@ -1,12 +1,20 @@
 # 开发计划与阶段状态
 
-更新时间：2026-04-24
+更新时间：2026-04-25
 
 ## 当前结论
 
 - `1.0.2` 已完成 `P3.2` 发布后治理收口，可作为当前 `1.0.x` 稳定发布版本。
-- 当前代码最值得优先推进的，不再是继续堆 WebSocket 新功能，而是发布后工程化治理和 Starter 收敛。
+- 开发线已切到 `1.1.0-SNAPSHOT`，`P4` 已推进到第五刀：resolver 延迟获取 controller bean，先消除 `MessageSenderSupport` 构造注入仍依赖 `@Lazy` 的启动期循环依赖；新增 `netty-spring-boot-autoconfigure` 共用模块，把三套 Starter 里重复的 `nettyServer + properties` 自动装配骨架先收敛到一处；再把 `MessageSenderSupport` 自动配置并回公共 autoconfigure，同时打通 `server.netty.mvc.enable` / `server.netty.websocket.enable` 开关，用 demo 与 starter 回归测试明确 `MessageSender` 接口注入语义，并开始把 HTTP/file/gzip/ssl 配置收敛到 `server.netty.http.*` 且保留旧键兼容。
+- 当前代码已具备 `1.1.0-RC1` 候选条件：P4 配置边界、自动配置兼容性、`@Lazy` 依赖消除和全量 `mvn test` 均已完成验证；但仍不建议直接发 `1.1.0` 正式版，正式版应在 RC 后无新增 P1/P2 finding 再切版本发布。
 - 后续计划应以“先稳住发布面，再统一入口，再扩能力”为顺序，这比直接进入产品功能扩展更符合仓库当前状态。
+
+## 当前发版判断
+
+- `1.0.x`：`1.0.2` 仍是当前可发布/可回退的稳定线。
+- `1.1.0-SNAPSHOT`：当前 P4 主要开发已完成，适合先形成开发提交；暂不建议直接打 `v1.1.0` 正式 tag。
+- `1.1.0-RC1`：当前技术前置条件已满足；若要进入 RC 发布流，建议先提交当前开发线，再将版本号切到 `1.1.0-RC1`、全量测试、打 `v1.1.0-RC1` tag。
+- 可以进入 `1.1.0` 正式版的前置条件：RC 后没有新增 P1/P2 级 review finding，README/配置文档/发布检查清单与代码一致，版本号从 `1.1.0-SNAPSHOT` 切到 `1.1.0` 后完成全量测试。
 
 ## 当前代码状态总结
 
@@ -16,13 +24,20 @@
 - `netty-spring-websocket` 已完成握手失败保护、握手成功后发布 session、错误路径统一、发送失败关闭链路、连接数限制、帧大小限制、广播背压策略和停机优雅关闭。
 - `NettyServerBootstrap.stop()` 已具备资源回收、active websocket session 关闭、重复 stop 幂等和 stop/start 后 runtime 重建能力。
 - `MessageSenderSupport` 已补齐空实现退化、重启后缓存刷新和停机联动关闭。
+- mapping resolver 已支持按 bean name 延迟解析 controller，业务侧 websocket controller 可直接构造注入 `MessageSender` 或 `MessageSenderSupport`，不再需要显式 `@Lazy`。
+- Starter 已抽出共用 `netty-spring-boot-autoconfigure` 模块，`NettyServerBootstrapConfigure` / `NettyServerStartupPropertiesWrapper` 不再在三个 Starter 中各维护一份完全相同的实现。
+- `MessageSenderSupport` 自动配置已统一回公共 autoconfigure，Starter 自身不再重复持有 `spring.factories` 和 sender 配置骨架。
+- `MessageSenderSupport` 默认 Bean 已同时暴露 `messageSenderSupport` / `messageSender` 名称，并在用户自定义 `MessageSender` Bean 时正确 back off，业务侧可以优先按接口注入。
+- `server.netty.mvc.enable` / `server.netty.websocket.enable` 已接入真实 mapping 初始化路径，并补了 starter 级回归测试验证开关生效。
+- `server.netty.http.*` 已作为 HTTP/file/gzip/ssl 的推荐新命名空间引入，旧的 `server.netty.gzip.*`、`server.netty.file-location` 等顶层配置继续兼容。
+- 已补 `server.netty.http.*` 新旧配置绑定测试，覆盖静态文件、gzip、SSL；并补 `StartupPropertiesUtil` 运行时校验测试，确认静态文件路径读取统一走 HTTP 配置视图。
 - 当前仓库已在本地 `GraalVM JDK 17.0.11 + Maven 3.9.9` 环境完成全量 `mvn test` 验证。
 
 ### 代码里已经暴露出的下一阶段问题
 
-- 三个 Starter 仍然各自维护一套近似重复的 `NettyServerBootstrapConfigure` 和 `NettyServerStartupPropertiesWrapper`。
 - Starter 层虽然已经有最小集成测试，但覆盖面仍偏基础，后续自动配置收敛时还需要补更多装配/兼容场景。
-- controller 在构造注入 `MessageSenderSupport` 时，当前仍可能因为 `NettyServerBootstrap.start()` 阶段会通过 `applicationContext.getBeansWithAnnotation(Component.class)` 提前实例化组件而触发循环依赖，demo 里仍需要 `@Lazy` 规避。
+- Starter 入口已经集中到公共 autoconfigure，`server.netty.http.*` 也已承接 HTTP/file/gzip/ssl 配置；正式 `1.1.0` 前仍建议通过 RC 阶段继续观察真实项目的配置兼容性。
+- `MessageSender` 接口注入语义已经通过 demo 和 starter 回归测试固化，后续重点转为自定义 Bean、开关禁用、无 websocket mapping 等 starter 组合场景的验收。
 - WebSocket API 仍偏底层，业务侧主要围绕 `HttpRequest`、`WebSocketFrame`、`MessageSession` 直接编程，还缺少更高层的鉴权、编解码和会话访问抽象。
 - 可观测性目前主要是运行时快照和日志，还没有指标、健康检查、运维友好的暴露面。
 - Demo 只覆盖了基础 HTTP 和简单 WebSocket echo/send，还不足以支撑 `1.x` 阶段的产品能力演示和回归验证。
@@ -78,10 +93,10 @@
 
 重点项：
 
-- 统一配置入口，明确 `server.netty.*` 与 `server.netty.websocket.*` 的边界。
+- 统一配置入口，明确 `server.netty.*`、`server.netty.http.*` 与 `server.netty.websocket.*` 的边界。
 - 收敛重复的 `NettyServerBootstrapConfigure` / `NettyServerStartupPropertiesWrapper`。
 - 明确 MVC/WebSocket 是否启用的开关，而不是依赖模块存在与否隐式决定行为。
-- 统一 `MessageSender` / `MessageSenderSupport` 的 Bean 暴露方式。
+- 统一 `MessageSender` / `MessageSenderSupport` 的 Bean 暴露方式，并明确推荐业务侧优先面向接口注入。
 - 调整 mapping 扫描与 resolver 持有模型，避免在 `nettyServer` 启动扫描阶段提前实例化 controller，消除业务侧注入 `MessageSenderSupport` 时必须显式 `@Lazy` 的要求。
 - 避免多个 Starter 中同包同名自动配置类长期并行带来的维护成本。
 
@@ -89,7 +104,7 @@
 
 - Starter 配置入口单一且文档一致。
 - 自动配置职责边界清晰，重复代码明显减少。
-- controller 可以直接构造注入 `MessageSenderSupport`，而不再依赖 `@Lazy` 作为循环依赖规避手段。
+- controller 可以直接构造注入 `MessageSender` 或 `MessageSenderSupport`，而不再依赖 `@Lazy` 作为循环依赖规避手段。
 - 引入或移除某个 Starter 时，行为差异可预测、可测试。
 
 ### P5 WebSocket 产品能力增强
@@ -156,7 +171,9 @@
 - `1.0.0`：已发布基线，对应 `P0/P1/P2` 收口结果。
 - `1.0.1`：`P3.1`，先修 Starter 启动失败传播、补 Starter 最小集成测试和 demo smoke test。
 - `1.0.2`：已发布，完成 `P3.2` 的发布清单、异常 stop/startup failure 清理回归和 `1.0.x` 维护基线。
-- `1.1.0`：`P4`，Starter 收敛与配置模型统一，并解决 `MessageSenderSupport` 注入仍依赖 `@Lazy` 的启动期循环依赖问题。这一阶段会触及配置入口、自动配置结构和 resolver 持有模型，适合进入新的 minor 版本。
+- `1.1.0-SNAPSHOT`：当前开发线，已完成 `P4` 主要目标，包含 resolver 延迟取 bean、`MessageSenderSupport` 构造注入去 `@Lazy`、`netty-spring-boot-autoconfigure` 共用模块抽取、MVC/WebSocket enable 开关接线、`MessageSender` 接口注入语义固化，以及 `server.netty.http.*` 子命名空间引入并兼容旧顶层配置键。
+- `1.1.0-RC1`：建议作为下一次发版前候选版本，用于承接 P4 已完成内容的预发布验收。
+- `1.1.0`：目标发布版本，完成 Starter 收敛与配置模型统一。这一阶段触及配置入口、自动配置结构和兼容模型，适合进入新的 minor 版本。
 - `1.2.0`：`P5`，WebSocket 产品能力增强，以新增能力为主。
 - `1.3.0`：`P6`，可观测与运维能力建设。
 - `1.3.x`：`P7`，demo 和文档体系持续补齐，跟随能力版本滚动完善，而不是等到最后一次性补文档。
@@ -185,7 +202,7 @@
 - 提炼三个 Starter 中重复的 bootstrap/configure/wrapper 逻辑。
 - 明确 `server.netty.*`、`server.netty.http.*`、`server.netty.websocket.*` 的配置边界。
 - 对外保留兼容策略，避免因为配置收敛直接打破 `1.0.x` 使用方式。
-- 统一 `MessageSender`、`MessageSenderSupport` 和 MVC/WebSocket 开关的装配语义。
+- 统一 `MessageSender`、`MessageSenderSupport` 和 MVC/WebSocket 开关的装配语义，并继续梳理 `server.netty.*` 的子命名空间边界。
 
 通过标准：
 

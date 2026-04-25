@@ -19,6 +19,7 @@ package com.github.berrywang1996.netty.spring.web.context;
 import com.github.berrywang1996.netty.spring.web.handler.CompressorHandler;
 import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
+import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.socket.SocketChannel;
@@ -53,12 +54,12 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
     public NettyChannelInitializer(NettyServerBootstrap nettyServerBootstrap) throws Exception {
 
         this.nettyServerBootstrap = nettyServerBootstrap;
+        NettyServerStartupProperties.Http httpProperties = nettyServerBootstrap.getStartupProperties().getHttp();
 
         // Configure SSL
-        if (nettyServerBootstrap.getStartupProperties().getSsl() != null
-                && nettyServerBootstrap.getStartupProperties().getSsl().isEnable()) {
-            File certificateFile = new File(nettyServerBootstrap.getStartupProperties().getSsl().getCertificate());
-            File privateKeyFile = new File(nettyServerBootstrap.getStartupProperties().getSsl().getCertificateKey());
+        if (httpProperties.getSsl() != null && httpProperties.getSsl().isEnable()) {
+            File certificateFile = new File(httpProperties.getSsl().getCertificate());
+            File privateKeyFile = new File(httpProperties.getSsl().getCertificateKey());
             sslCtx = SslContextBuilder.forServer(certificateFile, privateKeyFile).build();
             log.debug("Enable ssl, certificate file:{}, private key file:{}",
                     certificateFile.getPath(),
@@ -77,17 +78,18 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
     @Override
     protected void initChannel(SocketChannel ch) {
         ChannelPipeline p = ch.pipeline();
+        NettyServerStartupProperties.Http httpProperties = nettyServerBootstrap.getStartupProperties().getHttp();
         if (sslCtx != null) {
             p.addLast(sslCtx.newHandler(ch.alloc()));
         }
         p.addLast(new HttpServerCodec());
-        if (nettyServerBootstrap.getStartupProperties().getGzip().isEnable()) {
+        if (httpProperties.getGzip().isEnable()) {
             p.addLast(new CompressorHandler(
-                    nettyServerBootstrap.getStartupProperties().getGzip().getCompressionLevel(),
-                    nettyServerBootstrap.getStartupProperties().getGzip().getWindowBits(),
-                    nettyServerBootstrap.getStartupProperties().getGzip().getMemLevel(),
-                    nettyServerBootstrap.getStartupProperties().getGzip().getContentSizeThreshold(),
-                    nettyServerBootstrap.getStartupProperties().getGzip().getTypes())
+                    httpProperties.getGzip().getCompressionLevel(),
+                    httpProperties.getGzip().getWindowBits(),
+                    httpProperties.getGzip().getMemLevel(),
+                    httpProperties.getGzip().getContentSizeThreshold(),
+                    httpProperties.getGzip().getTypes())
             );
         }
         p.addLast(new HttpObjectAggregator(65536));

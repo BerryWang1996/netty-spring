@@ -29,6 +29,7 @@ import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.*;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationContext;
 import org.springframework.core.LocalVariableTableParameterNameDiscoverer;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.util.PathMatcher;
@@ -57,7 +58,34 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
                                   AbstractViewHandler viewHandler) {
         super(url, methods, invokeRef);
         this.viewHandler = viewHandler;
+        this.isRestfulUrl = resolveRestfulUrl(methods);
+        if (this.isRestfulUrl) {
+            this.pathMatcher = new AntPathMatcher();
+            this.pathPattern = url;
+        } else {
+            this.pathMatcher = null;
+            this.pathPattern = null;
+        }
+    }
 
+    public RequestMappingResolver(String url,
+                                  Map<HttpRequestMethod, Method> methods,
+                                  ApplicationContext applicationContext,
+                                  String invokeBeanName,
+                                  AbstractViewHandler viewHandler) {
+        super(url, methods, applicationContext, invokeBeanName);
+        this.viewHandler = viewHandler;
+        this.isRestfulUrl = resolveRestfulUrl(methods);
+        if (this.isRestfulUrl) {
+            this.pathMatcher = new AntPathMatcher();
+            this.pathPattern = url;
+        } else {
+            this.pathMatcher = null;
+            this.pathPattern = null;
+        }
+    }
+
+    private boolean resolveRestfulUrl(Map<HttpRequestMethod, Method> methods) {
         boolean isRestfulUrlFlag = false;
 
         end:
@@ -72,18 +100,7 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
                 }
             }
         }
-
-        if (isRestfulUrlFlag) {
-            isRestfulUrl = true;
-            pathMatcher = new AntPathMatcher();
-            pathPattern = url;
-
-        } else {
-            isRestfulUrl = false;
-            pathMatcher = null;
-            pathPattern = null;
-        }
-
+        return isRestfulUrlFlag;
     }
 
     /**

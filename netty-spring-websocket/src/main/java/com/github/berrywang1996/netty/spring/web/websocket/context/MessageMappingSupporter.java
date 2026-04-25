@@ -53,13 +53,18 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         this.applicationContext = applicationContext;
         this.connectionSemaphore = initConnectionSemaphore(startupProperties);
 
-        Map<String, Object> beans = applicationContext.getBeansWithAnnotation(Component.class);
+        String[] beanNames = applicationContext.getBeanNamesForAnnotation(Component.class);
         log.debug("Find method had annotation \"MessageMapping\"");
-        for (Map.Entry<String, Object> controllerBean : beans.entrySet()) {
+        for (String beanName : beanNames) {
+            Class<?> beanType = applicationContext.getType(beanName);
+            if (beanType == null) {
+                log.debug("Skip bean {} because bean type is not resolvable yet.", beanName);
+                continue;
+            }
             /*
                find method had annotation MessageMapping
              */
-            Method[] methods = controllerBean.getValue().getClass().getMethods();
+            Method[] methods = beanType.getMethods();
             for (Method method : methods) {
                 MessageMapping annotation = AnnotatedElementUtils.findMergedAnnotation(method, MessageMapping.class);
 
@@ -105,7 +110,7 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
                             // put new message type but same url
                             Map<MessageType, Method> methodMap = new HashMap<>(this.resolverMap.get(url).getMethods());
                             methodMap.put(annotation.messageType(), method);
-                            this.resolverMap.put(url, newResolver(url, methodMap, controllerBean.getValue()));
+                            this.resolverMap.put(url, newResolver(url, methodMap, beanName));
 
                         } else {
 
@@ -113,7 +118,7 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
                             this.resolverMap.put(url, newResolver(
                                     url,
                                     Collections.singletonMap(annotation.messageType(), method),
-                                    controllerBean.getValue()));
+                                    beanName));
 
                         }
                     }
@@ -155,11 +160,12 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         return methodAnno.value();
     }
 
-    private MessageMappingResolver newResolver(String url, Map<MessageType, Method> methods, Object invokeRef) {
+    private MessageMappingResolver newResolver(String url, Map<MessageType, Method> methods, String invokeBeanName) {
         return new MessageMappingResolver(
                 url,
                 methods,
-                invokeRef,
+                this.applicationContext,
+                invokeBeanName,
                 this.startupProperties == null ? null : this.startupProperties.getWebSocket(),
                 this.connectionSemaphore);
     }

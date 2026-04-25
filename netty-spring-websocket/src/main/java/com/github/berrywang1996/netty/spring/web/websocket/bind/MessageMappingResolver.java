@@ -37,6 +37,7 @@ import io.netty.util.AttributeKey;
 import io.netty.util.CharsetUtil;
 import io.netty.util.ReferenceCountUtil;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationContext;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -85,6 +86,19 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                                   NettyServerStartupProperties.WebSocket webSocketProperties,
                                   Semaphore connectionSemaphore) {
         super(url, methods, invokeRef);
+        this.webSocketProperties = webSocketProperties;
+        this.connectionSemaphore = connectionSemaphore;
+        // create new session map, maintain session relations
+        this.sessionMap = new ConcurrentHashMap<>();
+    }
+
+    public MessageMappingResolver(String url,
+                                  Map<MessageType, Method> methods,
+                                  ApplicationContext applicationContext,
+                                  String invokeBeanName,
+                                  NettyServerStartupProperties.WebSocket webSocketProperties,
+                                  Semaphore connectionSemaphore) {
+        super(url, methods, applicationContext, invokeBeanName);
         this.webSocketProperties = webSocketProperties;
         this.connectionSemaphore = connectionSemaphore;
         // create new session map, maintain session relations

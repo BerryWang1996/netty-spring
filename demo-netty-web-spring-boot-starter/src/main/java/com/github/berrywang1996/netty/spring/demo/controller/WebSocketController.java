@@ -5,16 +5,15 @@ import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestMapp
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.ResponseBody;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.annotation.MessageMapping;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
+import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSender;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
 import com.github.berrywang1996.netty.spring.web.websocket.context.TextMessage;
-import com.github.berrywang1996.netty.spring.web.websocket.support.MessageSenderSupport;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.util.Attribute;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Controller;
 
 /**
@@ -26,19 +25,19 @@ import org.springframework.stereotype.Controller;
 @RequestMapping("/ws")
 public class WebSocketController {
 
-    private final MessageSenderSupport messageSenderSupport;
+    private final MessageSender messageSender;
 
     private static final String TEST_URI = "/ws/test";
 
-    public WebSocketController(@Lazy MessageSenderSupport messageSenderSupport) {
-        this.messageSenderSupport = messageSenderSupport;
+    public WebSocketController(MessageSender messageSender) {
+        this.messageSender = messageSender;
     }
 
     @RequestMapping("/sendWebsocketMessage")
     @ResponseBody
     public String sendWebsocketMessage(String message) {
         try {
-            messageSenderSupport.topicMessage(TEST_URI, new TextMessage(message));
+            messageSender.topicMessage(TEST_URI, new TextMessage(message));
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -60,7 +59,7 @@ public class WebSocketController {
         log.info("testTextMessage ok, received message: {}", text.text());
         // response
         Attribute<String> sessionId = ctx.channel().attr(ServiceHandler.SESSION_ID_IN_CHANNEL);
-        messageSenderSupport.sendMessage(TEST_URI, new TextMessage(text.text()), sessionId.get());
+        messageSender.sendMessage(TEST_URI, new TextMessage(text.text()), sessionId.get());
     }
 
     @MessageMapping(value = TEST_URI, messageType = MessageType.BINARY_MESSAGE)

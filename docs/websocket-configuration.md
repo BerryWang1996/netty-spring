@@ -8,6 +8,7 @@
 server:
   netty:
     websocket:
+      enable: true
       core-pool-size: 4
       max-pool-size: 16
       keep-alive-time: 60
@@ -24,6 +25,8 @@ server:
 ```
 
 ## 发送线程池
+
+- `enable`：是否启用 WebSocket mapping 与 `MessageSenderSupport` 自动装配。默认值为 `true`。Starter 场景下可优先按 `MessageSender` 接口注入。
 
 - `core-pool-size`：消息发送线程池核心线程数。默认值为 `max(2, CPU 核数)`。
 - `max-pool-size`：消息发送线程池最大线程数。默认值为 `max(core-pool-size, CPU 核数 * 2)`。
@@ -59,12 +62,15 @@ server:
 
 ## 当前行为说明
 
+- `server.netty.websocket.enable=false` 时，不会注册 WebSocket mapping，也不会自动暴露 `MessageSenderSupport` / `MessageSender` 相关 Bean。
+- `server.netty.mvc.enable=false` 时，不会注册 MVC `@RequestMapping`。
 - handler 准入已经采用 fail-fast 策略，permit 耗尽时不会阻塞 Netty event loop。
 - 握手成功回调、写失败关闭、`channelInactive` 关闭等生命周期会统一进入应用侧执行模型，而不是直接在 I/O 线程执行。
 - 当应用引入 websocket starter 但没有声明 `@MessageMapping` 时，`MessageSenderSupport` 会退化为空实现，不会再因为空指针导致启动后的调用失败。
+- 自动配置默认注册 `messageSenderSupport` Bean，并额外暴露 `messageSender` 别名；业务代码推荐按 `MessageSender` 接口注入，保留对 `MessageSenderSupport` 的兼容。应用自定义 `MessageSender` Bean 时，默认 `MessageSenderSupport` 会自动退让。
 
 ## 运行时观测入口
 
 - `NettyServerBootstrap#getHandlerRuntimeStats()`：读取 handler 线程池和 permit 运行时快照。
 - `MessageSender#getRuntimeStats()`：读取 websocket 发送线程池、广播拒绝、caller-runs 回退、不可写 channel 策略命中和写失败计数。
-- Spring Boot Starter 场景下，可直接通过 `MessageSenderSupport#getRuntimeStats()` 获取发送侧快照。
+- Spring Boot Starter 场景下，推荐通过 `MessageSender#getRuntimeStats()` 获取发送侧快照；`MessageSenderSupport#getRuntimeStats()` 继续兼容。

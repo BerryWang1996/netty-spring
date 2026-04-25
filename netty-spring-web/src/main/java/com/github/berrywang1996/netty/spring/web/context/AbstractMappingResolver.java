@@ -17,6 +17,7 @@
 package com.github.berrywang1996.netty.spring.web.context;
 
 import io.netty.channel.ChannelHandlerContext;
+import org.springframework.context.ApplicationContext;
 import org.springframework.core.LocalVariableTableParameterNameDiscoverer;
 import org.springframework.util.PathMatcher;
 
@@ -37,13 +38,33 @@ public abstract class AbstractMappingResolver<T, K> {
 
     private final Object invokeRef;
 
+    private final ApplicationContext applicationContext;
+
+    private final String invokeBeanName;
+
     private PathMatcher pathMatcher;
 
     public AbstractMappingResolver(String url, Map<K, Method> methods, Object invokeRef) {
+        this(url, methods, invokeRef, null, null);
+    }
 
+    public AbstractMappingResolver(String url,
+                                   Map<K, Method> methods,
+                                   ApplicationContext applicationContext,
+                                   String invokeBeanName) {
+        this(url, methods, null, applicationContext, invokeBeanName);
+    }
+
+    private AbstractMappingResolver(String url,
+                                    Map<K, Method> methods,
+                                    Object invokeRef,
+                                    ApplicationContext applicationContext,
+                                    String invokeBeanName) {
         this.url = url;
         this.methods = Collections.unmodifiableMap(methods);
         this.invokeRef = invokeRef;
+        this.applicationContext = applicationContext;
+        this.invokeBeanName = invokeBeanName;
 
         // parse method parameters
         this.methodParamTypes = parseMethodParameters();
@@ -73,6 +94,9 @@ public abstract class AbstractMappingResolver<T, K> {
     }
 
     public Object getInvokeRef() {
+        if (this.invokeBeanName != null && this.applicationContext != null) {
+            return this.applicationContext.getBean(this.invokeBeanName);
+        }
         return invokeRef;
     }
 

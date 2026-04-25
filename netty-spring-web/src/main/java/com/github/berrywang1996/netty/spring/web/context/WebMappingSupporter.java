@@ -108,6 +108,10 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
                                                                        ApplicationContext applicationContext) {
         Map<String, AbstractMappingResolver> mappingResolverMap = new HashMap<>();
         for (String mappingClass : DEFAULT_MAPPING_CLASSES) {
+            if (!isMappingSupporterEnabled(mappingClass)) {
+                log.debug("Skip mapping supporter {} because it is disabled by startup properties.", mappingClass);
+                continue;
+            }
             if (ClassUtil.isPresent(mappingClass)) {
                 log.debug("Init mapping supporter {}", mappingClass);
                 MappingSupporter supporter = (MappingSupporter) ClassUtil.newInstance(mappingClass);
@@ -121,6 +125,9 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
                 mappingResolverMap.putAll(resolverMap);
             }
         }
+        if (this.webSocketMappingtResolverMap == null) {
+            this.webSocketMappingtResolverMap = Collections.emptyMap();
+        }
         if (mappingResolverMap.size() == 0) {
             log.warn("No mapping resolvers are mapped.");
         }
@@ -131,7 +138,6 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
     }
 
     private ThreadPoolExecutor initHandlerExecutorThreadPool() {
-        // TODO 通过配置对象进行配置
         NettyServerStartupProperties.WebSocket webSocketProperties = getWebSocketProperties();
         int corePoolSize = resolveHandlerCorePoolSize(webSocketProperties);
         int maxPoolSize = Math.max(corePoolSize, resolveHandlerMaxPoolSize(webSocketProperties));
@@ -148,7 +154,6 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
     }
 
     private Semaphore initHandlerSemaphore() {
-        // TODO 通过配置对象进行配置
         return new Semaphore(resolveHandlerPermitLimit(getWebSocketProperties()));
     }
 
@@ -169,6 +174,28 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
                 ((HandlerSubmitterAware) resolver).setHandlerSubmitter(this);
             }
         }
+    }
+
+    private boolean isMappingSupporterEnabled(String mappingClass) {
+        if ("com.github.berrywang1996.netty.spring.web.mvc.context.RequestMappingSupporter".equals(mappingClass)) {
+            return isMvcEnabled();
+        }
+        if ("com.github.berrywang1996.netty.spring.web.websocket.context.MessageMappingSupporter".equals(mappingClass)) {
+            return isWebSocketEnabled();
+        }
+        return true;
+    }
+
+    private boolean isMvcEnabled() {
+        return this.startupProperties == null
+                || this.startupProperties.getMvc() == null
+                || this.startupProperties.getMvc().isEnable();
+    }
+
+    private boolean isWebSocketEnabled() {
+        return this.startupProperties == null
+                || this.startupProperties.getWebSocket() == null
+                || this.startupProperties.getWebSocket().isEnable();
     }
 
     @Override

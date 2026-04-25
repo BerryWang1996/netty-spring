@@ -68,6 +68,16 @@ public class NettyServerStartupProperties {
     private Gzip gzip = new Gzip();
 
     /**
+     * Netty server http configure. This is the preferred namespace for HTTP/file/gzip/ssl related settings.
+     */
+    private final Http http = new Http();
+
+    /**
+     * Netty server mvc configure.
+     */
+    private Mvc mvc = new Mvc();
+
+    /**
      * Netty server websocket configure.
      */
     private WebSocket webSocket = new WebSocket();
@@ -142,6 +152,18 @@ public class NettyServerStartupProperties {
 
     public void setGzip(Gzip gzip) {
         this.gzip = gzip;
+    }
+
+    public Http getHttp() {
+        return http;
+    }
+
+    public Mvc getMvc() {
+        return mvc;
+    }
+
+    public void setMvc(Mvc mvc) {
+        this.mvc = mvc;
     }
 
     public WebSocket getWebSocket() {
@@ -282,7 +304,71 @@ public class NettyServerStartupProperties {
         }
     }
 
+    public static class Mvc {
+
+        /**
+         * Enable mvc mapping.
+         */
+        private boolean enable = true;
+
+        public boolean isEnable() {
+            return enable;
+        }
+
+        public void setEnable(boolean enable) {
+            this.enable = enable;
+        }
+    }
+
+    public class Http {
+
+        public boolean isHandleFile() {
+            return NettyServerStartupProperties.this.handleFile;
+        }
+
+        public void setHandleFile(boolean handleFile) {
+            NettyServerStartupProperties.this.handleFile = handleFile;
+        }
+
+        public String getFileLocation() {
+            return NettyServerStartupProperties.this.fileLocation;
+        }
+
+        public void setFileLocation(String fileLocation) {
+            NettyServerStartupProperties.this.fileLocation = fileLocation;
+        }
+
+        public String getInfoLocation() {
+            return NettyServerStartupProperties.this.infoLocation;
+        }
+
+        public void setInfoLocation(String infoLocation) {
+            NettyServerStartupProperties.this.infoLocation = infoLocation;
+        }
+
+        public Ssl getSsl() {
+            return NettyServerStartupProperties.this.ssl;
+        }
+
+        public void setSsl(Ssl ssl) {
+            NettyServerStartupProperties.this.ssl = ssl;
+        }
+
+        public Gzip getGzip() {
+            return NettyServerStartupProperties.this.gzip;
+        }
+
+        public void setGzip(Gzip gzip) {
+            NettyServerStartupProperties.this.gzip = gzip;
+        }
+    }
+
     public static class WebSocket {
+        /**
+         * Enable websocket mapping and related beans.
+         */
+        private boolean enable = true;
+
         /**
          * Message sender executor core pool size.
          */
@@ -349,6 +435,14 @@ public class NettyServerStartupProperties {
          * Max websocket frame payload length. 0 or negative means use the default.
          */
         private int maxFramePayloadLength;
+
+        public boolean isEnable() {
+            return enable;
+        }
+
+        public void setEnable(boolean enable) {
+            this.enable = enable;
+        }
 
         public int getCorePoolSize() {
             return corePoolSize;

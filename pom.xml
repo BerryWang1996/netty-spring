@@ -8,12 +8,13 @@
 
     <groupId>com.github.berrywang1996</groupId>
     <artifactId>netty-spring-parent</artifactId>
-    <version>1.0.2</version>
+    <version>1.1.0-SNAPSHOT</version>
 
     <modules>
         <module>netty-spring-web</module>
         <module>netty-spring-webmvc</module>
         <module>netty-spring-websocket</module>
+        <module>netty-spring-boot-autoconfigure</module>
         <module>netty-web-spring-boot-starter</module>
         <module>netty-webmvc-spring-boot-starter</module>
         <module>netty-websocket-spring-boot-starter</module>

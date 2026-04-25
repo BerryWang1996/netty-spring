@@ -1,6 +1,9 @@
 /_netty_spring_application_root
 /_netty_spring_application_info
 target/
+/.m2/
+/codex-m2repo/
+/m2repo/
 
 HELP.md
 !.mvn/wrapper/maven-wrapper.jar

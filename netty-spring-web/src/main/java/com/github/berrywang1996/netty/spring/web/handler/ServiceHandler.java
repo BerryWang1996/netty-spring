@@ -18,6 +18,7 @@ package com.github.berrywang1996.netty.spring.web.handler;
 
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
 import com.github.berrywang1996.netty.spring.web.context.WebMappingSupporter;
+import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import com.github.berrywang1996.netty.spring.web.util.ServiceHandlerUtil;
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import io.netty.channel.*;
@@ -129,6 +130,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         // get mapping resolver
         log.debug("Get request mapping resolver.");
         AbstractMappingResolver mappingResolver = getMappingResolver(baseUri);
+        NettyServerStartupProperties.Http httpProperties = supporter.getStartupProperties().getHttp();
 
         if (mappingResolver != null) {
             // if mapped
@@ -136,7 +138,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
             mappingResolver.resolve(ctx, msg);
         } else {
             // if handle file is true
-            if (supporter.getStartupProperties().isHandleFile()) {
+            if (httpProperties.isHandleFile()) {
                 // if not mapped, may be request a file
                 log.debug("Not found mapped resolver. Try to find a file in root directory.");
                 if (StringUtil.isBlank(baseUri) || "/".equals(baseUri)) {
@@ -149,7 +151,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
                     ServiceHandlerUtil.sendError(ctx, request, errorMsg);
                     return;
                 }
-                String localPath = this.supporter.getStartupProperties().getFileLocation() + baseUri;
+                String localPath = httpProperties.getFileLocation() + baseUri;
                 localPath = localPath.replace("/", File.separator);
                 handleFile(ctx, (FullHttpRequest) msg, localPath);
             } else {

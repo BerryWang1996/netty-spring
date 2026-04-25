@@ -29,6 +29,7 @@ import java.io.File;
 public class StartupPropertiesUtil {
 
     public static void checkAndImproveProperties(NettyServerStartupProperties properties) throws Exception {
+        NettyServerStartupProperties.Http httpProperties = properties == null ? null : properties.getHttp();
 
         if (properties == null) {
             throw new NullPointerException("Netty server startup properties properties name should not null.");
@@ -42,16 +43,16 @@ public class StartupPropertiesUtil {
         if (properties.getConfigLocation() == null) {
             throw new IllegalArgumentException("Spring config location should not be null.");
         }
-        // TODO 为模板引擎做预留准备
+        // Reserved for future template engine support.
 //        if (properties.getInfoLocation() == null) {
 //            throw new IllegalArgumentException("Info location should not be null, please set your WEB-INF location.");
 //        }
-        if (properties.getFileLocation() == null && properties.isHandleFile()) {
+        if (httpProperties.getFileLocation() == null && httpProperties.isHandleFile()) {
             throw new IllegalArgumentException("File location should not be null, please set your file location.");
         }
-        if (properties.isHandleFile()) {
-            createDirectory(properties.getFileLocation());
-            log.info("Netty server {} directory is \"{}\"", "root", properties.getFileLocation());
+        if (httpProperties.isHandleFile()) {
+            createDirectory(httpProperties.getFileLocation());
+            log.info("Netty server {} directory is \"{}\"", "root", httpProperties.getFileLocation());
         }
 
 //        createDirectory(properties.getInfoLocation());
