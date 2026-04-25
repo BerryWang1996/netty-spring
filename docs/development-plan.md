@@ -1,12 +1,12 @@
 # 开发计划与阶段状态
 
-更新时间：2026-04-25
+更新时间：2026-04-26
 
 ## 当前结论
 
 - `1.0.2` 已完成 `P3.2` 发布后治理收口，可作为当前 `1.0.x` 稳定发布版本。
 - 开发线已切到 `1.1.0-SNAPSHOT`，`P4` 已推进到第五刀：resolver 延迟获取 controller bean，先消除 `MessageSenderSupport` 构造注入仍依赖 `@Lazy` 的启动期循环依赖；新增 `netty-spring-boot-autoconfigure` 共用模块，把三套 Starter 里重复的 `nettyServer + properties` 自动装配骨架先收敛到一处；再把 `MessageSenderSupport` 自动配置并回公共 autoconfigure，同时打通 `server.netty.mvc.enable` / `server.netty.websocket.enable` 开关，用 demo 与 starter 回归测试明确 `MessageSender` 接口注入语义，并开始把 HTTP/file/gzip/ssl 配置收敛到 `server.netty.http.*` 且保留旧键兼容。
-- 当前代码已具备框架功能层面的 `1.1.0-RC1` 候选条件：P4 配置边界、自动配置兼容性、`@Lazy` 依赖消除和全量 `mvn test` 均已完成验证；`P4.1` 生产准入硬化已完成第一刀，包含静态文件根目录逃逸保护、HTTP 聚合上限配置化、MVC 写失败处理和 handler 默认线程/permit 收敛。但整体仍未达到企业生产环境默认部署标准，正式版应继续补齐剩余安全、超时、观测和依赖治理门禁。
+- 当前代码已具备框架功能层面的 `1.1.0-RC1` 候选条件：P4 配置边界、自动配置兼容性、`@Lazy` 依赖消除和全量 `mvn test` 均已完成验证；`P4.1` 生产准入硬化已继续推进，已覆盖静态文件根目录逃逸保护、HTTP 聚合/解码/超时边界配置化、TLS 证书配置校验、WebSocket Origin 白名单、MVC/静态文件写失败关闭、HTTP 失败路径运行时统计，以及 handler/sender 线程池配置校验。但整体仍未达到企业生产环境默认部署标准，正式版应继续补齐剩余安全扩展、指标/健康检查和依赖治理门禁。
 - 后续计划应以“先稳住发布面，再统一入口，再扩能力”为顺序，这比直接进入产品功能扩展更符合仓库当前状态。
 
 ## 当前发版判断
@@ -24,16 +24,21 @@ P4.1 首批已完成：
 
 - 静态文件服务已增加 URL decode、canonical path 和根目录包含校验，覆盖 plain/encoded traversal 回归测试。
 - `server.netty.http.max-content-length` 已接入 HTTP 聚合上限配置，默认仍为 `65536`，无效值回退默认值。
-- MVC 响应写失败已监听 `ChannelFuture`，失败时记录诊断日志并关闭 channel。
+- `server.netty.http.max-initial-line-length`、`max-header-size`、`max-chunk-size` 已接入 `HttpServerCodec`，HTTP request line/header/chunk 边界可以按服务调参。
+- `server.netty.http.read-timeout-seconds`、`write-timeout-seconds`、`idle-timeout-seconds` 已接入 Netty timeout handler，默认关闭，显式负数启动失败。
+- 启用 `server.netty.http.ssl.enable=true` 时，证书和私钥路径会在启动期校验，缺失或不是普通文件会直接启动失败。
+- `server.netty.websocket.allowed-origins` 已接入握手前置校验，配置具体 Origin 后缺失或不匹配会返回 `403`。
+- MVC 响应和静态文件发送写失败已监听 `ChannelFuture`，失败时记录诊断日志并关闭 channel。
 - handler 默认 core/max/permit 已从 `CPU * 200/300` 收敛为更保守的 `max(2, CPU)` / `max(core, CPU * 2)` / `max * 2`，并补默认值回归测试。
+- handler/sender 线程池已补启动期配置校验，拒绝负数容量和显式 `max < core` 配置。
 
 仍需继续补齐的生产准入缺口：
 
-- HTTP 请求容量与超时边界仍不完整：body 聚合上限已配置化，但 header/initial-line/idle/read/write timeout 还没有统一配置入口。
-- HTTP/静态文件失败路径仍未完全统一：MVC 写失败已处理，但静态文件发送失败仍主要是日志，缺少失败计数、关闭原因和指标暴露。
-- 线程池配置还缺少启动期校验：默认值已收敛，但 max >= core、queue >= 0、permit > 0 等配置约束还需要显式校验和错误提示。
-- 安全基线尚未产品化：目前主要依赖业务侧 `ON_HANDSHAKE` 自行拒绝连接，框架层还缺少标准握手鉴权扩展、Origin/CORS 校验、TLS 协议/套件配置、证书配置校验和安全示例。
-- 可观测性仍停留在快照/API 层：已有 handler/sender runtime stats，但还没有 Micrometer/Actuator 指标、健康检查、拒绝/过载/写失败统一事件和运维友好的暴露面。
+- HTTP 请求容量与超时边界已有基础配置入口：body/request line/header/chunk 上限和 idle/read/write timeout 已配置化；后续需要继续结合真实部署压测调整推荐默认值和示例。
+- HTTP/静态文件失败路径已有轻量运行时计数：MVC 写失败、静态文件拒绝/写失败、idle 关闭、WebSocket handshake/origin 拒绝可通过 `NettyServerBootstrap#getHttpRuntimeStats()` 读取；后续仍需接入 Micrometer/Actuator 或状态端点，并补齐关闭原因维度。
+- 线程池配置校验已有基础约束，后续还需要把校验错误接入更清晰的 starter 启动失败诊断和文档示例。
+- 安全基线尚未完全产品化：TLS 证书文件校验和 Origin 白名单已补齐，但目前仍主要依赖业务侧 `ON_HANDSHAKE` 自行拒绝连接，框架层还缺少标准握手鉴权扩展、完整 CORS 策略、TLS 协议/套件配置和安全示例。
+- 可观测性仍停留在快照/API 层：已有 handler/http/sender runtime stats，但还没有 Micrometer/Actuator 指标、健康检查、拒绝/过载/写失败统一事件和运维友好的暴露面。
 - 依赖与供应链治理未纳入发布门禁：根 POM 仍使用 Spring Boot `2.7.18`，且 GitHub push 时已提示默认分支存在 Dependabot 漏洞告警。正式生产发布前需要完成依赖扫描、SBOM 或等效清单、漏洞分级处理和升级策略。
 - Demo 仍是基础示例：demo 中仍有 `printStackTrace` 和极简 echo/send 用法，不足以作为企业接入、安全配置和运维排障示范。
 
@@ -57,7 +62,7 @@ P4.1 首批已完成：
 - `server.netty.mvc.enable` / `server.netty.websocket.enable` 已接入真实 mapping 初始化路径，并补了 starter 级回归测试验证开关生效。
 - `server.netty.http.*` 已作为 HTTP/file/gzip/ssl 的推荐新命名空间引入，旧的 `server.netty.gzip.*`、`server.netty.file-location` 等顶层配置继续兼容。
 - 已补 `server.netty.http.*` 新旧配置绑定测试，覆盖静态文件、gzip、SSL；并补 `StartupPropertiesUtil` 运行时校验测试，确认静态文件路径读取统一走 HTTP 配置视图。
-- `P4.1` 首批硬化已落地：静态文件根目录逃逸保护、HTTP 聚合上限配置化、MVC 写失败关闭、handler 默认线程/permit 收敛均已有回归测试。
+- `P4.1` 已继续落地生产硬化：静态文件根目录逃逸保护、HTTP 聚合/解码/超时边界配置化、TLS 证书配置校验、WebSocket Origin 白名单、MVC/静态文件写失败关闭、HTTP 失败路径运行时计数、handler 默认线程/permit 收敛、handler/sender 配置校验均已有回归测试。
 - 当前仓库已在本地 `GraalVM JDK 17.0.11 + Maven 3.9.9` 环境完成全量 `mvn test` 验证。
 
 ### 代码里已经暴露出的下一阶段问题
@@ -141,15 +146,22 @@ P4.1 首批已完成：
 当前进度：
 
 - 已完成第一刀：静态文件根目录逃逸保护、`server.netty.http.max-content-length`、MVC 写失败处理、handler 默认线程/permit 收敛。
-- 第一刀已通过全量 `mvn test`，新增回归覆盖路径穿越、HTTP 聚合上限配置、MVC 写失败关闭和 handler 默认值。
+- 已完成第二刀：HTTP request line/header/chunk 解码上限配置化、静态文件发送失败关闭 channel、handler/sender 线程池启动期配置校验。
+- 第二刀新增回归覆盖 HTTP codec 上限配置绑定、静态文件写失败关闭、线程池非法配置拒绝。
+- 已完成第三刀：HTTP read/write/idle timeout 配置化，空闲事件统一关闭 channel，负数超时配置启动期失败。
+- 第三刀新增回归覆盖 timeout 配置绑定、默认关闭、负数校验和 idle 事件关闭。
+- 已完成第四刀：TLS 证书和私钥路径启动期校验，缺失或非普通文件直接启动失败。
+- 第四刀新增回归覆盖 SSL 启用时证书/私钥必填、文件必须存在、合法配置可通过。
+- 已完成第五刀：`server.netty.websocket.allowed-origins` 握手前置校验，支持精确 Origin 列表和显式 `*` 通配。
+- 第五刀新增回归覆盖 Origin 不匹配拒绝、匹配放行、`*` 放行，以及 Boot 配置绑定。
 
 重点项：
 
-- 继续配置化 HTTP 解码与聚合边界：已补 `server.netty.http.max-content-length`，后续补 header/initial-line 上限、idle/read/write timeout 等生产调参入口。
-- 继续补齐 HTTP/MVC 写失败处理：MVC 响应写失败已处理，后续补静态文件发送 `ChannelFuture` 失败计数、关闭策略和回归测试。
-- 继续收敛线程池默认值与配置校验：handler 默认 core/max/permit 已调整，后续增加 max >= core、queue >= 0、permit > 0 等启动期校验。
-- 建立安全基线：提供握手鉴权扩展点、Origin/CORS 校验、TLS 配置校验、安全失败响应策略和安全接入示例。
-- 建立生产观测基线：通过 Micrometer/Actuator 或轻量状态端点暴露连接数、拒绝数、写失败数、线程池状态、广播耗时和关闭原因。
+- 继续配置化 HTTP 运行时边界：已补 `server.netty.http.max-content-length`、`max-initial-line-length`、`max-header-size`、`max-chunk-size`、`read-timeout-seconds`、`write-timeout-seconds`、`idle-timeout-seconds`，后续根据压测结果沉淀推荐生产默认值。
+- 继续补齐 HTTP/MVC 写失败处理：MVC 响应和静态文件发送失败已处理，轻量失败计数已接入 `getHttpRuntimeStats()`，后续补关闭原因维度和指标暴露。
+- 继续收敛线程池默认值与配置校验：handler 默认 core/max/permit 已调整，handler/sender 已补基础启动期校验，后续补更完整的错误提示和 starter 诊断。
+- 建立安全基线：TLS 证书路径校验和 Origin 白名单已补齐；后续继续提供握手鉴权扩展点、完整 CORS 策略、TLS 协议/套件配置、安全失败响应策略和安全接入示例。
+- 建立生产观测基线：短期已通过运行时快照暴露 handler/http/sender 计数；后续通过 Micrometer/Actuator 或轻量状态端点暴露连接数、拒绝数、写失败数、线程池状态、广播耗时和关闭原因。
 - 建立依赖治理门禁：补依赖漏洞扫描流程、SBOM 或等效依赖清单、Dependabot 告警处理规则和版本升级策略。
 
 完成标准：

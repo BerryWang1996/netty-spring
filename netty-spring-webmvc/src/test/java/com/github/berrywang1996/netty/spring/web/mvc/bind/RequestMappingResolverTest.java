@@ -1,5 +1,6 @@
 package com.github.berrywang1996.netty.spring.web.mvc.bind;
 
+import com.github.berrywang1996.netty.spring.web.context.HttpRuntimeRecorder;
 import com.github.berrywang1996.netty.spring.web.mvc.consts.HttpRequestMethod;
 import com.github.berrywang1996.netty.spring.web.mvc.view.HtmlViewHandler;
 import io.netty.channel.ChannelHandlerContext;
@@ -19,6 +20,7 @@ import java.lang.reflect.Method;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -32,6 +34,8 @@ class RequestMappingResolverTest {
                 Collections.singletonMap(HttpRequestMethod.GET, method),
                 new TestController(),
                 new HtmlViewHandler());
+        HttpRuntimeRecorder recorder = new HttpRuntimeRecorder();
+        resolver.setHttpRuntimeRecorder(recorder);
         AtomicBoolean writeFailed = new AtomicBoolean();
         EmbeddedChannel channel = new EmbeddedChannel(
                 new ChannelOutboundHandlerAdapter() {
@@ -58,6 +62,7 @@ class RequestMappingResolverTest {
 
             assertTrue(writeFailed.get());
             assertFalse(channel.isOpen());
+            assertEquals(1L, recorder.getRuntimeStats().getHttpResponseWriteFailureCount());
         } finally {
             channel.finishAndReleaseAll();
         }

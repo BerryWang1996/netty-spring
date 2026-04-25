@@ -17,6 +17,7 @@
 package com.github.berrywang1996.netty.spring.web.handler;
 
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
+import com.github.berrywang1996.netty.spring.web.context.HttpRuntimeRecorder;
 import com.github.berrywang1996.netty.spring.web.context.WebMappingSupporter;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import com.github.berrywang1996.netty.spring.web.util.ServiceHandlerUtil;
@@ -26,6 +27,7 @@ import io.netty.handler.codec.http.*;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import io.netty.handler.stream.ChunkedFile;
+import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.util.AttributeKey;
 import io.netty.util.ReferenceCountUtil;
 import lombok.extern.slf4j.Slf4j;
@@ -114,6 +116,18 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         super.channelInactive(ctx);
     }
 
+    @Override
+    public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+        if (evt instanceof IdleStateEvent) {
+            IdleStateEvent idleStateEvent = (IdleStateEvent) evt;
+            log.warn("Close idle channel. state={}", idleStateEvent.state());
+            recordIdleClose();
+            ctx.close();
+            return;
+        }
+        super.userEventTriggered(ctx, evt);
+    }
+
     private void handle(ChannelHandlerContext ctx, Object msg) throws Exception {
 
         if (msg instanceof FullHttpRequest) {
@@ -145,6 +159,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
                 // if not mapped, may be request a file
                 log.debug("Not found mapped resolver. Try to find a file in root directory.");
                 if (StringUtil.isBlank(baseUri) || "/".equals(baseUri)) {
+                    recordStaticFileRejected();
                     ServiceHandlerUtil.HttpErrorMessage errorMsg =
                             new ServiceHandlerUtil.HttpErrorMessage(
                                     HttpResponseStatus.FORBIDDEN,
@@ -156,6 +171,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
                 }
                 File localFile = resolveStaticFile(httpProperties.getFileLocation(), baseUri);
                 if (localFile == null) {
+                    recordStaticFileRejected();
                     ServiceHandlerUtil.HttpErrorMessage errorMsg =
                             new ServiceHandlerUtil.HttpErrorMessage(
                                     HttpResponseStatus.FORBIDDEN,
@@ -165,7 +181,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
                     ServiceHandlerUtil.sendError(ctx, request, errorMsg);
                     return;
                 }
-                handleFile(ctx, (FullHttpRequest) msg, localFile);
+                handleFile(ctx, (FullHttpRequest) msg, localFile, getHttpRuntimeRecorder());
             } else {
                 ServiceHandlerUtil.HttpErrorMessage errorMsg =
                         new ServiceHandlerUtil.HttpErrorMessage(
@@ -299,7 +315,10 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         return file.toPath().equals(root.toPath()) || file.toPath().startsWith(root.toPath());
     }
 
-    private static void handleFile(ChannelHandlerContext ctx, FullHttpRequest msg, File file) throws Exception {
+    private static void handleFile(ChannelHandlerContext ctx,
+                                   FullHttpRequest msg,
+                                   File file,
+                                   HttpRuntimeRecorder httpRuntimeRecorder) throws Exception {
 
         if (file.isHidden() || !file.exists() || file.isDirectory() || !file.isFile()) {
             ServiceHandlerUtil.HttpErrorMessage errorMsg =
@@ -374,15 +393,62 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
 
             @Override
             public void operationComplete(ChannelProgressiveFuture future) {
+                if (!future.isSuccess()) {
+                    closeChannelOnStaticFileWriteFailure(future, msg.uri(), "file-content", httpRuntimeRecorder);
+                    return;
+                }
                 log.debug("{} Transfer complete.", future.channel());
             }
         });
+        addStaticFileWriteFailureListener(lastContentFuture, msg.uri(), "last-content", httpRuntimeRecorder);
 
         // Decide whether to close the connection or not.
         if (!HttpUtil.isKeepAlive(msg)) {
             // Close the connection when the whole content is written out.
             lastContentFuture.addListener(ChannelFutureListener.CLOSE);
         }
+    }
+
+    static void addStaticFileWriteFailureListener(ChannelFuture future, final String uri, final String phase) {
+        addStaticFileWriteFailureListener(future, uri, phase, HttpRuntimeRecorder.noop());
+    }
+
+    static void addStaticFileWriteFailureListener(ChannelFuture future,
+                                                  final String uri,
+                                                  final String phase,
+                                                  final HttpRuntimeRecorder httpRuntimeRecorder) {
+        future.addListener(new ChannelFutureListener() {
+            @Override
+            public void operationComplete(ChannelFuture future) {
+                if (!future.isSuccess()) {
+                    closeChannelOnStaticFileWriteFailure(future, uri, phase, httpRuntimeRecorder);
+                }
+            }
+        });
+    }
+
+    private static void closeChannelOnStaticFileWriteFailure(ChannelFuture future,
+                                                            String uri,
+                                                            String phase,
+                                                            HttpRuntimeRecorder httpRuntimeRecorder) {
+        httpRuntimeRecorder.recordStaticFileWriteFailure();
+        log.warn("Write static file response failed, close channel. uri={}, phase={}", uri, phase, future.cause());
+        future.channel().close();
+    }
+
+    private void recordStaticFileRejected() {
+        getHttpRuntimeRecorder().recordStaticFileRejected();
+    }
+
+    private void recordIdleClose() {
+        getHttpRuntimeRecorder().recordIdleClose();
+    }
+
+    private HttpRuntimeRecorder getHttpRuntimeRecorder() {
+        if (this.supporter == null || this.supporter.getHttpRuntimeRecorder() == null) {
+            return HttpRuntimeRecorder.noop();
+        }
+        return this.supporter.getHttpRuntimeRecorder();
     }
 
 }

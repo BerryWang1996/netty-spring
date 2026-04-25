@@ -44,6 +44,8 @@ public abstract class AbstractMappingResolver<T, K> {
 
     private PathMatcher pathMatcher;
 
+    private HttpRuntimeRecorder httpRuntimeRecorder = HttpRuntimeRecorder.noop();
+
     public AbstractMappingResolver(String url, Map<K, Method> methods, Object invokeRef) {
         this(url, methods, invokeRef, null, null);
     }
@@ -106,6 +108,16 @@ public abstract class AbstractMappingResolver<T, K> {
 
     public void setPathMatcher(PathMatcher pathMatcher) {
         this.pathMatcher = pathMatcher;
+    }
+
+    public void setHttpRuntimeRecorder(HttpRuntimeRecorder httpRuntimeRecorder) {
+        this.httpRuntimeRecorder = httpRuntimeRecorder == null
+                ? HttpRuntimeRecorder.noop()
+                : httpRuntimeRecorder;
+    }
+
+    protected HttpRuntimeRecorder getHttpRuntimeRecorder() {
+        return httpRuntimeRecorder;
     }
 
     public abstract void resolve(ChannelHandlerContext ctx, T msg) throws Exception;

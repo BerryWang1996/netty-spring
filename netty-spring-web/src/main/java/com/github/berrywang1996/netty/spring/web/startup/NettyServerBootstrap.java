@@ -18,6 +18,7 @@ package com.github.berrywang1996.netty.spring.web.startup;
 
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
 import com.github.berrywang1996.netty.spring.web.context.HandlerRuntimeStats;
+import com.github.berrywang1996.netty.spring.web.context.HttpRuntimeStats;
 import com.github.berrywang1996.netty.spring.web.context.NettyChannelInitializer;
 import com.github.berrywang1996.netty.spring.web.context.WebMappingSupporter;
 import com.github.berrywang1996.netty.spring.web.util.DaemonThreadFactory;
@@ -246,6 +247,13 @@ public final class NettyServerBootstrap {
             return HandlerRuntimeStats.empty();
         }
         return this.webMappingSupporter.getRuntimeStats();
+    }
+
+    public HttpRuntimeStats getHttpRuntimeStats() {
+        if (this.webMappingSupporter == null) {
+            return HttpRuntimeStats.empty();
+        }
+        return this.webMappingSupporter.getHttpRuntimeStats();
     }
 
     private void notifyStopListeners() {

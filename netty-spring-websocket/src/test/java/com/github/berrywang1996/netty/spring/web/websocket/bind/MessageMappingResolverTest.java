@@ -1,6 +1,7 @@
 package com.github.berrywang1996.netty.spring.web.websocket.bind;
 
 import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitter;
+import com.github.berrywang1996.netty.spring.web.context.HttpRuntimeRecorder;
 import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
@@ -123,6 +124,107 @@ class MessageMappingResolverTest {
         } finally {
             ReferenceCountUtil.release(outbound);
             request.release();
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void rejectsHandshakeWhenOriginIsNotAllowed() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setAllowedOrigins("https://trusted.example");
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/test",
+                new EnumMap<MessageType, Method>(MessageType.class),
+                endpoint,
+                properties,
+                null);
+        HttpRuntimeRecorder recorder = new HttpRuntimeRecorder();
+        resolver.setHttpRuntimeRecorder(recorder);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+        request.headers().set(HttpHeaderNames.ORIGIN, "https://evil.example");
+
+        resolver.resolve(testChannel.ctx, request);
+
+        Object outbound = testChannel.channel.readOutbound();
+        try {
+            assertTrue(outbound instanceof FullHttpResponse);
+            assertEquals(FORBIDDEN, ((FullHttpResponse) outbound).status());
+            assertTrue(resolver.getSessionMap().isEmpty());
+            assertNull(testChannel.channel.attr(MessageMappingResolver.SESSION_ID_IN_CHANNEL).get());
+            assertEquals(1L, recorder.getRuntimeStats().getWebSocketOriginRejectedCount());
+            assertEquals(1L, recorder.getRuntimeStats().getWebSocketHandshakeRejectedCount());
+        } finally {
+            ReferenceCountUtil.release(outbound);
+            request.release();
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void acceptsHandshakeWhenOriginMatchesAllowedOrigins() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setAllowedOrigins("https://trusted.example, https://other.example");
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint, properties, null);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+        request.headers().set(HttpHeaderNames.ORIGIN, "https://trusted.example");
+
+        try {
+            resolver.resolve(testChannel.ctx, request);
+            Object outbound = testChannel.channel.readOutbound();
+            try {
+                assertNotNull(outbound);
+                assertFalse(outbound instanceof FullHttpResponse
+                        && ((FullHttpResponse) outbound).status().equals(FORBIDDEN));
+            } finally {
+                ReferenceCountUtil.release(outbound);
+            }
+            drainChannel(testChannel.channel);
+
+            assertEquals(1, endpoint.connectedCount);
+            assertEquals(1, resolver.getSessionMap().size());
+        } finally {
+            request.release();
+            resolver.onChannelInactive(testChannel.ctx);
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void wildcardAllowedOriginAcceptsMissingOrigin() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setAllowedOrigins("*");
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/test",
+                new EnumMap<MessageType, Method>(MessageType.class),
+                endpoint,
+                properties,
+                null);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        try {
+            resolver.resolve(testChannel.ctx, request);
+            Object outbound = testChannel.channel.readOutbound();
+            try {
+                assertNotNull(outbound);
+                assertFalse(outbound instanceof FullHttpResponse
+                        && ((FullHttpResponse) outbound).status().equals(FORBIDDEN));
+            } finally {
+                ReferenceCountUtil.release(outbound);
+            }
+            drainChannel(testChannel.channel);
+
+            assertEquals(1, resolver.getSessionMap().size());
+        } finally {
+            request.release();
+            resolver.onChannelInactive(testChannel.ctx);
             testChannel.finish();
         }
     }

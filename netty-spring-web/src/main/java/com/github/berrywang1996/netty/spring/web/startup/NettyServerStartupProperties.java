@@ -323,9 +323,39 @@ public class NettyServerStartupProperties {
     public class Http {
 
         /**
+         * Max HTTP initial line length in bytes.
+         */
+        private int maxInitialLineLength = 4096;
+
+        /**
+         * Max HTTP header size in bytes.
+         */
+        private int maxHeaderSize = 8192;
+
+        /**
+         * Max HTTP chunk size in bytes.
+         */
+        private int maxChunkSize = 8192;
+
+        /**
          * Max aggregated HTTP content length in bytes.
          */
         private int maxContentLength = 65536;
+
+        /**
+         * Read timeout in seconds. 0 means disabled.
+         */
+        private long readTimeoutSeconds = 0L;
+
+        /**
+         * Write timeout in seconds. 0 means disabled.
+         */
+        private long writeTimeoutSeconds = 0L;
+
+        /**
+         * All-idle timeout in seconds. 0 means disabled.
+         */
+        private long idleTimeoutSeconds = 0L;
 
         public boolean isHandleFile() {
             return NettyServerStartupProperties.this.handleFile;
@@ -373,6 +403,54 @@ public class NettyServerStartupProperties {
 
         public void setMaxContentLength(int maxContentLength) {
             this.maxContentLength = maxContentLength;
+        }
+
+        public int getMaxInitialLineLength() {
+            return maxInitialLineLength;
+        }
+
+        public void setMaxInitialLineLength(int maxInitialLineLength) {
+            this.maxInitialLineLength = maxInitialLineLength;
+        }
+
+        public int getMaxHeaderSize() {
+            return maxHeaderSize;
+        }
+
+        public void setMaxHeaderSize(int maxHeaderSize) {
+            this.maxHeaderSize = maxHeaderSize;
+        }
+
+        public int getMaxChunkSize() {
+            return maxChunkSize;
+        }
+
+        public void setMaxChunkSize(int maxChunkSize) {
+            this.maxChunkSize = maxChunkSize;
+        }
+
+        public long getReadTimeoutSeconds() {
+            return readTimeoutSeconds;
+        }
+
+        public void setReadTimeoutSeconds(long readTimeoutSeconds) {
+            this.readTimeoutSeconds = readTimeoutSeconds;
+        }
+
+        public long getWriteTimeoutSeconds() {
+            return writeTimeoutSeconds;
+        }
+
+        public void setWriteTimeoutSeconds(long writeTimeoutSeconds) {
+            this.writeTimeoutSeconds = writeTimeoutSeconds;
+        }
+
+        public long getIdleTimeoutSeconds() {
+            return idleTimeoutSeconds;
+        }
+
+        public void setIdleTimeoutSeconds(long idleTimeoutSeconds) {
+            this.idleTimeoutSeconds = idleTimeoutSeconds;
         }
     }
 
@@ -448,6 +526,11 @@ public class NettyServerStartupProperties {
          * Max websocket frame payload length. 0 or negative means use the default.
          */
         private int maxFramePayloadLength;
+
+        /**
+         * Comma or whitespace separated allowed Origin values. Blank means allow all origins.
+         */
+        private String allowedOrigins;
 
         public boolean isEnable() {
             return enable;
@@ -559,6 +642,14 @@ public class NettyServerStartupProperties {
 
         public void setMaxFramePayloadLength(int maxFramePayloadLength) {
             this.maxFramePayloadLength = maxFramePayloadLength;
+        }
+
+        public String getAllowedOrigins() {
+            return allowedOrigins;
+        }
+
+        public void setAllowedOrigins(String allowedOrigins) {
+            this.allowedOrigins = allowedOrigins;
         }
 
         public enum BroadcastNonWritableChannelPolicy {

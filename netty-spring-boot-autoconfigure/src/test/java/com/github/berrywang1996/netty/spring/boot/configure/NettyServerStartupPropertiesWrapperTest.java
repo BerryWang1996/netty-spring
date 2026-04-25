@@ -21,7 +21,13 @@ class NettyServerStartupPropertiesWrapperTest {
                         "server.netty.http.handle-file=true",
                         "server.netty.http.file-location=public",
                         "server.netty.http.info-location=WEB-INF",
+                        "server.netty.http.max-initial-line-length=2048",
+                        "server.netty.http.max-header-size=4096",
+                        "server.netty.http.max-chunk-size=16384",
                         "server.netty.http.max-content-length=131072",
+                        "server.netty.http.read-timeout-seconds=11",
+                        "server.netty.http.write-timeout-seconds=12",
+                        "server.netty.http.idle-timeout-seconds=13",
                         "server.netty.http.gzip.enable=true",
                         "server.netty.http.gzip.compression-level=7",
                         "server.netty.http.gzip.window-bits=13",
@@ -42,7 +48,13 @@ class NettyServerStartupPropertiesWrapperTest {
                     assertThat(properties.getFileLocation()).isEqualTo("public");
                     assertThat(properties.getHttp().getInfoLocation()).isEqualTo("WEB-INF");
                     assertThat(properties.getInfoLocation()).isEqualTo("WEB-INF");
+                    assertThat(properties.getHttp().getMaxInitialLineLength()).isEqualTo(2048);
+                    assertThat(properties.getHttp().getMaxHeaderSize()).isEqualTo(4096);
+                    assertThat(properties.getHttp().getMaxChunkSize()).isEqualTo(16384);
                     assertThat(properties.getHttp().getMaxContentLength()).isEqualTo(131072);
+                    assertThat(properties.getHttp().getReadTimeoutSeconds()).isEqualTo(11L);
+                    assertThat(properties.getHttp().getWriteTimeoutSeconds()).isEqualTo(12L);
+                    assertThat(properties.getHttp().getIdleTimeoutSeconds()).isEqualTo(13L);
                     assertThat(properties.getHttp().getGzip().isEnable()).isTrue();
                     assertThat(properties.getGzip().isEnable()).isTrue();
                     assertThat(properties.getHttp().getGzip().getCompressionLevel()).isEqualTo(7);
@@ -84,6 +96,20 @@ class NettyServerStartupPropertiesWrapperTest {
                     assertThat(properties.getHttp().getSsl().isEnable()).isTrue();
                     assertThat(properties.getHttp().getSsl().getCertificate()).isEqualTo("legacy.crt");
                     assertThat(properties.getHttp().getSsl().getCertificateKey()).isEqualTo("legacy.key");
+                });
+    }
+
+    @Test
+    void websocketNamespaceBindsAllowedOrigins() {
+        this.contextRunner
+                .withPropertyValues("server.netty.websocket.allowed-origins=https://a.example,https://b.example")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    NettyServerStartupPropertiesWrapper properties =
+                            context.getBean(NettyServerStartupPropertiesWrapper.class);
+
+                    assertThat(properties.getWebSocket().getAllowedOrigins())
+                            .isEqualTo("https://a.example,https://b.example");
                 });
     }
 }

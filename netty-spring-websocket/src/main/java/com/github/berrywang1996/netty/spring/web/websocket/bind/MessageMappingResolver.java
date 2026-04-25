@@ -115,6 +115,9 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             if (!isMessageRequestLegal(ctx, request)) {
                 return;
             }
+            if (!isOriginAllowed(ctx, request)) {
+                return;
+            }
             // on handshake
             if (!onHandshake(ctx, request)) {
                 return;
@@ -268,12 +271,14 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         // Handle a bad request.
         if (!request.decoderResult().isSuccess()) {
             log.warn("WS illegal: decoderResult fail");
+            getHttpRuntimeRecorder().recordWebSocketHandshakeRejected();
             sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, HttpResponseStatus.BAD_REQUEST)); // 400
             return false;
         }
         // Allow only GET methods.
         if (request.method() != GET) {
             log.warn("WS illegal: method={}", request.method());
+            getHttpRuntimeRecorder().recordWebSocketHandshakeRejected();
             sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, HttpResponseStatus.METHOD_NOT_ALLOWED)); // 405
             return false;
         }
@@ -291,11 +296,48 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             }
         }
         if (!isWs || !hasConnUpgrade) {
+            getHttpRuntimeRecorder().recordWebSocketHandshakeRejected();
             sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, HttpResponseStatus.UPGRADE_REQUIRED));
             return false;
         }
 
         return true;
+    }
+
+    private boolean isOriginAllowed(ChannelHandlerContext ctx, FullHttpRequest request) {
+        String allowedOrigins = webSocketProperties == null ? null : webSocketProperties.getAllowedOrigins();
+        if (StringUtil.isBlank(allowedOrigins)) {
+            return true;
+        }
+        if (allowsAnyOrigin(allowedOrigins)) {
+            return true;
+        }
+        String origin = request.headers().get(HttpHeaderNames.ORIGIN);
+        if (StringUtil.isBlank(origin)) {
+            log.warn("Reject websocket handshake because Origin header is missing. uri={}", request.uri());
+            getHttpRuntimeRecorder().recordWebSocketOriginRejected();
+            return rejectWithHttp(ctx, request, HttpResponseStatus.FORBIDDEN, "Forbidden by origin");
+        }
+        for (String allowedOrigin : allowedOrigins.split("[,\\s]+")) {
+            if (StringUtil.isBlank(allowedOrigin)) {
+                continue;
+            }
+            if ("*".equals(allowedOrigin) || allowedOrigin.equalsIgnoreCase(origin.trim())) {
+                return true;
+            }
+        }
+        log.warn("Reject websocket handshake because Origin is not allowed. uri={}, origin={}", request.uri(), origin);
+        getHttpRuntimeRecorder().recordWebSocketOriginRejected();
+        return rejectWithHttp(ctx, request, HttpResponseStatus.FORBIDDEN, "Forbidden by origin");
+    }
+
+    private boolean allowsAnyOrigin(String allowedOrigins) {
+        for (String allowedOrigin : allowedOrigins.split("[,\\s]+")) {
+            if ("*".equals(allowedOrigin)) {
+                return true;
+            }
+        }
+        return false;
     }
 
 
@@ -573,6 +615,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     }
 
     private boolean rejectWithHttp(ChannelHandlerContext ctx, FullHttpRequest req, HttpResponseStatus status, String msg) {
+        getHttpRuntimeRecorder().recordWebSocketHandshakeRejected();
         DefaultFullHttpResponse res = new DefaultFullHttpResponse(HTTP_1_1, status,
                 Unpooled.copiedBuffer(msg, CharsetUtil.UTF_8));
         HttpUtil.setContentLength(res, res.content().readableBytes());

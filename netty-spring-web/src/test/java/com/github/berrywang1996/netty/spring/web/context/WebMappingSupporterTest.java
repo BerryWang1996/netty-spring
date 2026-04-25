@@ -1,6 +1,7 @@
 package com.github.berrywang1996.netty.spring.web.context;
 
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
+import io.netty.channel.ChannelHandlerContext;
 import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
@@ -177,6 +178,32 @@ class WebMappingSupporterTest {
     }
 
     @Test
+    void configuresHttpRuntimeRecorderForResolvers() throws Exception {
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                1,
+                1,
+                0L,
+                TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<Runnable>());
+        RecordingResolver resolver = new RecordingResolver();
+        WebMappingSupporter supporter = new WebMappingSupporter(
+                new NettyServerStartupProperties(),
+                null,
+                Collections.<String, AbstractMappingResolver>singletonMap("/test", resolver),
+                executor,
+                new Semaphore(1));
+
+        try {
+            resolver.recordHttpResponseWriteFailure();
+
+            assertEquals(1L, supporter.getHttpRuntimeStats().getHttpResponseWriteFailureCount());
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void shutdownClosesExecutorIdempotently() throws Exception {
         ThreadPoolExecutor executor = new ThreadPoolExecutor(
                 1,
@@ -216,5 +243,24 @@ class WebMappingSupporterTest {
             Thread.sleep(10L);
         }
         assertEquals(expectedPermits, semaphore.availablePermits());
+    }
+
+    private static final class RecordingResolver extends AbstractMappingResolver<Object, String> {
+
+        private RecordingResolver() {
+            super("/test", Collections.<String, java.lang.reflect.Method>emptyMap(), new Object());
+        }
+
+        private void recordHttpResponseWriteFailure() {
+            getHttpRuntimeRecorder().recordHttpResponseWriteFailure();
+        }
+
+        @Override
+        public void resolve(ChannelHandlerContext ctx, Object msg) {
+        }
+
+        @Override
+        public void removeSession(String sessionId) {
+        }
     }
 }

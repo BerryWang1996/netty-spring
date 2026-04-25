@@ -265,6 +265,7 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
             @Override
             public void operationComplete(ChannelFuture future) {
                 if (!future.isSuccess()) {
+                    getHttpRuntimeRecorder().recordHttpResponseWriteFailure();
                     log.warn("Write http response failed, close channel. uri={}", msg.uri(), future.cause());
                     future.channel().close();
                 }

@@ -54,10 +54,92 @@ public class StartupPropertiesUtil {
             createDirectory(httpProperties.getFileLocation());
             log.info("Netty server {} directory is \"{}\"", "root", httpProperties.getFileLocation());
         }
+        validateSslProperties(httpProperties.getSsl());
+        validateHttpTimeoutProperties(httpProperties);
+        validateWebSocketExecutorProperties(properties.getWebSocket());
 
 //        createDirectory(properties.getInfoLocation());
 //        log.info("Netty server {} directory is \"{}\"", "info", properties.getInfoLocation());
 
+    }
+
+    private static void validateSslProperties(NettyServerStartupProperties.Ssl sslProperties) {
+        if (sslProperties == null || !sslProperties.isEnable()) {
+            return;
+        }
+        if (StringUtil.isBlank(sslProperties.getCertificate())) {
+            throw new IllegalArgumentException("SSL certificate should not be blank when ssl is enabled.");
+        }
+        if (StringUtil.isBlank(sslProperties.getCertificateKey())) {
+            throw new IllegalArgumentException("SSL certificate key should not be blank when ssl is enabled.");
+        }
+        validateFileExists("SSL certificate", sslProperties.getCertificate());
+        validateFileExists("SSL certificate key", sslProperties.getCertificateKey());
+    }
+
+    private static void validateFileExists(String name, String path) {
+        File file = new File(path);
+        if (!file.exists() || !file.isFile() || !file.canRead()) {
+            throw new IllegalArgumentException(name + " file should exist: " + path);
+        }
+    }
+
+    private static void validateHttpTimeoutProperties(NettyServerStartupProperties.Http httpProperties) {
+        if (httpProperties == null) {
+            return;
+        }
+        if (httpProperties.getReadTimeoutSeconds() < 0L) {
+            throw new IllegalArgumentException("HTTP read timeout seconds must greater than or equal to 0.");
+        }
+        if (httpProperties.getWriteTimeoutSeconds() < 0L) {
+            throw new IllegalArgumentException("HTTP write timeout seconds must greater than or equal to 0.");
+        }
+        if (httpProperties.getIdleTimeoutSeconds() < 0L) {
+            throw new IllegalArgumentException("HTTP idle timeout seconds must greater than or equal to 0.");
+        }
+    }
+
+    private static void validateWebSocketExecutorProperties(NettyServerStartupProperties.WebSocket webSocketProperties) {
+        if (webSocketProperties == null) {
+            return;
+        }
+        validateExecutorProperties(
+                "websocket sender",
+                webSocketProperties.getCorePoolSize(),
+                webSocketProperties.getMaxPoolSize(),
+                webSocketProperties.getKeepAliveTime(),
+                webSocketProperties.getQueueCapacity());
+        validateExecutorProperties(
+                "websocket handler",
+                webSocketProperties.getHandlerCorePoolSize(),
+                webSocketProperties.getHandlerMaxPoolSize(),
+                webSocketProperties.getHandlerKeepAliveTime(),
+                webSocketProperties.getHandlerQueueCapacity());
+        if (webSocketProperties.getHandlerPermitLimit() < 0) {
+            throw new IllegalArgumentException("Websocket handler permit limit must greater than or equal to 0.");
+        }
+    }
+
+    private static void validateExecutorProperties(String name,
+                                                   int corePoolSize,
+                                                   int maxPoolSize,
+                                                   long keepAliveTime,
+                                                   int queueCapacity) {
+        if (corePoolSize < 0) {
+            throw new IllegalArgumentException(name + " core pool size must greater than or equal to 0.");
+        }
+        if (maxPoolSize < 0) {
+            throw new IllegalArgumentException(name + " max pool size must greater than or equal to 0.");
+        }
+        if (corePoolSize > 0 && maxPoolSize > 0 && maxPoolSize < corePoolSize) {
+            throw new IllegalArgumentException(name + " max pool size must greater than or equal to core pool size.");
+        }
+        if (keepAliveTime < 0L) {
+            throw new IllegalArgumentException(name + " keep alive time must greater than or equal to 0.");
+        }
+        if (queueCapacity < 0) {
+            throw new IllegalArgumentException(name + " queue capacity must greater than or equal to 0.");
+        }
     }
 
     private static void createDirectory(String path) {

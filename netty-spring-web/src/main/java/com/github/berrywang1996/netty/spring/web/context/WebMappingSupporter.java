@@ -73,6 +73,8 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
 
     private final Semaphore semaphore;
 
+    private final HttpRuntimeRecorder httpRuntimeRecorder;
+
     private final int handlerPermitLimit;
 
     private final AtomicLong permitRejectedCount = new AtomicLong();
@@ -96,10 +98,12 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
         this.applicationContext = applicationContext;
         this.executor = executor == null ? initHandlerExecutorThreadPool() : executor;
         this.semaphore = semaphore == null ? initHandlerSemaphore() : semaphore;
+        this.httpRuntimeRecorder = new HttpRuntimeRecorder();
         this.handlerPermitLimit = Math.max(0, this.semaphore.availablePermits());
         this.mappingResolverMap = mappingResolverMap == null
                 ? initMappingResolverMap(startupProperties, applicationContext)
                 : adaptMappingResolverMap(mappingResolverMap);
+        configureHttpRuntimeRecorder(this.mappingResolverMap);
         configureHandlerSubmitter(this.mappingResolverMap);
     }
 
@@ -176,6 +180,12 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
         }
     }
 
+    private void configureHttpRuntimeRecorder(Map<String, AbstractMappingResolver> resolverMap) {
+        for (AbstractMappingResolver resolver : resolverMap.values()) {
+            resolver.setHttpRuntimeRecorder(this.httpRuntimeRecorder);
+        }
+    }
+
     private boolean isMappingSupporterEnabled(String mappingClass) {
         if ("com.github.berrywang1996.netty.spring.web.mvc.context.RequestMappingSupporter".equals(mappingClass)) {
             return isMvcEnabled();
@@ -234,6 +244,10 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
                 this.semaphore.availablePermits(),
                 this.permitRejectedCount.get(),
                 this.executorRejectedCount.get());
+    }
+
+    public HttpRuntimeStats getHttpRuntimeStats() {
+        return this.httpRuntimeRecorder.getRuntimeStats();
     }
 
     public void shutdown() {
