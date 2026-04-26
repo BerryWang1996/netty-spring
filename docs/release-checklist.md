@@ -12,6 +12,8 @@
 1. 确认本次版本类型：`1.0.x` 只承接维护修复；`1.1.x` 承接 P4 Starter/配置模型收敛；P5+ 产品能力不混入 `1.1.0-RC1`。
 2. 更新版本号、README 和 [开发计划](development-plan.md) 中的当前阶段说明。
 3. 运行全量 `mvn test`。
+   生成 SBOM：`mvn -Psbom -DskipTests package org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom`。
+   运行依赖漏洞扫描：`mvn -Pdependency-scan org.owasp:dependency-check-maven:12.2.1:aggregate`。
 4. 额外确认 starter/demo 相关回归：
    `netty-web-spring-boot-starter`
    `netty-webmvc-spring-boot-starter`
@@ -35,7 +37,9 @@
    MVC 响应、静态文件发送、WebSocket 写失败和过载拒绝有统一日志、关闭策略、计数或指标；至少确认 `getHandlerRuntimeStats()`、`getHttpRuntimeStats()`、MessageSender runtime stats 和内置 health/status 管理端点的关键计数可读。
    如启用 `server.netty.management.enable=true`，必须确认管理端点只在受保护网络、网关或等效访问控制下暴露。
    handler/sender 线程池配置有启动期校验，非法容量和 `max < core` 不会静默兜底。
-   发布前完成依赖漏洞扫描，处理或记录 GitHub Dependabot/等效扫描告警。
+   发布前完成依赖漏洞扫描，处理或记录 GitHub Dependabot/等效扫描告警；高危及以上漏洞或未 triage 的扫描失败不得进入正式 `1.1.0` tag。
+   Dependency-Check 误报必须写入 `dependency-check-suppressions.xml` 并说明原因，不能通过降低扫描门槛绕过。
+   CI 或发布机建议配置 `NVD_API_KEY` 和可复用 Dependency-Check 缓存，避免首次漏洞库初始化影响发布判断。
    README、配置文档和 demo 明确安全接入方式，不把 RC 候选描述为企业生产默认部署版本。
 
 ## 发布动作

@@ -26,6 +26,7 @@
 
 - [开发计划与阶段状态](docs/development-plan.md)
 - [版本发布检查清单](docs/release-checklist.md)
+- [依赖治理与供应链门禁](docs/dependency-governance.md)
 - [Netty 配置说明](docs/netty-configuration.md)
 - [WebSocket 配置说明](docs/websocket-configuration.md)
 
@@ -33,6 +34,7 @@
 
 - 推荐使用 Maven Wrapper：`./mvnw test`
 - 当前阶段已在 `GraalVM JDK 17.0.11` + `Apache Maven 3.9.9` 环境完成全量 `mvn test` 验证
+- SBOM 与漏洞扫描使用显式 profile：`mvn -Psbom -DskipTests package org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom`、`mvn -Pdependency-scan org.owasp:dependency-check-maven:12.2.1:aggregate`
 
 ## 当前配置重点
 

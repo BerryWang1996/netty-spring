@@ -57,6 +57,9 @@
         <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
         <maven-surefire-plugin.version>3.2.5</maven-surefire-plugin.version>
         <maven-deploy-plugin.version>3.1.2</maven-deploy-plugin.version>
+        <cyclonedx-maven-plugin.version>2.9.1</cyclonedx-maven-plugin.version>
+        <dependency-check-maven.version>12.2.1</dependency-check-maven.version>
+        <dependency-check.fail-build-on-cvss>7.0</dependency-check.fail-build-on-cvss>
     </properties>
 
     <dependencyManagement>
@@ -164,6 +167,58 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>sbom</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.cyclonedx</groupId>
+                        <artifactId>cyclonedx-maven-plugin</artifactId>
+                        <version>${cyclonedx-maven-plugin.version}</version>
+                        <inherited>false</inherited>
+                        <configuration>
+                            <projectType>library</projectType>
+                            <schemaVersion>1.6</schemaVersion>
+                            <outputFormat>all</outputFormat>
+                            <outputName>netty-spring-sbom</outputName>
+                            <outputReactorProjects>false</outputReactorProjects>
+                            <includeTestScope>false</includeTestScope>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>dependency-scan</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.owasp</groupId>
+                        <artifactId>dependency-check-maven</artifactId>
+                        <version>${dependency-check-maven.version}</version>
+                        <inherited>false</inherited>
+                        <configuration>
+                            <formats>
+                                <format>HTML</format>
+                                <format>JSON</format>
+                                <format>SARIF</format>
+                            </formats>
+                            <failBuildOnCVSS>${dependency-check.fail-build-on-cvss}</failBuildOnCVSS>
+                            <failOnError>true</failOnError>
+                            <skipTestScope>true</skipTestScope>
+                            <nvdApiKeyEnvironmentVariable>NVD_API_KEY</nvdApiKeyEnvironmentVariable>
+                            <outputDirectory>${project.build.directory}/dependency-check</outputDirectory>
+                            <suppressionFiles>
+                                <suppressionFile>${maven.multiModuleProjectDirectory}/dependency-check-suppressions.xml</suppressionFile>
+                            </suppressionFiles>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
     <distributionManagement>
         <repository>

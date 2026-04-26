@@ -6,7 +6,7 @@
 
 - `1.0.2` 已完成 `P3.2` 发布后治理收口，可作为当前 `1.0.x` 稳定发布版本。
 - 开发线已切到 `1.1.0-SNAPSHOT`，`P4` 已推进到第五刀：resolver 延迟获取 controller bean，先消除 `MessageSenderSupport` 构造注入仍依赖 `@Lazy` 的启动期循环依赖；新增 `netty-spring-boot-autoconfigure` 共用模块，把三套 Starter 里重复的 `nettyServer + properties` 自动装配骨架先收敛到一处；再把 `MessageSenderSupport` 自动配置并回公共 autoconfigure，同时打通 `server.netty.mvc.enable` / `server.netty.websocket.enable` 开关，用 demo 与 starter 回归测试明确 `MessageSender` 接口注入语义，并开始把 HTTP/file/gzip/ssl 配置收敛到 `server.netty.http.*` 且保留旧键兼容。
-- 当前代码已具备框架功能层面的 `1.1.0-RC1` 候选条件：P4 配置边界、自动配置兼容性、`@Lazy` 依赖消除和全量 `mvn test` 均已完成验证；`P4.1` 生产准入硬化已继续推进，已覆盖静态文件根目录逃逸保护、HTTP 聚合/解码/超时边界配置化、TLS 证书/协议/套件配置、WebSocket Origin 白名单、MVC/静态文件写失败关闭、HTTP 失败路径运行时统计、内置 health/status 管理端点，以及 handler/sender 线程池配置校验。但整体仍未达到企业生产环境默认部署标准，正式版应继续补齐剩余安全扩展、指标深化和依赖治理门禁。
+- 当前代码已具备框架功能层面的 `1.1.0-RC1` 候选条件：P4 配置边界、自动配置兼容性、`@Lazy` 依赖消除和全量 `mvn test` 均已完成验证；`P4.1` 生产准入硬化已继续推进，已覆盖静态文件根目录逃逸保护、HTTP 聚合/解码/超时边界配置化、TLS 证书/协议/套件配置、WebSocket Origin 白名单、MVC/静态文件写失败关闭、HTTP 失败路径运行时统计、内置 health/status 管理端点、handler/sender 线程池配置校验，以及 SBOM/Dependency-Check 依赖治理入口。但整体仍未达到企业生产环境默认部署标准，正式版应继续补齐剩余安全扩展、指标深化和真实漏洞告警 triage。
 - 后续计划应以“先稳住发布面，再统一入口，再扩能力”为顺序，这比直接进入产品功能扩展更符合仓库当前状态。
 
 ## 当前发版判断
@@ -39,7 +39,7 @@ P4.1 首批已完成：
 - 线程池配置校验已有基础约束，后续还需要把校验错误接入更清晰的 starter 启动失败诊断和文档示例。
 - 安全基线尚未完全产品化：TLS 证书文件校验和 Origin 白名单已补齐，但目前仍主要依赖业务侧 `ON_HANDSHAKE` 自行拒绝连接，框架层还缺少标准握手鉴权扩展、完整 CORS 策略、TLS 协议/套件配置和安全示例。
 - 可观测性已从快照/API 层推进到轻量管理端点：已有 handler/http/sender runtime stats，且 handler/http 可通过内置 health/status 读取；后续还缺 Micrometer/Actuator 指标、拒绝/过载/写失败统一事件和更完整的关闭原因维度。
-- 依赖与供应链治理未纳入发布门禁：根 POM 仍使用 Spring Boot `2.7.18`，且 GitHub push 时已提示默认分支存在 Dependabot 漏洞告警。正式生产发布前需要完成依赖扫描、SBOM 或等效清单、漏洞分级处理和升级策略。
+- 依赖与供应链治理已具备可执行入口：新增 `sbom` / `dependency-scan` Maven profile、Dependency-Check suppression 占位文件和处理规则；但根 POM 仍使用 Spring Boot `2.7.18`，且 GitHub push 时已提示默认分支存在 Dependabot 漏洞告警。正式生产发布前仍需要完成真实扫描结果和 Dependabot 告警 triage、漏洞分级处理和升级策略。
 - Demo 仍是基础示例：demo 中仍有 `printStackTrace` 和极简 echo/send 用法，不足以作为企业接入、安全配置和运维排障示范。
 
 建议把当前阶段拆成两个门槛：
@@ -62,7 +62,7 @@ P4.1 首批已完成：
 - `server.netty.mvc.enable` / `server.netty.websocket.enable` 已接入真实 mapping 初始化路径，并补了 starter 级回归测试验证开关生效。
 - `server.netty.http.*` 已作为 HTTP/file/gzip/ssl 的推荐新命名空间引入，旧的 `server.netty.gzip.*`、`server.netty.file-location` 等顶层配置继续兼容。
 - 已补 `server.netty.http.*` 新旧配置绑定测试，覆盖静态文件、gzip、SSL；并补 `StartupPropertiesUtil` 运行时校验测试，确认静态文件路径读取统一走 HTTP 配置视图。
-- `P4.1` 已继续落地生产硬化：静态文件根目录逃逸保护、HTTP 聚合/解码/超时边界配置化、TLS 证书/协议/套件配置、WebSocket Origin 白名单、MVC/静态文件写失败关闭、HTTP 失败路径运行时计数、内置 health/status 管理端点、handler 默认线程/permit 收敛、handler/sender 配置校验均已有回归测试。
+- `P4.1` 已继续落地生产硬化：静态文件根目录逃逸保护、HTTP 聚合/解码/超时边界配置化、TLS 证书/协议/套件配置、WebSocket Origin 白名单、MVC/静态文件写失败关闭、HTTP 失败路径运行时计数、内置 health/status 管理端点、handler 默认线程/permit 收敛、handler/sender 配置校验均已有回归测试；SBOM 和依赖漏洞扫描已加入显式 Maven profile。
 - 当前仓库已在本地 `GraalVM JDK 17.0.11 + Maven 3.9.9` 环境完成全量 `mvn test` 验证。
 
 ### 代码里已经暴露出的下一阶段问题
@@ -158,6 +158,7 @@ P4.1 首批已完成：
 - 第六刀新增回归覆盖 TLS 协议/套件配置绑定和逗号/空白分隔解析。
 - 已完成第七刀：`server.netty.management.*` 接入内置 health/status 管理端点，默认关闭，开启后可读取健康状态和 handler/http 运行时快照。
 - 第七刀新增回归覆盖管理端点配置绑定、路径校验、health 响应和 status runtime snapshot 响应。
+- 已完成第八刀：新增 `sbom` / `dependency-scan` Maven profile，分别生成 CycloneDX SBOM 和 OWASP Dependency-Check 报告，并补 `dependency-check-suppressions.xml`、依赖治理文档和发布门禁规则。
 
 重点项：
 
@@ -166,14 +167,14 @@ P4.1 首批已完成：
 - 继续收敛线程池默认值与配置校验：handler 默认 core/max/permit 已调整，handler/sender 已补基础启动期校验，后续补更完整的错误提示和 starter 诊断。
 - 建立安全基线：TLS 证书路径校验、TLS 协议/套件配置和 Origin 白名单已补齐；后续继续提供握手鉴权扩展点、完整 CORS 策略、安全失败响应策略和安全接入示例。
 - 建立生产观测基线：短期已通过运行时快照和内置 health/status 管理端点暴露 handler/http 计数与线程池状态；后续通过 Micrometer/Actuator 暴露连接数、拒绝数、写失败数、广播耗时和关闭原因。
-- 建立依赖治理门禁：补依赖漏洞扫描流程、SBOM 或等效依赖清单、Dependabot 告警处理规则和版本升级策略。
+- 建立依赖治理门禁：SBOM、Dependency-Check 扫描流程、suppression 文件和 Dependabot 告警处理规则已补；后续需要执行真实扫描、处理当前漏洞告警，并形成升级策略。
 
 完成标准：
 
 - 启用静态文件服务时不能逃逸根目录，且有路径穿越回归测试。
 - HTTP 请求大小、超时、TLS、安全校验等关键生产参数可配置、可文档化、可测试。
 - 过载、写失败、关闭、拒绝等路径都能被指标或状态端点观察到。
-- 发布清单中加入依赖扫描和安全配置确认，`1.1.0` 正式版不得跳过该门槛。
+- 发布清单中加入依赖扫描和安全配置确认，`1.1.0` 正式版不得跳过该门槛；高危及以上漏洞或未 triage 的扫描失败不得进入正式 tag。
 
 ### P5 WebSocket 产品能力增强
 
