@@ -6,6 +6,7 @@ import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
+import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoCodec;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandler;
@@ -702,6 +703,41 @@ class MessageMappingResolverTest {
     }
 
     @Test
+    void encryptedTextMessageIsDecodedBeforePayloadBinding() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.TEXT_MESSAGE, method(endpoint, "onTextPayload", String.class, MessageSession.class));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.getCrypto().setEnable(true);
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/test",
+                methods,
+                endpoint,
+                properties,
+                null,
+                new PrefixMessageCryptoCodec());
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        TextWebSocketFrame frame = new TextWebSocketFrame("enc:hello");
+        try {
+            resolver.resolve(testChannel.ctx, frame);
+
+            assertEquals("hello", endpoint.lastTextPayload);
+            assertEquals(1, endpoint.textPayloadCount);
+        } finally {
+            frame.release();
+            testChannel.finish();
+        }
+    }
+
+    @Test
     void textMessageCanBindJsonPojoPayload() throws Exception {
         RecordingEndpoint endpoint = new RecordingEndpoint();
         Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
@@ -868,6 +904,22 @@ class MessageMappingResolverTest {
         private void runNext() {
             Runnable task = tasks.remove(0);
             task.run();
+        }
+    }
+
+    private static final class PrefixMessageCryptoCodec implements MessageCryptoCodec {
+        @Override
+        public TextWebSocketFrame encrypt(MessageSession session, io.netty.handler.codec.http.websocketx.WebSocketFrame plainFrame) {
+            return new TextWebSocketFrame("enc:" + ((TextWebSocketFrame) plainFrame).text());
+        }
+
+        @Override
+        public TextWebSocketFrame decrypt(MessageSession session, io.netty.handler.codec.http.websocketx.WebSocketFrame encryptedFrame) {
+            String text = ((TextWebSocketFrame) encryptedFrame).text();
+            if (!text.startsWith("enc:")) {
+                throw new IllegalArgumentException("Missing encrypted prefix.");
+            }
+            return new TextWebSocketFrame(text.substring("enc:".length()));
         }
     }
 

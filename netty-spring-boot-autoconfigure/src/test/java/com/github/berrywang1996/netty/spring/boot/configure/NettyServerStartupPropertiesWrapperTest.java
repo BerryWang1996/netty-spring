@@ -113,7 +113,13 @@ class NettyServerStartupPropertiesWrapperTest {
                 .withPropertyValues(
                         "server.netty.websocket.allowed-origins=https://a.example,https://b.example",
                         "server.netty.websocket.heartbeat-interval-seconds=30",
-                        "server.netty.websocket.heartbeat-timeout-seconds=90")
+                        "server.netty.websocket.heartbeat-timeout-seconds=90",
+                        "server.netty.websocket.crypto.enable=true",
+                        "server.netty.websocket.crypto.algorithm=AES-GCM",
+                        "server.netty.websocket.crypto.key-id=main",
+                        "server.netty.websocket.crypto.key-provider=demoProvider",
+                        "server.netty.websocket.crypto.encrypt-text=true",
+                        "server.netty.websocket.crypto.encrypt-binary=false")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     NettyServerStartupPropertiesWrapper properties =
@@ -123,6 +129,12 @@ class NettyServerStartupPropertiesWrapperTest {
                             .isEqualTo("https://a.example,https://b.example");
                     assertThat(properties.getWebSocket().getHeartbeatIntervalSeconds()).isEqualTo(30L);
                     assertThat(properties.getWebSocket().getHeartbeatTimeoutSeconds()).isEqualTo(90L);
+                    assertThat(properties.getWebSocket().getCrypto().isEnable()).isTrue();
+                    assertThat(properties.getWebSocket().getCrypto().getAlgorithm()).isEqualTo("AES-GCM");
+                    assertThat(properties.getWebSocket().getCrypto().getKeyId()).isEqualTo("main");
+                    assertThat(properties.getWebSocket().getCrypto().getKeyProvider()).isEqualTo("demoProvider");
+                    assertThat(properties.getWebSocket().getCrypto().isEncryptText()).isTrue();
+                    assertThat(properties.getWebSocket().getCrypto().isEncryptBinary()).isFalse();
                 });
     }
 

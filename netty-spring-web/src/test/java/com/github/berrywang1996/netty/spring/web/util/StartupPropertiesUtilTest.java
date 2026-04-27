@@ -120,6 +120,19 @@ class StartupPropertiesUtilTest {
     }
 
     @Test
+    void websocketCryptoMustTargetAtLeastOneFrameTypeWhenEnabled() {
+        NettyServerStartupProperties properties = new NettyServerStartupProperties();
+        properties.getWebSocket().getCrypto().setEnable(true);
+        properties.getWebSocket().getCrypto().setEncryptText(false);
+        properties.getWebSocket().getCrypto().setEncryptBinary(false);
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> StartupPropertiesUtil.checkAndImproveProperties(properties));
+        assertTrue(exception.getMessage().contains("crypto"));
+    }
+
+    @Test
     void httpTimeoutSecondsMustNotBeNegative() {
         NettyServerStartupProperties readTimeoutProperties = new NettyServerStartupProperties();
         readTimeoutProperties.getHttp().setReadTimeoutSeconds(-1L);

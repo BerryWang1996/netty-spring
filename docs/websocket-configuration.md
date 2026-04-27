@@ -23,6 +23,13 @@ server:
       allowed-origins: https://app.example.com,https://admin.example.com
       heartbeat-interval-seconds: 30
       heartbeat-timeout-seconds: 90
+      crypto:
+        enable: false
+        algorithm: CUSTOM
+        key-id: main
+        key-provider: demoProvider
+        encrypt-text: true
+        encrypt-binary: true
       broadcast-non-writable-channel-policy: SKIP
       broadcast-rejected-execution-policy: DROP
 ```
@@ -76,6 +83,16 @@ server:
 - `heartbeat-timeout-seconds`：在指定时间内没有收到任何入站 frame 时关闭 session，单位秒，默认 `0` 表示关闭。
 - 当 `heartbeat-interval-seconds > 0` 且 `heartbeat-timeout-seconds > 0` 时，`heartbeat-timeout-seconds` 必须大于等于 `heartbeat-interval-seconds`。
 - 心跳超时会触发统一 `ON_ERROR` / `ON_CLOSE` 生命周期，并发送 reason 为 `Heartbeat timeout` 的 close frame。
+
+## 应用层消息加密扩展
+
+- `crypto.enable`：是否启用应用层 WebSocket 消息加密/解密扩展，默认 `false`。默认关闭时，发送和接收行为与明文版本完全一致。
+- `crypto.algorithm`：交给 `MessageCryptoCodec` 使用的算法标识，当前框架只做配置透传和扩展点接线，默认 `CUSTOM`。
+- `crypto.key-id` / `crypto.key-provider`：交给业务自定义 `MessageCryptoCodec` 使用的密钥标识或 provider 名称，框架不内置密钥。
+- `crypto.encrypt-text`：启用 crypto 后是否处理 `TextWebSocketFrame`，默认 `true`。
+- `crypto.encrypt-binary`：启用 crypto 后是否处理 `BinaryWebSocketFrame`，默认 `true`。
+- 启用 crypto 时，应用必须提供唯一一个 `MessageCryptoCodec` Bean；否则启动阶段会失败，避免配置看似启用但实际仍发送明文。
+- 当前阶段只提供扩展骨架，不替代 TLS/WSS，也不承诺浏览器运行时完全不可见明文；如果前端需要解密，密钥或明文仍会在浏览器运行时出现。后续版本会在此骨架上继续补 AES-GCM 内置实现和 demo。
 
 ## 当前行为说明
 

@@ -36,7 +36,7 @@
 
 1. `1.1.0-RC2` 已从 P4.1 全量回归通过点切出并发布；后续若要发正式 `1.1.0`，只做 RC 验证与最终版本号切换，不混入 P5。
 2. P5 首批能力已完成并提交：query/header/session 访问抽象、text/json/binary 编解码、会话查询/单播/按 URI 广播和主动关闭 API。
-3. 当前主线已切到 `1.2.0-SNAPSHOT`，P5.x 心跳/空闲断线第一刀已完成，下一刀进入 WebSocket 应用层消息加密扩展骨架。
+3. 当前主线已切到 `1.2.0-SNAPSHOT`，P5.x 心跳/空闲断线第一刀已完成，WebSocket 应用层消息加密扩展骨架已开始落地。
 4. P5 基本稳定后进入 `P6`：Micrometer/Actuator 指标、关闭原因维度、日志与运行时诊断增强。
 
 ## 企业生产就绪度评估
@@ -223,7 +223,7 @@ P4.1 首批已完成：
 - 第六刀已完成：`MessageSender` 新增 `closeSession()` / `closeSessions()`，业务侧可以主动关闭单个 session 或 URI 下全部 session，关闭仍走统一 `ON_CLOSE` 与清理链路。
 - Demo 已同步第一批 P5 API：示例控制器改用 `broadcast()`、`sendToSession()`、`closeSession()`、`JsonMessage`、`String`、JSON POJO 和 `byte[]` 参数绑定。
 - P5.x 第一刀已完成：新增 `heartbeat-interval-seconds` / `heartbeat-timeout-seconds`，服务端可定时发送 Ping，并在空闲超时后走统一 `ON_ERROR` / `ON_CLOSE` 清理链路，已补配置绑定、参数校验和生命周期回归测试。
-- P5.x 下一刀建议进入 WebSocket 应用层消息加密扩展骨架：先落默认关闭的 codec/config/key-provider 抽象和兼容性测试，再推进 AES-GCM 内置实现。
+- P5.x 第二刀已启动：新增默认关闭的 `server.netty.websocket.crypto.*` 配置命名空间和 `MessageCryptoCodec` 扩展点，发送侧在写出 frame 前加密，接收侧在 handler 参数绑定前解密；当前只做可插拔骨架与兼容性保护，后续再推进 AES-GCM 内置实现。
 
 重点项：
 
@@ -253,6 +253,7 @@ P4.1 首批已完成：
 建议拆分：
 
 - 新增 `MessageCryptoCodec` / `MessageCipher` 扩展点，负责 `encrypt()` / `decrypt()`，默认关闭。
+- 第一阶段先落 `MessageCryptoCodec`、`server.netty.websocket.crypto.*`、唯一 Bean 装配校验、发送/接收链路接线和默认关闭兼容性测试。
 - 首个内置实现建议采用 `AES-GCM`，密文 envelope 包含 `alg`、`kid`、`iv`、`ciphertext`、`tag` 等字段；避免自定义不透明算法。
 - 新增 `server.netty.websocket.crypto.*` 配置命名空间，至少包含 `enable`、`algorithm`、`key-id`、`key-provider`、`encrypt-text`、`encrypt-binary` 等开关或策略。
 - 发送侧支持 `EncryptedMessage` 或发送管线自动加密，把 `TextMessage` / `JsonMessage` / `BinaryMessage` 转换为密文帧。
@@ -319,7 +320,7 @@ P4.1 首批已完成：
 - `1.1.0-RC1`：历史候选版本，仅用于承接 P4 已完成内容的预发布验收；定位为受控环境验证，不作为企业生产默认部署版本。
 - `1.1.0-RC2`：建议用于承接 `P4.1` 首批稳定性硬化后的候选验证，重点验证容量、失败路径、轻量管理端点、SBOM、Netty 依赖一致性和 CI 基础链路；暂不要求安全扫描/漏洞 triage 闭环。
 - `1.1.0`：目标功能正式版本，完成 Starter 收敛、配置模型统一和稳定性硬化。这一阶段触及配置入口、自动配置结构、兼容模型和发布门禁，适合进入新的 minor 版本。
-- `1.2.0-SNAPSHOT`：当前主开发线，`P5` 首批 WebSocket 产品能力增强已落地，心跳/空闲断线第一刀已完成，继续承接应用层消息加密等 P5.x 能力。
+- `1.2.0-SNAPSHOT`：当前主开发线，`P5` 首批 WebSocket 产品能力增强已落地，心跳/空闲断线第一刀已完成，应用层消息加密扩展骨架已启动。
 - `1.2.x`：`P5.x` 继续补齐高级产品能力，优先承接握手鉴权扩展、心跳/空闲治理，以及 WebSocket 应用层消息加密/解密专项。
 - `1.3.0`：`P6`，可观测与运维能力建设。
 - `1.3.x`：`P7`，demo 和文档体系持续补齐，跟随能力版本滚动完善，而不是等到最后一次性补文档。

@@ -5,6 +5,7 @@ import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
+import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSessionClosedException;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageUriNotDefinedException;
 import io.netty.channel.ChannelHandler;
@@ -105,6 +106,35 @@ class DefaultMessageSenderTest {
             assertTrue(sender.isSessionAlive("/ws/foo", "active"));
         } finally {
             cleanup(resolver, activeSession, closedSession);
+        }
+    }
+
+    @Test
+    void sendMessageEncryptsTextFrameWhenCryptoIsEnabled() throws Exception {
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.getCrypto().setEnable(true);
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/foo",
+                Collections.<MessageType, Method>emptyMap(),
+                new Object(),
+                properties,
+                null,
+                new PrefixMessageCryptoCodec());
+        SessionFixture session = addSession(resolver, "/ws/foo", "active");
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+
+        try {
+            sender.sendMessage("/ws/foo", new TextMessage("hello"), "active");
+
+            Object outbound = awaitOutbound(session);
+            try {
+                assertTrue(outbound instanceof TextWebSocketFrame);
+                assertEquals("enc:hello", ((TextWebSocketFrame) outbound).text());
+            } finally {
+                ReferenceCountUtil.release(outbound);
+            }
+        } finally {
+            cleanup(resolver, session);
         }
     }
 
@@ -629,6 +659,22 @@ class DefaultMessageSenderTest {
         private void runNext() {
             Runnable task = tasks.remove(0);
             task.run();
+        }
+    }
+
+    private static final class PrefixMessageCryptoCodec implements MessageCryptoCodec {
+        @Override
+        public TextWebSocketFrame encrypt(MessageSession session, io.netty.handler.codec.http.websocketx.WebSocketFrame plainFrame) {
+            return new TextWebSocketFrame("enc:" + ((TextWebSocketFrame) plainFrame).text());
+        }
+
+        @Override
+        public TextWebSocketFrame decrypt(MessageSession session, io.netty.handler.codec.http.websocketx.WebSocketFrame encryptedFrame) {
+            String text = ((TextWebSocketFrame) encryptedFrame).text();
+            if (!text.startsWith("enc:")) {
+                throw new IllegalArgumentException("Missing encrypted prefix.");
+            }
+            return new TextWebSocketFrame(text.substring("enc:".length()));
         }
     }
 

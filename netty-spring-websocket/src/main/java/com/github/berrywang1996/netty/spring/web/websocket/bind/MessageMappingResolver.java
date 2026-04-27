@@ -25,6 +25,7 @@ import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupPrope
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
+import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoCodec;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFuture;
@@ -84,6 +85,8 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
 
     private final Map<String, MessageSession> sessionMap;
 
+    private final MessageCryptoCodec messageCryptoCodec;
+
     private volatile HandlerSubmitter handlerSubmitter;
 
     public MessageMappingResolver(String url, Map<MessageType, Method> methods, Object invokeRef) {
@@ -98,6 +101,21 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         super(url, methods, invokeRef);
         this.webSocketProperties = webSocketProperties;
         this.connectionSemaphore = connectionSemaphore;
+        this.messageCryptoCodec = null;
+        // create new session map, maintain session relations
+        this.sessionMap = new ConcurrentHashMap<>();
+    }
+
+    public MessageMappingResolver(String url,
+                                  Map<MessageType, Method> methods,
+                                  Object invokeRef,
+                                  NettyServerStartupProperties.WebSocket webSocketProperties,
+                                  Semaphore connectionSemaphore,
+                                  MessageCryptoCodec messageCryptoCodec) {
+        super(url, methods, invokeRef);
+        this.webSocketProperties = webSocketProperties;
+        this.connectionSemaphore = connectionSemaphore;
+        this.messageCryptoCodec = messageCryptoCodec;
         // create new session map, maintain session relations
         this.sessionMap = new ConcurrentHashMap<>();
     }
@@ -111,6 +129,22 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         super(url, methods, applicationContext, invokeBeanName);
         this.webSocketProperties = webSocketProperties;
         this.connectionSemaphore = connectionSemaphore;
+        this.messageCryptoCodec = null;
+        // create new session map, maintain session relations
+        this.sessionMap = new ConcurrentHashMap<>();
+    }
+
+    public MessageMappingResolver(String url,
+                                  Map<MessageType, Method> methods,
+                                  ApplicationContext applicationContext,
+                                  String invokeBeanName,
+                                  NettyServerStartupProperties.WebSocket webSocketProperties,
+                                  Semaphore connectionSemaphore,
+                                  MessageCryptoCodec messageCryptoCodec) {
+        super(url, methods, applicationContext, invokeBeanName);
+        this.webSocketProperties = webSocketProperties;
+        this.connectionSemaphore = connectionSemaphore;
+        this.messageCryptoCodec = messageCryptoCodec;
         // create new session map, maintain session relations
         this.sessionMap = new ConcurrentHashMap<>();
     }
@@ -168,46 +202,14 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                 ctx.close();
                 return;
             }
-            if (isFrameTooLarge((WebSocketFrame) msg)) {
-                handleFrameTooLarge(session, (WebSocketFrame) msg);
+            WebSocketFrame frame = (WebSocketFrame) msg;
+            if (isFrameTooLarge(frame)) {
+                handleFrameTooLarge(session, frame);
                 return;
             }
             session.recordInboundActivity();
 
-            if (msg instanceof CloseWebSocketFrame) {
-                closeSession(session, (CloseWebSocketFrame) msg, true);
-            } else if (msg instanceof PingWebSocketFrame) {
-                try {
-                    onPing((PingWebSocketFrame) msg, session);
-                } catch (Exception e) {
-                    handleLifecycleException(msg, session, e);
-                }
-            } else if (msg instanceof PongWebSocketFrame) {
-                try {
-                    session.recordPong();
-                    onPong((PongWebSocketFrame) msg, session);
-                } catch (Exception e) {
-                    handleLifecycleException(msg, session, e);
-                }
-            } else if (msg instanceof TextWebSocketFrame) {
-                try {
-                    onTextMessage((TextWebSocketFrame) msg, session);
-                } catch (Exception e) {
-                    handleLifecycleException(msg, session, e);
-                }
-            } else if (msg instanceof BinaryWebSocketFrame) {
-                try {
-                    onBinaryMessage((BinaryWebSocketFrame) msg, session);
-                } catch (Exception e) {
-                    handleLifecycleException(msg, session, e);
-                }
-            } else {
-                try {
-                    onOtherMessage((WebSocketFrame) msg, session);
-                } catch (Exception e) {
-                    handleLifecycleException(msg, session, e);
-                }
-            }
+            handleInboundFrame(frame, session);
             ctx.flush();
         }
     }
@@ -646,6 +648,20 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         return sessionMap;
     }
 
+    public WebSocketFrame encryptOutboundFrame(MessageSession session, WebSocketFrame frame) throws Exception {
+        if (!shouldApplyCrypto(frame)) {
+            return frame;
+        }
+        WebSocketFrame encryptedFrame = requireMessageCryptoCodec().encrypt(session, frame);
+        if (encryptedFrame == null) {
+            throw new IllegalStateException("MessageCryptoCodec returned null encrypted frame.");
+        }
+        if (encryptedFrame != frame) {
+            ReferenceCountUtil.release(frame);
+        }
+        return encryptedFrame;
+    }
+
     public boolean closeSession(String sessionId, int statusCode, String reasonText) {
         if (StringUtil.isBlank(sessionId)) {
             return false;
@@ -684,6 +700,101 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
 
     private boolean isFrameTooLarge(WebSocketFrame frame) {
         return frame.content().readableBytes() > resolveMaxFramePayloadLength();
+    }
+
+    private void handleInboundFrame(WebSocketFrame frame, MessageSession session) throws Exception {
+        WebSocketFrame decodedFrame = null;
+        try {
+            decodedFrame = decryptInboundFrame(session, frame);
+            if (decodedFrame != frame && isFrameTooLarge(decodedFrame)) {
+                handleFrameTooLarge(session, decodedFrame);
+                return;
+            }
+            dispatchInboundFrame(decodedFrame, session);
+        } catch (Exception e) {
+            handleLifecycleException(decodedFrame == null ? frame : decodedFrame, session, extractException(e));
+        } finally {
+            if (decodedFrame != null && decodedFrame != frame) {
+                ReferenceCountUtil.release(decodedFrame);
+            }
+        }
+    }
+
+    private WebSocketFrame decryptInboundFrame(MessageSession session, WebSocketFrame frame) throws Exception {
+        if (!shouldApplyCrypto(frame)) {
+            return frame;
+        }
+        WebSocketFrame decryptedFrame = requireMessageCryptoCodec().decrypt(session, frame);
+        if (decryptedFrame == null) {
+            throw new IllegalStateException("MessageCryptoCodec returned null decrypted frame.");
+        }
+        return decryptedFrame;
+    }
+
+    private void dispatchInboundFrame(WebSocketFrame frame, MessageSession session) {
+        if (frame instanceof CloseWebSocketFrame) {
+            closeSession(session, (CloseWebSocketFrame) frame, true);
+        } else if (frame instanceof PingWebSocketFrame) {
+            try {
+                onPing((PingWebSocketFrame) frame, session);
+            } catch (Exception e) {
+                handleLifecycleException(frame, session, e);
+            }
+        } else if (frame instanceof PongWebSocketFrame) {
+            try {
+                session.recordPong();
+                onPong((PongWebSocketFrame) frame, session);
+            } catch (Exception e) {
+                handleLifecycleException(frame, session, e);
+            }
+        } else if (frame instanceof TextWebSocketFrame) {
+            try {
+                onTextMessage((TextWebSocketFrame) frame, session);
+            } catch (Exception e) {
+                handleLifecycleException(frame, session, e);
+            }
+        } else if (frame instanceof BinaryWebSocketFrame) {
+            try {
+                onBinaryMessage((BinaryWebSocketFrame) frame, session);
+            } catch (Exception e) {
+                handleLifecycleException(frame, session, e);
+            }
+        } else {
+            try {
+                onOtherMessage(frame, session);
+            } catch (Exception e) {
+                handleLifecycleException(frame, session, e);
+            }
+        }
+    }
+
+    private boolean shouldApplyCrypto(WebSocketFrame frame) {
+        NettyServerStartupProperties.WebSocket.Crypto crypto = getCryptoProperties();
+        if (crypto == null || !crypto.isEnable()) {
+            return false;
+        }
+        if (frame instanceof TextWebSocketFrame) {
+            return crypto.isEncryptText();
+        }
+        if (frame instanceof BinaryWebSocketFrame) {
+            return crypto.isEncryptBinary();
+        }
+        return false;
+    }
+
+    private MessageCryptoCodec requireMessageCryptoCodec() {
+        if (messageCryptoCodec == null) {
+            throw new IllegalStateException(
+                    "Websocket crypto is enabled but no MessageCryptoCodec is configured.");
+        }
+        return messageCryptoCodec;
+    }
+
+    private NettyServerStartupProperties.WebSocket.Crypto getCryptoProperties() {
+        if (webSocketProperties == null) {
+            return null;
+        }
+        return webSocketProperties.getCrypto();
     }
 
     private void handleFrameTooLarge(MessageSession session, WebSocketFrame frame) {

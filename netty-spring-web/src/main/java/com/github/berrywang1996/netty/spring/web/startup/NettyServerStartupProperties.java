@@ -623,6 +623,11 @@ public class NettyServerStartupProperties {
          */
         private long heartbeatTimeoutSeconds;
 
+        /**
+         * Application-level websocket message crypto settings.
+         */
+        private Crypto crypto = new Crypto();
+
         public boolean isEnable() {
             return enable;
         }
@@ -757,6 +762,94 @@ public class NettyServerStartupProperties {
 
         public void setHeartbeatTimeoutSeconds(long heartbeatTimeoutSeconds) {
             this.heartbeatTimeoutSeconds = heartbeatTimeoutSeconds;
+        }
+
+        public Crypto getCrypto() {
+            return crypto;
+        }
+
+        public void setCrypto(Crypto crypto) {
+            this.crypto = crypto;
+        }
+
+        public static class Crypto {
+            /**
+             * Enable application-level message encryption/decryption. Disabled by default.
+             */
+            private boolean enable;
+
+            /**
+             * Algorithm identifier used by the configured MessageCryptoCodec.
+             */
+            private String algorithm = "CUSTOM";
+
+            /**
+             * Key identifier used by the configured MessageCryptoCodec.
+             */
+            private String keyId;
+
+            /**
+             * Key provider name or bean identifier used by the configured MessageCryptoCodec.
+             */
+            private String keyProvider;
+
+            /**
+             * Encrypt/decrypt text frames when crypto is enabled.
+             */
+            private boolean encryptText = true;
+
+            /**
+             * Encrypt/decrypt binary frames when crypto is enabled.
+             */
+            private boolean encryptBinary = true;
+
+            public boolean isEnable() {
+                return enable;
+            }
+
+            public void setEnable(boolean enable) {
+                this.enable = enable;
+            }
+
+            public String getAlgorithm() {
+                return algorithm;
+            }
+
+            public void setAlgorithm(String algorithm) {
+                this.algorithm = algorithm;
+            }
+
+            public String getKeyId() {
+                return keyId;
+            }
+
+            public void setKeyId(String keyId) {
+                this.keyId = keyId;
+            }
+
+            public String getKeyProvider() {
+                return keyProvider;
+            }
+
+            public void setKeyProvider(String keyProvider) {
+                this.keyProvider = keyProvider;
+            }
+
+            public boolean isEncryptText() {
+                return encryptText;
+            }
+
+            public void setEncryptText(boolean encryptText) {
+                this.encryptText = encryptText;
+            }
+
+            public boolean isEncryptBinary() {
+                return encryptBinary;
+            }
+
+            public void setEncryptBinary(boolean encryptBinary) {
+                this.encryptBinary = encryptBinary;
+            }
         }
 
         public enum BroadcastNonWritableChannelPolicy {

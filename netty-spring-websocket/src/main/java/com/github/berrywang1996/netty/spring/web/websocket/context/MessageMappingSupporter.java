@@ -21,6 +21,7 @@ import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupPrope
 import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.annotation.MessageMapping;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
+import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoCodec;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.annotation.AnnotatedElementUtils;
@@ -45,6 +46,8 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
 
     private Semaphore connectionSemaphore;
 
+    private MessageCryptoCodec messageCryptoCodec;
+
     @Override
     public Map<String, MessageMappingResolver> initMappingResolverMap(NettyServerStartupProperties startupProperties,
                                                                       ApplicationContext applicationContext) {
@@ -52,6 +55,7 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         this.startupProperties = startupProperties;
         this.applicationContext = applicationContext;
         this.connectionSemaphore = initConnectionSemaphore(startupProperties);
+        this.messageCryptoCodec = initMessageCryptoCodec(startupProperties, applicationContext);
 
         String[] beanNames = applicationContext.getBeanNamesForAnnotation(Component.class);
         log.debug("Find method had annotation \"MessageMapping\"");
@@ -167,7 +171,8 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
                 this.applicationContext,
                 invokeBeanName,
                 this.startupProperties == null ? null : this.startupProperties.getWebSocket(),
-                this.connectionSemaphore);
+                this.connectionSemaphore,
+                this.messageCryptoCodec);
     }
 
     private Semaphore initConnectionSemaphore(NettyServerStartupProperties startupProperties) {
@@ -179,6 +184,32 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
             return null;
         }
         return new Semaphore(maxConnections);
+    }
+
+    private MessageCryptoCodec initMessageCryptoCodec(NettyServerStartupProperties startupProperties,
+                                                      ApplicationContext applicationContext) {
+        if (!isCryptoEnabled(startupProperties)) {
+            return null;
+        }
+        Map<String, MessageCryptoCodec> codecs = applicationContext.getBeansOfType(MessageCryptoCodec.class);
+        if (codecs.isEmpty()) {
+            throw new IllegalStateException(
+                    "Websocket crypto is enabled but no MessageCryptoCodec bean is available.");
+        }
+        if (codecs.size() > 1) {
+            throw new IllegalStateException(
+                    "Websocket crypto requires exactly one MessageCryptoCodec bean, but found " + codecs.size() + ".");
+        }
+        return codecs.values().iterator().next();
+    }
+
+    private boolean isCryptoEnabled(NettyServerStartupProperties startupProperties) {
+        if (startupProperties == null
+                || startupProperties.getWebSocket() == null
+                || startupProperties.getWebSocket().getCrypto() == null) {
+            return false;
+        }
+        return startupProperties.getWebSocket().getCrypto().isEnable();
     }
 
 }

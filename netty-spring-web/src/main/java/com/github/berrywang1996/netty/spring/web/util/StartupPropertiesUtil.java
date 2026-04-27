@@ -131,6 +131,13 @@ public class StartupPropertiesUtil {
             throw new IllegalArgumentException(
                     "Websocket heartbeat timeout seconds must greater than or equal to heartbeat interval seconds.");
         }
+        NettyServerStartupProperties.WebSocket.Crypto cryptoProperties = webSocketProperties.getCrypto();
+        if (cryptoProperties != null && cryptoProperties.isEnable()) {
+            if (!cryptoProperties.isEncryptText() && !cryptoProperties.isEncryptBinary()) {
+                throw new IllegalArgumentException(
+                        "Websocket crypto must enable text or binary frame encryption when crypto is enabled.");
+            }
+        }
     }
 
     private static void validateManagementProperties(NettyServerStartupProperties.Management managementProperties) {

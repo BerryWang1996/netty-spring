@@ -8,6 +8,8 @@ import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSess
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageUriNotDefinedException;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
+import io.netty.handler.codec.http.websocketx.WebSocketFrame;
+import io.netty.util.ReferenceCountUtil;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
@@ -292,7 +294,25 @@ public class DefaultMessageSender implements MessageSender {
         if (dropIfChannelNotWritable && !prepareSessionForBroadcast(resolver, session)) {
             return;
         }
-        ChannelFuture future = session.getChannelHandlerContext().writeAndFlush(message.responseMsg());
+        Object outboundMessage = null;
+        try {
+            outboundMessage = message.responseMsg();
+            if (outboundMessage instanceof WebSocketFrame) {
+                outboundMessage = resolver.encryptOutboundFrame(session, (WebSocketFrame) outboundMessage);
+            }
+        } catch (Exception e) {
+            ReferenceCountUtil.release(outboundMessage);
+            handleWriteFailure(resolver, session, e);
+            return;
+        }
+        ChannelFuture future;
+        try {
+            future = session.getChannelHandlerContext().writeAndFlush(outboundMessage);
+        } catch (RuntimeException e) {
+            ReferenceCountUtil.release(outboundMessage);
+            handleWriteFailure(resolver, session, e);
+            return;
+        }
         future.addListener(new ChannelFutureListener() {
             @Override
             public void operationComplete(ChannelFuture future) {
