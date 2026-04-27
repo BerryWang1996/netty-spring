@@ -613,6 +613,16 @@ public class NettyServerStartupProperties {
          */
         private String allowedOrigins;
 
+        /**
+         * Server-side heartbeat ping interval in seconds. 0 means disabled.
+         */
+        private long heartbeatIntervalSeconds;
+
+        /**
+         * Close the session when no inbound frame is received within this timeout. 0 means disabled.
+         */
+        private long heartbeatTimeoutSeconds;
+
         public boolean isEnable() {
             return enable;
         }
@@ -731,6 +741,22 @@ public class NettyServerStartupProperties {
 
         public void setAllowedOrigins(String allowedOrigins) {
             this.allowedOrigins = allowedOrigins;
+        }
+
+        public long getHeartbeatIntervalSeconds() {
+            return heartbeatIntervalSeconds;
+        }
+
+        public void setHeartbeatIntervalSeconds(long heartbeatIntervalSeconds) {
+            this.heartbeatIntervalSeconds = heartbeatIntervalSeconds;
+        }
+
+        public long getHeartbeatTimeoutSeconds() {
+            return heartbeatTimeoutSeconds;
+        }
+
+        public void setHeartbeatTimeoutSeconds(long heartbeatTimeoutSeconds) {
+            this.heartbeatTimeoutSeconds = heartbeatTimeoutSeconds;
         }
 
         public enum BroadcastNonWritableChannelPolicy {

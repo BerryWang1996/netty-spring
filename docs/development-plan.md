@@ -5,18 +5,19 @@
 ## 当前结论
 
 - `1.0.2` 已完成 `P3.2` 发布后治理收口，可作为当前 `1.0.x` 稳定发布版本。
-- 开发线已切到 `1.1.0-SNAPSHOT`，`P4` Starter 收敛与配置模型统一已经完成主要目标：resolver 延迟获取 controller bean，消除 `MessageSenderSupport` 构造注入必须依赖 `@Lazy` 的循环依赖；新增 `netty-spring-boot-autoconfigure` 共用模块，收敛三套 Starter 重复自动配置骨架；统一 `MessageSender` / `MessageSenderSupport` 暴露语义；接入 `server.netty.mvc.enable` / `server.netty.websocket.enable` 开关；并把 HTTP/file/gzip/ssl 配置收敛到 `server.netty.http.*` 且保留旧键兼容。
-- 当前代码已具备框架功能层面的 `1.1.0-RC2` 候选基础：P4 配置边界、自动配置兼容性、`@Lazy` 依赖消除、`P4.1` 首批容量、失败路径、运行时统计、内置 health/status、线程池校验、SBOM/Dependency-Check 入口、Netty BOM 版本对齐、`netty-all` 瘦身和 GitHub Actions 门禁均已推进，并已在本地正常 Maven 环境完成全量 reactor `mvn test` 复验。
+- `1.1.0-RC2` 已从 P4/P4.1 稳定线切出并发布；主开发线已切到 `1.2.0-SNAPSHOT`，继续承接 P5/P5.x WebSocket 产品能力。
+- `1.1.0-RC2` 发布线已具备框架功能候选基础：P4 配置边界、自动配置兼容性、`@Lazy` 依赖消除、`P4.1` 首批容量、失败路径、运行时统计、内置 health/status、线程池校验、SBOM/Dependency-Check 入口、Netty BOM 版本对齐、`netty-all` 瘦身和 GitHub Actions 门禁均已推进，并已在本地正常 Maven 环境完成全量 reactor `mvn test` 复验。
 - 按当前决策，后续暂时不把安全问题作为主线阻塞项：Dependency-Check、Dependabot、安全扩展、CORS/鉴权/TLS 策略等进入冻结 backlog，后续需要企业生产安全版时再集中处理。
 - 后续计划调整为“先完成可发布功能基线复验，再做 WebSocket 产品能力，再做观测与 demo”，避免当前阶段继续被安全门禁拖住主线演进。
 
 ## 当前发版判断
 
 - `1.0.x`：`1.0.2` 仍是当前可发布/可回退的稳定线。
-- `1.1.0-SNAPSHOT`：当前 P4/P4.1 主要开发已完成并通过全量 reactor `mvn test`。当前工作树已经继续进入 P5 首批能力开发；如果要保持 `1.1.0` 为纯功能/稳定性版本，应从 P4.1 复验点切 `1.1.0-RC2`，再把 P5 作为 `1.2.0-SNAPSHOT` 延续。
-- `1.1.0-RC1`：当前框架功能前置条件已满足，且已完成 P4.1 首批硬化；它仍应定位为“预发布候选/受控环境验证”。
-- `1.1.0-RC2`：调整为“非安全阻塞版候选”，重点验证 Starter 收敛、配置兼容、核心 runtime 回归、SBOM 生成、Netty 依赖瘦身和 CI 基础链路；暂不要求 Dependency-Check/Dependabot triage 闭环。
-- 可以进入当前口径下 `1.1.0` 功能正式版的前置条件：RC 后没有新增 P1/P2 级功能/稳定性 review finding，README/配置文档/发布检查清单与代码一致，版本号从 `1.1.0-SNAPSHOT` 切到 `1.1.0` 后完成全量 `mvn test` 或 CI 等效验证。
+- `1.1.0-RC2`：已从 P4/P4.1 复验点切出并推送 tag，定位为功能/稳定性候选，不混入 P5 产品能力。
+- `1.2.0-SNAPSHOT`：当前主开发线，承接 P5 首批 WebSocket 产品能力和 P5.x 高级能力。
+- `1.1.0-RC1`：历史候选口径，已被 `1.1.0-RC2` 取代。
+- `1.1.0-RC2`：已作为“非安全阻塞版候选”发布，重点验证 Starter 收敛、配置兼容、核心 runtime 回归、SBOM 生成、Netty 依赖瘦身和 CI 基础链路；暂不要求 Dependency-Check/Dependabot triage 闭环。
+- 可以进入当前口径下 `1.1.0` 功能正式版的前置条件：RC 后没有新增 P1/P2 级功能/稳定性 review finding，README/配置文档/发布检查清单与代码一致，版本号从 `1.1.0-RC2` 切到 `1.1.0` 后完成全量 `mvn test` 或 CI 等效验证。
 - 企业生产安全版另行设门槛：Dependency-Check、Dependabot、安全扩展、CORS/鉴权/TLS 策略不再阻塞当前开发计划，但也不应被误认为已经完成。
 
 ## Review finding 状态
@@ -33,14 +34,14 @@
 
 优先级建议：
 
-1. 如果要发布 `1.1.0-RC2`，从 P4.1 全量回归通过点切候选，定位为功能/稳定性候选，不声明企业安全门禁闭环。
-2. 当前工作树已经进入 P5：优先做 query/header/session 访问抽象、text/json/binary 编解码、会话查询/单播/按 URI 广播 API。
-3. P5 首批能力稳定后，将开发线切到 `1.2.0-SNAPSHOT` 更符合版本规划。
+1. `1.1.0-RC2` 已从 P4.1 全量回归通过点切出并发布；后续若要发正式 `1.1.0`，只做 RC 验证与最终版本号切换，不混入 P5。
+2. P5 首批能力已完成并提交：query/header/session 访问抽象、text/json/binary 编解码、会话查询/单播/按 URI 广播和主动关闭 API。
+3. 当前主线已切到 `1.2.0-SNAPSHOT`，P5.x 心跳/空闲断线第一刀已完成，下一刀进入 WebSocket 应用层消息加密扩展骨架。
 4. P5 基本稳定后进入 `P6`：Micrometer/Actuator 指标、关闭原因维度、日志与运行时诊断增强。
 
 ## 企业生产就绪度评估
 
-结论：在“暂时不考虑安全问题”的前提下，当前项目适合继续做 `1.1.0-RC2` 功能/稳定性候选验证；是否作为企业生产环境默认部署版本，不在本轮计划里判断。
+结论：在“暂时不考虑安全问题”的前提下，`1.1.0-RC2` 已可用于功能/稳定性候选验证；当前主线继续推进 `1.2.0-SNAPSHOT` 的 P5/P5.x 能力。
 
 P4.1 首批已完成：
 
@@ -66,7 +67,7 @@ P4.1 首批已完成：
 
 建议把当前阶段拆成两个门槛：
 
-- `1.1.0-RC1`：可以用于验证 Starter 收敛、配置命名空间、`MessageSender` 注入语义和兼容性。
+- `1.1.0-RC1`：历史候选，用于验证 Starter 收敛、配置命名空间、`MessageSender` 注入语义和兼容性。
 - `1.1.0-RC2` / `1.1.0`：当前只按功能/稳定性门槛推进；安全扫描、漏洞 triage 和安全产品化能力推迟到后续企业生产安全版。
 
 ## 当前代码状态总结
@@ -163,7 +164,7 @@ P4.1 首批已完成：
 
 ### P4.1 稳定性与发布门禁硬化
 
-目标：把 `1.1.0-RC1` 从“框架功能候选”推进到“功能/稳定性可发布候选”。安全、漏洞扫描和企业生产安全准入暂时冻结，不作为当前主线阻塞。
+目标：把 `1.1.0-RC2` 从“框架功能候选”推进到“功能/稳定性可发布候选”。安全、漏洞扫描和企业生产安全准入暂时冻结，不作为当前主线阻塞。
 
 当前进度：
 
@@ -189,7 +190,7 @@ P4.1 首批已完成：
 2. 已在同一门禁中生成 CycloneDX SBOM，并保留 `target/netty-spring-sbom.json` / `target/netty-spring-sbom.xml` 作为可下载 artifact。
 3. 已在 POM 和 CI 中固定 Dependency-Check cache 目录为 `${settings.localRepository}/../dependency-check-data`；`NVD_API_KEY` 和真实漏洞扫描暂时不作为当前阻塞。
 4. Dependency-Check 与 Dependabot 告警 triage 转入冻结 backlog，后续做企业生产安全版时恢复。
-5. 全量 reactor 复验已完成，且当前未发现新的 P1/P2 功能/稳定性 finding；可以从 P4.1 复验点进入 `1.1.0-RC2`，正式 `1.1.0` 仍需完成 RC 验证和最终版本号切换。
+5. 全量 reactor 复验已完成，且当前未发现新的 P1/P2 功能/稳定性 finding；`1.1.0-RC2` 已从 P4.1 复验点切出，正式 `1.1.0` 仍需完成 RC 验证和最终版本号切换。
 
 重点项：
 
@@ -212,15 +213,17 @@ P4.1 首批已完成：
 
 当前进度：
 
-- 第一刀已启动：`MessageSender` 新增会话查询 API，支持按 URI 获取 session id 快照、单个 session、session 快照。
-- 第一刀已启动：`MessageSender` 新增 `sendToSession()` 和 `broadcast()` 语义化别名，保留原有 `sendMessage()` / `topicMessage()` 兼容入口。
+- 第一刀已完成：`MessageSender` 新增会话查询 API，支持按 URI 获取 session id 快照、单个 session、session 快照。
+- 第一刀已完成：`MessageSender` 新增 `sendToSession()` 和 `broadcast()` 语义化别名，保留原有 `sendMessage()` / `topicMessage()` 兼容入口。
 - 第一刀已补回归测试：覆盖空 websocket mapping 场景、重启后 sender 缓存刷新、只读会话快照和单播别名。
-- 第二刀已启动：`MessageSession` 新增 URI、path、query 参数和 header 读取 API，减少业务侧直接操作底层 `FullHttpRequest`。
-- 第三刀已启动：`TEXT_MESSAGE` 支持直接绑定 `String` 参数，`BINARY_MESSAGE` 支持直接绑定 `ByteBuf` 或 `byte[]` 参数，同时保留原始 frame 参数兼容。
-- 第四刀已启动：新增 `JsonMessage`，支持将业务对象序列化为 JSON text frame 后发送。
-- 第五刀已启动：`TEXT_MESSAGE` 支持把 JSON 文本直接绑定到业务 POJO、`Map`、`Collection`、数组、枚举或基础包装类型，反序列化失败进入现有 `ON_ERROR` 生命周期。
-- 第六刀已启动：`MessageSender` 新增 `closeSession()` / `closeSessions()`，业务侧可以主动关闭单个 session 或 URI 下全部 session，关闭仍走统一 `ON_CLOSE` 与清理链路。
+- 第二刀已完成：`MessageSession` 新增 URI、path、query 参数和 header 读取 API，减少业务侧直接操作底层 `FullHttpRequest`。
+- 第三刀已完成：`TEXT_MESSAGE` 支持直接绑定 `String` 参数，`BINARY_MESSAGE` 支持直接绑定 `ByteBuf` 或 `byte[]` 参数，同时保留原始 frame 参数兼容。
+- 第四刀已完成：新增 `JsonMessage`，支持将业务对象序列化为 JSON text frame 后发送。
+- 第五刀已完成：`TEXT_MESSAGE` 支持把 JSON 文本直接绑定到业务 POJO、`Map`、`Collection`、数组、枚举或基础包装类型，反序列化失败进入现有 `ON_ERROR` 生命周期。
+- 第六刀已完成：`MessageSender` 新增 `closeSession()` / `closeSessions()`，业务侧可以主动关闭单个 session 或 URI 下全部 session，关闭仍走统一 `ON_CLOSE` 与清理链路。
 - Demo 已同步第一批 P5 API：示例控制器改用 `broadcast()`、`sendToSession()`、`closeSession()`、`JsonMessage`、`String`、JSON POJO 和 `byte[]` 参数绑定。
+- P5.x 第一刀已完成：新增 `heartbeat-interval-seconds` / `heartbeat-timeout-seconds`，服务端可定时发送 Ping，并在空闲超时后走统一 `ON_ERROR` / `ON_CLOSE` 清理链路，已补配置绑定、参数校验和生命周期回归测试。
+- P5.x 下一刀建议进入 WebSocket 应用层消息加密扩展骨架：先落默认关闭的 codec/config/key-provider 抽象和兼容性测试，再推进 AES-GCM 内置实现。
 
 重点项：
 
@@ -312,11 +315,11 @@ P4.1 首批已完成：
 - `1.0.0`：已发布基线，对应 `P0/P1/P2` 收口结果。
 - `1.0.1`：`P3.1`，先修 Starter 启动失败传播、补 Starter 最小集成测试和 demo smoke test。
 - `1.0.2`：已发布，完成 `P3.2` 的发布清单、异常 stop/startup failure 清理回归和 `1.0.x` 维护基线。
-- `1.1.0-SNAPSHOT`：当前开发线，已完成 `P4` 主要目标，包含 resolver 延迟取 bean、`MessageSenderSupport` 构造注入去 `@Lazy`、`netty-spring-boot-autoconfigure` 共用模块抽取、MVC/WebSocket enable 开关接线、`MessageSender` 接口注入语义固化，以及 `server.netty.http.*` 子命名空间引入并兼容旧顶层配置键。
-- `1.1.0-RC1`：建议仅用于承接 P4 已完成内容的预发布验收；定位为受控环境验证，不作为企业生产默认部署版本。
+- `1.1.0-RC2`：已从 P4/P4.1 稳定线发布，包含 resolver 延迟取 bean、`MessageSenderSupport` 构造注入去 `@Lazy`、`netty-spring-boot-autoconfigure` 共用模块抽取、MVC/WebSocket enable 开关接线、`MessageSender` 接口注入语义固化，以及 `server.netty.http.*` 子命名空间引入并兼容旧顶层配置键。
+- `1.1.0-RC1`：历史候选版本，仅用于承接 P4 已完成内容的预发布验收；定位为受控环境验证，不作为企业生产默认部署版本。
 - `1.1.0-RC2`：建议用于承接 `P4.1` 首批稳定性硬化后的候选验证，重点验证容量、失败路径、轻量管理端点、SBOM、Netty 依赖一致性和 CI 基础链路；暂不要求安全扫描/漏洞 triage 闭环。
 - `1.1.0`：目标功能正式版本，完成 Starter 收敛、配置模型统一和稳定性硬化。这一阶段触及配置入口、自动配置结构、兼容模型和发布门禁，适合进入新的 minor 版本。
-- `1.2.0`：`P5` 首批 WebSocket 产品能力增强，包括会话查询/单播/广播/主动关闭、query/header/session 访问抽象、text/json/binary 编解码和 demo 同步。
+- `1.2.0-SNAPSHOT`：当前主开发线，`P5` 首批 WebSocket 产品能力增强已落地，心跳/空闲断线第一刀已完成，继续承接应用层消息加密等 P5.x 能力。
 - `1.2.x`：`P5.x` 继续补齐高级产品能力，优先承接握手鉴权扩展、心跳/空闲治理，以及 WebSocket 应用层消息加密/解密专项。
 - `1.3.0`：`P6`，可观测与运维能力建设。
 - `1.3.x`：`P7`，demo 和文档体系持续补齐，跟随能力版本滚动完善，而不是等到最后一次性补文档。

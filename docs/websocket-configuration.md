@@ -21,6 +21,8 @@ server:
       max-connections: 2000
       max-frame-payload-length: 65536
       allowed-origins: https://app.example.com,https://admin.example.com
+      heartbeat-interval-seconds: 30
+      heartbeat-timeout-seconds: 90
       broadcast-non-writable-channel-policy: SKIP
       broadcast-rejected-execution-policy: DROP
 ```
@@ -67,6 +69,13 @@ server:
 - `allowed-origins` 为空：保持兼容，允许所有 Origin。
 - `allowed-origins=*`：显式允许所有 Origin，包括缺失 `Origin` 的请求。
 - 配置了具体 Origin 后，请求缺失 `Origin` 或不匹配白名单会在握手前返回 `403`。
+
+## 心跳与空闲断线
+
+- `heartbeat-interval-seconds`：服务端发送 WebSocket Ping 帧的间隔，单位秒，默认 `0` 表示关闭。
+- `heartbeat-timeout-seconds`：在指定时间内没有收到任何入站 frame 时关闭 session，单位秒，默认 `0` 表示关闭。
+- 当 `heartbeat-interval-seconds > 0` 且 `heartbeat-timeout-seconds > 0` 时，`heartbeat-timeout-seconds` 必须大于等于 `heartbeat-interval-seconds`。
+- 心跳超时会触发统一 `ON_ERROR` / `ON_CLOSE` 生命周期，并发送 reason 为 `Heartbeat timeout` 的 close frame。
 
 ## 当前行为说明
 

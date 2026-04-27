@@ -51,6 +51,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 import static io.netty.handler.codec.http.HttpMethod.GET;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
@@ -68,6 +69,10 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     private static final int SHUTDOWN_CLOSE_STATUS_CODE = 1001;
 
     private static final String SHUTDOWN_CLOSE_REASON = "Server shutting down";
+
+    private static final int HEARTBEAT_CLOSE_STATUS_CODE = 1001;
+
+    private static final String HEARTBEAT_CLOSE_REASON = "Heartbeat timeout";
 
     private static final ObjectMapper DEFAULT_OBJECT_MAPPER = new ObjectMapper();
 
@@ -146,6 +151,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                         return;
                     }
                     registerSession(pendingSession);
+                    startHeartbeat(pendingSession);
                     dispatchConnectedLifecycle(pendingSession);
                 }
             });
@@ -166,6 +172,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                 handleFrameTooLarge(session, (WebSocketFrame) msg);
                 return;
             }
+            session.recordInboundActivity();
 
             if (msg instanceof CloseWebSocketFrame) {
                 closeSession(session, (CloseWebSocketFrame) msg, true);
@@ -177,6 +184,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                 }
             } else if (msg instanceof PongWebSocketFrame) {
                 try {
+                    session.recordPong();
                     onPong((PongWebSocketFrame) msg, session);
                 } catch (Exception e) {
                     handleLifecycleException(msg, session, e);
@@ -721,6 +729,63 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         session.getChannelHandlerContext().channel().attr(SESSION_ID_IN_CHANNEL).set(session.getSessionId());
     }
 
+    private void startHeartbeat(MessageSession session) {
+        long intervalMillis = resolveHeartbeatIntervalMillis();
+        if (intervalMillis <= 0L || session == null || !session.startHeartbeat()) {
+            return;
+        }
+        scheduleHeartbeat(session, intervalMillis);
+    }
+
+    private void scheduleHeartbeat(final MessageSession session, final long intervalMillis) {
+        session.getChannelHandlerContext().executor().schedule(new Runnable() {
+            @Override
+            public void run() {
+                doHeartbeat(session, intervalMillis);
+            }
+        }, intervalMillis, TimeUnit.MILLISECONDS);
+    }
+
+    private void doHeartbeat(final MessageSession session, long intervalMillis) {
+        if (!isRegisteredSession(session)
+                || session.isClosing()
+                || !session.getChannelHandlerContext().channel().isActive()) {
+            return;
+        }
+        long timeoutMillis = resolveHeartbeatTimeoutMillis();
+        long idleMillis = System.currentTimeMillis() - session.getLastReadTimeMillis();
+        if (timeoutMillis > 0L && idleMillis > timeoutMillis) {
+            closeSessionOnHeartbeatTimeout(session, idleMillis);
+            return;
+        }
+        PingWebSocketFrame pingFrame = new PingWebSocketFrame(
+                Unpooled.copiedBuffer(Long.toString(System.currentTimeMillis()), CharsetUtil.UTF_8));
+        ChannelFuture future = session.getChannelHandlerContext().writeAndFlush(pingFrame);
+        future.addListener(new ChannelFutureListener() {
+            @Override
+            public void operationComplete(ChannelFuture future) {
+                if (!future.isSuccess()) {
+                    closeSessionOnTransportError(session, future.cause());
+                }
+            }
+        });
+        scheduleHeartbeat(session, intervalMillis);
+    }
+
+    private long resolveHeartbeatIntervalMillis() {
+        if (webSocketProperties == null || webSocketProperties.getHeartbeatIntervalSeconds() <= 0L) {
+            return 0L;
+        }
+        return TimeUnit.SECONDS.toMillis(webSocketProperties.getHeartbeatIntervalSeconds());
+    }
+
+    private long resolveHeartbeatTimeoutMillis() {
+        if (webSocketProperties == null || webSocketProperties.getHeartbeatTimeoutSeconds() <= 0L) {
+            return 0L;
+        }
+        return TimeUnit.SECONDS.toMillis(webSocketProperties.getHeartbeatTimeoutSeconds());
+    }
+
     private MessageSession removeSession(ChannelHandlerContext ctx) {
         String sessionId = ctx.channel().attr(SESSION_ID_IN_CHANNEL).get();
         clearChannelAttributes(ctx);
@@ -920,6 +985,39 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         }
     }
 
+    private void closeSessionOnHeartbeatTimeout(final MessageSession session, long idleMillis) {
+        if (session == null || !session.startClosing()) {
+            return;
+        }
+        removeSession(session);
+        final IllegalStateException exception =
+                new IllegalStateException("WebSocket heartbeat timeout after " + idleMillis + " ms.");
+        dispatchLifecycleTask("heartbeatTimeout", session, new Runnable() {
+            @Override
+            public void run() {
+                doCloseSessionOnHeartbeatTimeout(session, exception);
+            }
+        }, new Runnable() {
+            @Override
+            public void run() {
+                doCloseSessionOnHeartbeatTimeout(session, exception);
+            }
+        });
+    }
+
+    private void doCloseSessionOnHeartbeatTimeout(MessageSession session, Throwable throwable) {
+        CloseWebSocketFrame lifecycleFrame = newHeartbeatCloseFrame();
+        CloseWebSocketFrame outboundFrame = newHeartbeatCloseFrame();
+        try {
+            handleLifecycleException(null, session, extractException(throwable));
+            notifyCloseLifecycle(lifecycleFrame, session);
+        } finally {
+            ReferenceCountUtil.release(lifecycleFrame);
+            releaseSession(session);
+            closeChannel(session, outboundFrame);
+        }
+    }
+
     private boolean isRegisteredSession(MessageSession session) {
         return session != null && sessionMap.get(session.getSessionId()) == session;
     }
@@ -957,6 +1055,10 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
 
     private CloseWebSocketFrame newShutdownCloseFrame() {
         return new CloseWebSocketFrame(SHUTDOWN_CLOSE_STATUS_CODE, SHUTDOWN_CLOSE_REASON);
+    }
+
+    private CloseWebSocketFrame newHeartbeatCloseFrame() {
+        return new CloseWebSocketFrame(HEARTBEAT_CLOSE_STATUS_CODE, HEARTBEAT_CLOSE_REASON);
     }
 
     private void closeChannel(MessageSession session, CloseWebSocketFrame closeFrame) {

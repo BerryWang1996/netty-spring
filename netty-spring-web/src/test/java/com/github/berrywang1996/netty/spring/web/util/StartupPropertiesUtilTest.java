@@ -92,6 +92,34 @@ class StartupPropertiesUtilTest {
     }
 
     @Test
+    void websocketHeartbeatConfigMustBeValid() {
+        NettyServerStartupProperties negativeIntervalProperties = new NettyServerStartupProperties();
+        negativeIntervalProperties.getWebSocket().setHeartbeatIntervalSeconds(-1L);
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> StartupPropertiesUtil.checkAndImproveProperties(negativeIntervalProperties));
+        assertTrue(exception.getMessage().contains("heartbeat interval seconds"));
+
+        NettyServerStartupProperties negativeTimeoutProperties = new NettyServerStartupProperties();
+        negativeTimeoutProperties.getWebSocket().setHeartbeatTimeoutSeconds(-1L);
+
+        exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> StartupPropertiesUtil.checkAndImproveProperties(negativeTimeoutProperties));
+        assertTrue(exception.getMessage().contains("heartbeat timeout seconds"));
+
+        NettyServerStartupProperties timeoutTooSmallProperties = new NettyServerStartupProperties();
+        timeoutTooSmallProperties.getWebSocket().setHeartbeatIntervalSeconds(10L);
+        timeoutTooSmallProperties.getWebSocket().setHeartbeatTimeoutSeconds(5L);
+
+        exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> StartupPropertiesUtil.checkAndImproveProperties(timeoutTooSmallProperties));
+        assertTrue(exception.getMessage().contains("heartbeat timeout seconds"));
+    }
+
+    @Test
     void httpTimeoutSecondsMustNotBeNegative() {
         NettyServerStartupProperties readTimeoutProperties = new NettyServerStartupProperties();
         readTimeoutProperties.getHttp().setReadTimeoutSeconds(-1L);

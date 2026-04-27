@@ -110,7 +110,10 @@ class NettyServerStartupPropertiesWrapperTest {
     @Test
     void websocketNamespaceBindsAllowedOrigins() {
         this.contextRunner
-                .withPropertyValues("server.netty.websocket.allowed-origins=https://a.example,https://b.example")
+                .withPropertyValues(
+                        "server.netty.websocket.allowed-origins=https://a.example,https://b.example",
+                        "server.netty.websocket.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.heartbeat-timeout-seconds=90")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     NettyServerStartupPropertiesWrapper properties =
@@ -118,6 +121,8 @@ class NettyServerStartupPropertiesWrapperTest {
 
                     assertThat(properties.getWebSocket().getAllowedOrigins())
                             .isEqualTo("https://a.example,https://b.example");
+                    assertThat(properties.getWebSocket().getHeartbeatIntervalSeconds()).isEqualTo(30L);
+                    assertThat(properties.getWebSocket().getHeartbeatTimeoutSeconds()).isEqualTo(90L);
                 });
     }
 

@@ -285,6 +285,83 @@ class MessageMappingResolverTest {
     }
 
     @Test
+    void heartbeatSendsPingWhenConfigured() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setHeartbeatIntervalSeconds(1L);
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/test",
+                new EnumMap<MessageType, Method>(MessageType.class),
+                endpoint,
+                properties,
+                null);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        try {
+            resolver.resolve(testChannel.ctx, request);
+            Object handshakeResponse = testChannel.channel.readOutbound();
+            ReferenceCountUtil.release(handshakeResponse);
+            drainChannel(testChannel.channel);
+            request.release();
+
+            Thread.sleep(1100L);
+            testChannel.channel.runScheduledPendingTasks();
+
+            Object outbound = testChannel.channel.readOutbound();
+            try {
+                assertTrue(outbound instanceof PingWebSocketFrame);
+            } finally {
+                ReferenceCountUtil.release(outbound);
+            }
+        } finally {
+            resolver.onChannelInactive(testChannel.ctx);
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void heartbeatTimeoutDispatchesErrorAndCloseLifecycle() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_ERROR, method(endpoint, "onError", HttpRequest.class, MessageSession.class, Exception.class));
+        methods.put(MessageType.ON_CLOSE, method(endpoint, "onClose", CloseWebSocketFrame.class, MessageSession.class));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setHeartbeatIntervalSeconds(1L);
+        properties.setHeartbeatTimeoutSeconds(1L);
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint, properties, null);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        try {
+            resolver.resolve(testChannel.ctx, request);
+            Object handshakeResponse = testChannel.channel.readOutbound();
+            ReferenceCountUtil.release(handshakeResponse);
+            drainChannel(testChannel.channel);
+            request.release();
+
+            Thread.sleep(1200L);
+            testChannel.channel.runScheduledPendingTasks();
+            testChannel.channel.runPendingTasks();
+
+            Object outbound = testChannel.channel.readOutbound();
+            try {
+                assertTrue(outbound instanceof CloseWebSocketFrame);
+                assertEquals("Heartbeat timeout", ((CloseWebSocketFrame) outbound).reasonText());
+            } finally {
+                ReferenceCountUtil.release(outbound);
+            }
+            assertEquals(1, endpoint.errorCount);
+            assertEquals(1, endpoint.closeCount);
+            assertTrue(resolver.getSessionMap().isEmpty());
+            assertNull(testChannel.channel.attr(ServiceHandler.REQUEST_IN_CHANNEL).get());
+            assertNull(testChannel.channel.attr(MessageMappingResolver.SESSION_ID_IN_CHANNEL).get());
+        } finally {
+            testChannel.finish();
+        }
+    }
+
+    @Test
     void doesNotPublishSessionWhenHandshakeWriteFails() throws Exception {
         RecordingEndpoint endpoint = new RecordingEndpoint();
         Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);

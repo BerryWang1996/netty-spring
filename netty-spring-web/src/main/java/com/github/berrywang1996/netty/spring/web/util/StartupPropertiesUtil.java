@@ -119,6 +119,18 @@ public class StartupPropertiesUtil {
         if (webSocketProperties.getHandlerPermitLimit() < 0) {
             throw new IllegalArgumentException("Websocket handler permit limit must greater than or equal to 0.");
         }
+        if (webSocketProperties.getHeartbeatIntervalSeconds() < 0L) {
+            throw new IllegalArgumentException("Websocket heartbeat interval seconds must greater than or equal to 0.");
+        }
+        if (webSocketProperties.getHeartbeatTimeoutSeconds() < 0L) {
+            throw new IllegalArgumentException("Websocket heartbeat timeout seconds must greater than or equal to 0.");
+        }
+        if (webSocketProperties.getHeartbeatIntervalSeconds() > 0L
+                && webSocketProperties.getHeartbeatTimeoutSeconds() > 0L
+                && webSocketProperties.getHeartbeatTimeoutSeconds() < webSocketProperties.getHeartbeatIntervalSeconds()) {
+            throw new IllegalArgumentException(
+                    "Websocket heartbeat timeout seconds must greater than or equal to heartbeat interval seconds.");
+        }
     }
 
     private static void validateManagementProperties(NettyServerStartupProperties.Management managementProperties) {

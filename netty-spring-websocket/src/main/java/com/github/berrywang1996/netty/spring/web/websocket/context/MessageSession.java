@@ -32,6 +32,12 @@ public class MessageSession {
 
     private final AtomicBoolean released = new AtomicBoolean(false);
 
+    private final AtomicBoolean heartbeatStarted = new AtomicBoolean(false);
+
+    private volatile long lastReadTimeMillis = System.currentTimeMillis();
+
+    private volatile long lastPongTimeMillis = lastReadTimeMillis;
+
     public MessageSession(String sessionId, ChannelHandlerContext ctx, FullHttpRequest request) {
         this(sessionId, ctx, request, null);
     }
@@ -109,6 +115,28 @@ public class MessageSession {
 
     public boolean isClosing() {
         return closing.get();
+    }
+
+    public boolean startHeartbeat() {
+        return heartbeatStarted.compareAndSet(false, true);
+    }
+
+    public void recordInboundActivity() {
+        this.lastReadTimeMillis = System.currentTimeMillis();
+    }
+
+    public void recordPong() {
+        long now = System.currentTimeMillis();
+        this.lastPongTimeMillis = now;
+        this.lastReadTimeMillis = now;
+    }
+
+    public long getLastReadTimeMillis() {
+        return lastReadTimeMillis;
+    }
+
+    public long getLastPongTimeMillis() {
+        return lastPongTimeMillis;
     }
 
     public void release() {
