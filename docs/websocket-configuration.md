@@ -104,6 +104,9 @@ server:
 - AES-GCM 密钥轮换建议：把 `crypto.key-id` 切到新 key 后，新发送的密文 envelope 会携带新的 `kid`；过渡期内 `MessageCryptoKeyProvider` 应同时保留旧 key 和新 key，确保旧 `kid` 的历史密文仍可解密。demo 中的 `demoProvider` 只是 toy 示例，生产环境应替换为 KMS、配置中心或等效密钥服务。
 - 应用层 crypto 不替代 TLS/WSS，也不承诺浏览器运行时完全不可见明文；如果前端需要解密，密钥或明文仍会在浏览器运行时出现。
 
+- demo 工程提供 `/ws/crypto-demo` 页面用于浏览器端 AES-GCM 联调。先取消 `demo-netty-web-spring-boot-starter/src/main/resources/application.properties` 中 `server.netty.websocket.crypto.*` 示例配置的注释，再打开该页面连接 `/ws/test?room=crypto-demo`，浏览器 Network/WebSocket 面板会看到 JSON envelope，页面日志会展示解密后的 echo 文本。
+- `/ws/crypto-demo` 页面内置的 `demo-2026-04` / `demo-2026-05` key 只对应 demoProvider 的 toy key，不能作为生产密钥分发方案。
+
 ## 当前行为说明
 
 - `server.netty.websocket.enable=false` 时，不会注册 WebSocket mapping，也不会自动暴露 `MessageSenderSupport` / `MessageSender` 相关 Bean。

@@ -21,7 +21,7 @@
 - 当前稳定版本包括 `1.0.2` 维护线和已发布的 `1.2.0` WebSocket 产品能力线；主开发线已切到 `1.2.1-SNAPSHOT`，继续承接 P5.x 可用性增强。
 - `P4` 已完成主要目标：mapping resolver 延迟获取 controller bean，移除业务侧对 `@Lazy MessageSenderSupport` 的依赖；抽出共用 `netty-spring-boot-autoconfigure` 模块，收敛三套 Starter 里重复的 `nettyServer + properties` 自动装配骨架；把 `MessageSenderSupport` 自动配置并回公共 autoconfigure，同时补上 `server.netty.mvc.enable` / `server.netty.websocket.enable` 开关，明确 starter 场景优先按 `MessageSender` 接口注入，并把 HTTP/file/gzip/ssl 配置收敛到 `server.netty.http.*` 且保留旧键兼容。
 - `P4.1` 已继续推进生产准入硬化：静态文件根目录逃逸保护、HTTP 聚合/解码/超时边界配置化、TLS 证书/协议/套件配置、WebSocket Origin 白名单、MVC/静态文件写失败关闭、HTTP 失败路径运行时统计、内置 health/status 管理端点、更保守的 handler 默认线程/permit、handler/sender 线程池配置校验、Netty BOM 版本对齐、`netty-all` 依赖瘦身，以及 SBOM/Dependency-Check 供应链门禁入口。
-- `P5` 首批能力已完成：`MessageSender` 新增会话查询快照 API，并提供 `sendToSession()` / `broadcast()` / `closeSession()` / `closeSessions()` 语义化入口；`MessageSession` 新增 URI、path、query 参数和 header 读取 API；消息 handler 可直接绑定 `String`、JSON 业务对象、`ByteBuf` 或 `byte[]`；发送侧新增 `JsonMessage`；P5.x 已完成 WebSocket 心跳和空闲断线第一刀治理，并接入默认关闭的应用层消息加密扩展点和内置 AES-GCM 首版实现；`1.2.1-SNAPSHOT` 正在补 URI 粒度 crypto 策略和密钥轮换示例。
+- `P5` 首批能力已完成：`MessageSender` 新增会话查询快照 API，并提供 `sendToSession()` / `broadcast()` / `closeSession()` / `closeSessions()` 语义化入口；`MessageSession` 新增 URI、path、query 参数和 header 读取 API；消息 handler 可直接绑定 `String`、JSON 业务对象、`ByteBuf` 或 `byte[]`；发送侧新增 `JsonMessage`；P5.x 已完成 WebSocket 心跳和空闲断线第一刀治理，并接入默认关闭的应用层消息加密扩展点和内置 AES-GCM 首版实现；`1.2.1-SNAPSHOT` 正在补 URI 粒度 crypto 策略、密钥轮换示例和浏览器端加密 demo。
 
 ## 文档
 
@@ -36,6 +36,7 @@
 - 推荐使用 Maven Wrapper：`./mvnw test`
 - 当前 P4.1/P5 首批变更已在 `GraalVM JDK 17.0.11` + `Apache Maven 3.9.9` 环境完成全量 reactor `mvn test` 验证。
 - P5 WebSocket 子链路已用 `-pl netty-spring-websocket -am test` 复验通过，demo/starter 依赖链已用 `-pl demo-netty-web-spring-boot-starter -am test` 复验通过。
+- 启用 demo 中注释的 `server.netty.websocket.crypto.*` 配置后，可访问 `/ws/crypto-demo` 使用浏览器 WebCrypto 发送 AES-GCM envelope，验证 Network 面板密文与服务端明文 handler 的闭环。
 - SBOM 与漏洞扫描使用显式 profile：`mvn -Psbom -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom`、`mvn -Pdependency-scan org.owasp:dependency-check-maven:12.2.1:aggregate`
 - GitHub Actions `CI` workflow 已串起全量测试、SBOM artifact 和发布门禁 Dependency-Check；当前功能/稳定性版本暂不把安全扫描作为阻塞，企业安全发布前需要配置 `NVD_API_KEY` secret 并处理 Dependabot/扫描告警。
 
