@@ -49,6 +49,7 @@
    P5 会话查询、单播、按 URI 广播、主动关闭、payload 绑定、JSON 发送、心跳/空闲断线和 crypto 链路均有回归测试。
    启用 `server.netty.websocket.crypto.algorithm=AES-GCM` 时，必须提供 `MessageCryptoKeyProvider`，且 `reject-unencrypted` 默认拒绝对应 text/binary 明文数据帧。
    如配置 `crypto.include-uris` / `crypto.exclude-uris`，必须确认发送加密、接收解密和未加密帧拒绝策略都按 URI 策略一致生效。
+   如提供 `MessageCryptoPolicy`，必须确认入站解密、出站加密和未加密帧拒绝都按 session 策略一致生效。
    如进行 AES-GCM 密钥轮换，必须确认新 `key-id` 用于新消息加密，同时 `MessageCryptoKeyProvider` 在过渡期仍能解析旧 `kid` 的历史密文。
    demo `/ws/crypto-demo` 页面至少完成 smoke 验证，确保浏览器端 WebCrypto envelope 与服务端 AES-GCM envelope 格式一致。
    文档明确应用层 crypto 不替代 TLS/WSS，也不承诺浏览器运行时完全不可见明文。

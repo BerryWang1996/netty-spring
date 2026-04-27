@@ -7,6 +7,7 @@ import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupPrope
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
 import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoCodec;
+import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoPolicy;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandler;
@@ -888,6 +889,43 @@ class MessageMappingResolverTest {
     }
 
     @Test
+    void unencryptedTextFrameCanPassThroughWhenSessionPolicyDisablesCrypto() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.TEXT_MESSAGE, method(endpoint, "onTextPayload", String.class, MessageSession.class));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.getCrypto().setEnable(true);
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/test",
+                methods,
+                endpoint,
+                properties,
+                null,
+                new PrefixMessageCryptoCodec(),
+                new LegacyClientPlainCryptoPolicy());
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test?client=legacy");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        TextWebSocketFrame frame = new TextWebSocketFrame("hello");
+        try {
+            resolver.resolve(testChannel.ctx, frame);
+
+            assertEquals("hello", endpoint.lastTextPayload);
+            assertEquals(1, endpoint.textPayloadCount);
+            assertTrue(testChannel.channel.isActive());
+        } finally {
+            frame.release();
+            testChannel.finish();
+        }
+    }
+
+    @Test
     void textMessageCanBindJsonPojoPayload() throws Exception {
         RecordingEndpoint endpoint = new RecordingEndpoint();
         Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
@@ -1076,6 +1114,13 @@ class MessageMappingResolverTest {
                 throw new IllegalArgumentException("Missing encrypted prefix.");
             }
             return new TextWebSocketFrame(text.substring("enc:".length()));
+        }
+    }
+
+    private static final class LegacyClientPlainCryptoPolicy implements MessageCryptoPolicy {
+        @Override
+        public boolean shouldUseCrypto(MessageSession session) {
+            return !"legacy".equals(session.getQueryParam("client"));
         }
     }
 

@@ -15,7 +15,7 @@
 - `1.0.x`：`1.0.2` 仍是当前可发布/可回退的稳定线。
 - `1.1.0-RC2`：已从 P4/P4.1 复验点切出并推送 tag，定位为功能/稳定性候选，不混入 P5 产品能力。
 - `1.2.0`：已发布的 WebSocket 产品能力正式版，承接 P5 首批 API、心跳/空闲断线和 AES-GCM 应用层消息加密首版。
-- `1.2.1-SNAPSHOT`：当前开发线，优先补齐 URI 粒度 crypto include/exclude 策略、密钥轮换基础示例和浏览器端加密 demo；该版本仍是快照线，不创建发布 tag。
+- `1.2.1-SNAPSHOT`：当前开发线，优先补齐 URI/session 粒度 crypto 策略、密钥轮换基础示例和浏览器端加密 demo；该版本仍是快照线，不创建发布 tag。
 - `1.1.0-RC1`：历史候选口径，已被 `1.1.0-RC2` 取代。
 - `1.1.0-RC2`：已作为“非安全阻塞版候选”发布，重点验证 Starter 收敛、配置兼容、核心 runtime 回归、SBOM 生成、Netty 依赖瘦身和 CI 基础链路；暂不要求 Dependency-Check/Dependabot triage 闭环。
 - 可以进入当前口径下 `1.1.0` 功能正式版的前置条件：RC 后没有新增 P1/P2 级功能/稳定性 review finding，README/配置文档/发布检查清单与代码一致，版本号从 `1.1.0-RC2` 切到 `1.1.0` 后完成全量 `mvn test` 或 CI 等效验证。
@@ -37,7 +37,7 @@
 
 1. `1.1.0-RC2` 已从 P4.1 全量回归通过点切出并发布；后续若要发正式 `1.1.0`，只做 RC 验证与最终版本号切换，不混入 P5。
 2. P5 首批能力已完成并提交：query/header/session 访问抽象、text/json/binary 编解码、会话查询/单播/按 URI 广播和主动关闭 API。
-3. 当前主线已进入 `1.2.1-SNAPSHOT`，P5.x 心跳/空闲断线和 AES-GCM 首版已随 `1.2.0` 发布；当前集中收口 URI 粒度 crypto 策略、密钥轮换基础示例、浏览器端加密 demo 和配套回归。
+3. 当前主线已进入 `1.2.1-SNAPSHOT`，P5.x 心跳/空闲断线和 AES-GCM 首版已随 `1.2.0` 发布；当前集中收口 URI/session 粒度 crypto 策略、密钥轮换基础示例、浏览器端加密 demo 和配套回归。
 4. P5 基本稳定后进入 `P6`：Micrometer/Actuator 指标、关闭原因维度、日志与运行时诊断增强。
 
 ## 企业生产就绪度评估
@@ -225,7 +225,7 @@ P4.1 首批已完成：
 - Demo 已同步第一批 P5 API：示例控制器改用 `broadcast()`、`sendToSession()`、`closeSession()`、`JsonMessage`、`String`、JSON POJO 和 `byte[]` 参数绑定。
 - P5.x 第一刀已完成：新增 `heartbeat-interval-seconds` / `heartbeat-timeout-seconds`，服务端可定时发送 Ping，并在空闲超时后走统一 `ON_ERROR` / `ON_CLOSE` 清理链路，已补配置绑定、参数校验和生命周期回归测试。
 - P5.x 第二刀已完成首版并随 `1.2.0` 发布：新增默认关闭的 `server.netty.websocket.crypto.*` 配置命名空间、`MessageCryptoCodec` 扩展点、`MessageCryptoKeyProvider` 密钥解析接口和内置 `AES-GCM` 实现；发送侧在写出 frame 前加密，接收侧在 handler 参数绑定前解密，默认拒绝对应 text/binary 类型上的未加密数据帧。
-- P5.x 第三刀正在 `1.2.1-SNAPSHOT` 推进：新增 `crypto.include-uris` / `crypto.exclude-uris`，支持按 WebSocket path、原始 URI、mapping URL 或 `*` 控制 session 是否启用应用层 crypto，便于灰度兼容公开 echo、调试通道和旧客户端；同时补 AES-GCM 密钥轮换基础回归、demo key provider 示例和浏览器端 WebCrypto 联调页面。
+- P5.x 第三刀正在 `1.2.1-SNAPSHOT` 推进：新增 `crypto.include-uris` / `crypto.exclude-uris` 和可选 `MessageCryptoPolicy`，支持按 WebSocket path、原始 URI、mapping URL 或 session 上下文控制是否启用应用层 crypto，便于灰度兼容公开 echo、调试通道和旧客户端；同时补 AES-GCM 密钥轮换基础回归、demo key provider 示例和浏览器端 WebCrypto 联调页面。
 
 重点项：
 
@@ -260,7 +260,7 @@ P4.1 首批已完成：
 - 新增 `server.netty.websocket.crypto.*` 配置命名空间，包含 `enable`、`algorithm`、`key-id`、`key-provider`、`encrypt-text`、`encrypt-binary`、`close-on-decrypt-failure`、`reject-unencrypted` 等开关或策略。
 - 发送侧支持 `EncryptedMessage` 或发送管线自动加密，把 `TextMessage` / `JsonMessage` / `BinaryMessage` 转换为密文帧。
 - 接收侧在 handler 参数绑定前完成解密，解密失败或未加密数据帧被策略拒绝时进入统一 `ON_ERROR` / `ON_CLOSE`，并可通过 `close-on-decrypt-failure` 和 `reject-unencrypted` 调整兼容策略。
-- 支持按 URI 或按 session 选择是否加密，避免和公开 echo、健康检查、调试通道混用；`1.2.1-SNAPSHOT` 先落地 URI include/exclude 策略，session 粒度策略保留为后续增强。
+- 支持按 URI 或按 session 选择是否加密，避免和公开 echo、健康检查、调试通道混用；`1.2.1-SNAPSHOT` 已落地 URI include/exclude 策略，并新增 `MessageCryptoPolicy` 作为 session 粒度二次筛选扩展点。
 - demo 增加 key provider 与 `/ws/crypto-demo` 浏览器端加密/解密示例，展示 Network 面板看到密文、业务回调拿到明文对象的完整流程。
 - 回归测试覆盖加密发送、解密接收、错误密钥/篡改 tag 失败、未启用时保持兼容、按 URI 开关和密钥轮换基础路径。
 
@@ -323,8 +323,8 @@ P4.1 首批已完成：
 - `1.1.0-RC2`：建议用于承接 `P4.1` 首批稳定性硬化后的候选验证，重点验证容量、失败路径、轻量管理端点、SBOM、Netty 依赖一致性和 CI 基础链路；暂不要求安全扫描/漏洞 triage 闭环。
 - `1.1.0`：目标功能正式版本，完成 Starter 收敛、配置模型统一和稳定性硬化。这一阶段触及配置入口、自动配置结构、兼容模型和发布门禁，适合进入新的 minor 版本。
 - `1.2.0`：已发布的正式版本，`P5` 首批 WebSocket 产品能力增强已落地，心跳/空闲断线第一刀已完成，应用层消息加密扩展点和 AES-GCM 首版实现已完成。
-- `1.2.1-SNAPSHOT`：当前开发版本，承接 URI 粒度 crypto include/exclude 策略、密钥轮换基础示例、浏览器端 crypto demo 与对应配置文档/回归测试；满足发布门槛后再切 `1.2.1` tag。
-- `1.2.x`：`P5.x` 继续补齐高级产品能力，优先承接握手鉴权扩展、session 粒度 crypto 策略、密钥轮换示例和浏览器端加密 demo。
+- `1.2.1-SNAPSHOT`：当前开发版本，承接 URI/session 粒度 crypto 策略、密钥轮换基础示例、浏览器端 crypto demo 与对应配置文档/回归测试；满足发布门槛后再切 `1.2.1` tag。
+- `1.2.x`：`P5.x` 继续补齐高级产品能力，优先承接握手鉴权扩展、crypto 灰度示例和浏览器端加密 demo 的持续完善。
 - `1.3.0`：`P6`，可观测与运维能力建设。
 - `1.3.x`：`P7`，demo 和文档体系持续补齐，跟随能力版本滚动完善，而不是等到最后一次性补文档。
 

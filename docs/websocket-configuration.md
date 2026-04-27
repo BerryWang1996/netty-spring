@@ -95,6 +95,7 @@ server:
 - `crypto.key-id` / `crypto.key-provider`：AES-GCM 内置实现使用 `key-id` 写入密文 envelope，并通过 `MessageCryptoKeyProvider` 按 `kid` 解析密钥；`key-provider` 可指定 provider bean 名称，不配置时要求容器中只有一个 `MessageCryptoKeyProvider` Bean。
 - `crypto.include-uris`：逗号或空白分隔的 WebSocket path/URI 列表。为空时 crypto 对全部 session 生效；配置后只对匹配的 session 生效。支持精确 path、原始 URI、mapping URL 或 `*`。
 - `crypto.exclude-uris`：逗号或空白分隔的 WebSocket path/URI 排除列表。匹配后该 session 不做发送加密、接收解密，也不会因未加密 text/binary 数据帧触发 `reject-unencrypted`。
+- `MessageCryptoPolicy`：可选的 session 粒度策略 Bean。未提供时，所有匹配 URI 策略的 session 都会启用 crypto；提供唯一 Bean 时，框架会在 URI include/exclude 之后调用 `shouldUseCrypto(MessageSession)`，允许业务按 query、header、session id 或握手上下文继续灰度放行旧客户端。
 - `crypto.encrypt-text`：启用 crypto 后是否处理 `TextWebSocketFrame`，默认 `true`。
 - `crypto.encrypt-binary`：启用 crypto 后是否处理 `BinaryWebSocketFrame`，默认 `true`。
 - `crypto.close-on-decrypt-failure`：解密失败或未加密帧被拒绝时是否关闭 session，默认 `true`，关闭路径会进入统一 `ON_ERROR` / `ON_CLOSE` 生命周期。

@@ -26,6 +26,7 @@ import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
 import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoCodec;
+import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoPolicy;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFuture;
@@ -87,6 +88,8 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
 
     private final MessageCryptoCodec messageCryptoCodec;
 
+    private final MessageCryptoPolicy messageCryptoPolicy;
+
     private volatile HandlerSubmitter handlerSubmitter;
 
     public MessageMappingResolver(String url, Map<MessageType, Method> methods, Object invokeRef) {
@@ -102,6 +105,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         this.webSocketProperties = webSocketProperties;
         this.connectionSemaphore = connectionSemaphore;
         this.messageCryptoCodec = null;
+        this.messageCryptoPolicy = null;
         // create new session map, maintain session relations
         this.sessionMap = new ConcurrentHashMap<>();
     }
@@ -112,10 +116,21 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                                   NettyServerStartupProperties.WebSocket webSocketProperties,
                                   Semaphore connectionSemaphore,
                                   MessageCryptoCodec messageCryptoCodec) {
+        this(url, methods, invokeRef, webSocketProperties, connectionSemaphore, messageCryptoCodec, null);
+    }
+
+    public MessageMappingResolver(String url,
+                                  Map<MessageType, Method> methods,
+                                  Object invokeRef,
+                                  NettyServerStartupProperties.WebSocket webSocketProperties,
+                                  Semaphore connectionSemaphore,
+                                  MessageCryptoCodec messageCryptoCodec,
+                                  MessageCryptoPolicy messageCryptoPolicy) {
         super(url, methods, invokeRef);
         this.webSocketProperties = webSocketProperties;
         this.connectionSemaphore = connectionSemaphore;
         this.messageCryptoCodec = messageCryptoCodec;
+        this.messageCryptoPolicy = messageCryptoPolicy;
         // create new session map, maintain session relations
         this.sessionMap = new ConcurrentHashMap<>();
     }
@@ -130,6 +145,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         this.webSocketProperties = webSocketProperties;
         this.connectionSemaphore = connectionSemaphore;
         this.messageCryptoCodec = null;
+        this.messageCryptoPolicy = null;
         // create new session map, maintain session relations
         this.sessionMap = new ConcurrentHashMap<>();
     }
@@ -141,10 +157,23 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                                   NettyServerStartupProperties.WebSocket webSocketProperties,
                                   Semaphore connectionSemaphore,
                                   MessageCryptoCodec messageCryptoCodec) {
+        this(url, methods, applicationContext, invokeBeanName, webSocketProperties, connectionSemaphore,
+                messageCryptoCodec, null);
+    }
+
+    public MessageMappingResolver(String url,
+                                  Map<MessageType, Method> methods,
+                                  ApplicationContext applicationContext,
+                                  String invokeBeanName,
+                                  NettyServerStartupProperties.WebSocket webSocketProperties,
+                                  Semaphore connectionSemaphore,
+                                  MessageCryptoCodec messageCryptoCodec,
+                                  MessageCryptoPolicy messageCryptoPolicy) {
         super(url, methods, applicationContext, invokeBeanName);
         this.webSocketProperties = webSocketProperties;
         this.connectionSemaphore = connectionSemaphore;
         this.messageCryptoCodec = messageCryptoCodec;
+        this.messageCryptoPolicy = messageCryptoPolicy;
         // create new session map, maintain session relations
         this.sessionMap = new ConcurrentHashMap<>();
     }
@@ -807,7 +836,13 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             return false;
         }
         NettyServerStartupProperties.WebSocket.Crypto crypto = getCryptoProperties();
-        return isCryptoUriIncluded(crypto, session) && !matchesCryptoUri(crypto.getExcludeUris(), session);
+        return isCryptoUriIncluded(crypto, session)
+                && !matchesCryptoUri(crypto.getExcludeUris(), session)
+                && isCryptoAllowedBySessionPolicy(session);
+    }
+
+    private boolean isCryptoAllowedBySessionPolicy(MessageSession session) {
+        return messageCryptoPolicy == null || messageCryptoPolicy.shouldUseCrypto(session);
     }
 
     private boolean isCryptoUriIncluded(NettyServerStartupProperties.WebSocket.Crypto crypto,

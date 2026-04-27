@@ -6,6 +6,7 @@ import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupPrope
 import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
 import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoCodec;
+import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoPolicy;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSessionClosedException;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageUriNotDefinedException;
 import io.netty.channel.ChannelHandler;
@@ -181,6 +182,36 @@ class DefaultMessageSenderTest {
                 null,
                 new PrefixMessageCryptoCodec());
         SessionFixture session = addSession(resolver, "/ws/foo", "active");
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+
+        try {
+            sender.sendMessage("/ws/foo", new TextMessage("hello"), "active");
+
+            Object outbound = awaitOutbound(session);
+            try {
+                assertTrue(outbound instanceof TextWebSocketFrame);
+                assertEquals("hello", ((TextWebSocketFrame) outbound).text());
+            } finally {
+                ReferenceCountUtil.release(outbound);
+            }
+        } finally {
+            cleanup(resolver, session);
+        }
+    }
+
+    @Test
+    void sendMessageSkipsEncryptionWhenSessionPolicyDisablesCrypto() throws Exception {
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.getCrypto().setEnable(true);
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/foo",
+                Collections.<MessageType, Method>emptyMap(),
+                new Object(),
+                properties,
+                null,
+                new PrefixMessageCryptoCodec(),
+                new LegacyClientPlainCryptoPolicy());
+        SessionFixture session = addSession(resolver, "/ws/foo?client=legacy", "active");
         DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
 
         try {
@@ -735,6 +766,13 @@ class DefaultMessageSenderTest {
                 throw new IllegalArgumentException("Missing encrypted prefix.");
             }
             return new TextWebSocketFrame(text.substring("enc:".length()));
+        }
+    }
+
+    private static final class LegacyClientPlainCryptoPolicy implements MessageCryptoPolicy {
+        @Override
+        public boolean shouldUseCrypto(MessageSession session) {
+            return !"legacy".equals(session.getQueryParam("client"));
         }
     }
 
