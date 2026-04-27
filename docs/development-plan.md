@@ -1,24 +1,24 @@
 # 开发计划与阶段状态
 
-更新时间：2026-04-26
+更新时间：2026-04-27
 
 ## 当前结论
 
 - `1.0.2` 已完成 `P3.2` 发布后治理收口，可作为当前 `1.0.x` 稳定发布版本。
-- 开发线已切到 `1.1.0-SNAPSHOT`，`P4` 已推进到第五刀：resolver 延迟获取 controller bean，先消除 `MessageSenderSupport` 构造注入仍依赖 `@Lazy` 的启动期循环依赖；新增 `netty-spring-boot-autoconfigure` 共用模块，把三套 Starter 里重复的 `nettyServer + properties` 自动装配骨架先收敛到一处；再把 `MessageSenderSupport` 自动配置并回公共 autoconfigure，同时打通 `server.netty.mvc.enable` / `server.netty.websocket.enable` 开关，用 demo 与 starter 回归测试明确 `MessageSender` 接口注入语义，并开始把 HTTP/file/gzip/ssl 配置收敛到 `server.netty.http.*` 且保留旧键兼容。
-- 当前代码已具备框架功能层面的 `1.1.0-RC1` 候选条件：P4 配置边界、自动配置兼容性、`@Lazy` 依赖消除和全量 `mvn test` 均已完成验证；`P4.1` 生产准入硬化已继续推进，已覆盖静态文件根目录逃逸保护、HTTP 聚合/解码/超时边界配置化、TLS 证书/协议/套件配置、WebSocket Origin 白名单、MVC/静态文件写失败关闭、HTTP 失败路径运行时统计、内置 health/status 管理端点、handler/sender 线程池配置校验，以及 SBOM/Dependency-Check 依赖治理入口。但整体仍未达到企业生产环境默认部署标准，正式版应继续补齐剩余安全扩展、指标深化和真实漏洞告警 triage。
+- 本发布分支已切到 `1.1.0-RC2`，`P4` 已完成主要目标：resolver 延迟获取 controller bean，消除 `MessageSenderSupport` 构造注入必须依赖 `@Lazy` 的启动期循环依赖；新增 `netty-spring-boot-autoconfigure` 共用模块，把三套 Starter 里重复的 `nettyServer + properties` 自动装配骨架收敛到一处；再把 `MessageSenderSupport` 自动配置并回公共 autoconfigure，同时打通 `server.netty.mvc.enable` / `server.netty.websocket.enable` 开关，用 demo 与 starter 回归测试明确 `MessageSender` 接口注入语义，并把 HTTP/file/gzip/ssl 配置收敛到 `server.netty.http.*` 且保留旧键兼容。
+- 当前代码已具备框架功能层面的 `1.1.0-RC2` 候选条件：P4 配置边界、自动配置兼容性、`@Lazy` 依赖消除和全量 `mvn test` 均已完成验证；`P4.1` 稳定性硬化已覆盖静态文件根目录逃逸保护、HTTP 聚合/解码/超时边界配置化、TLS 证书/协议/套件配置、WebSocket Origin 白名单、MVC/静态文件写失败关闭、HTTP 失败路径运行时统计、内置 health/status 管理端点、handler/sender 线程池配置校验，以及 SBOM/Dependency-Check 依赖治理入口。但它仍定位为预发布候选，不声明企业生产安全门禁已经闭环。
 - 后续计划应以“先稳住发布面，再统一入口，再扩能力”为顺序，这比直接进入产品功能扩展更符合仓库当前状态。
 
 ## 当前发版判断
 
 - `1.0.x`：`1.0.2` 仍是当前可发布/可回退的稳定线。
-- `1.1.0-SNAPSHOT`：当前 P4 主要开发已完成，适合先形成开发提交；暂不建议直接打 `v1.1.0` 正式 tag。
-- `1.1.0-RC1`：当前框架功能前置条件已满足，且已完成 P4.1 首批硬化；它仍应定位为“预发布候选/受控环境验证”，不能作为企业生产默认部署版本。
-- 可以进入 `1.1.0` 正式版的前置条件：RC 后没有新增 P1/P2 级 review finding，README/配置文档/发布检查清单与代码一致，版本号从 `1.1.0-SNAPSHOT` 切到 `1.1.0` 后完成全量测试。
+- `1.1.0-RC2`：当前发布分支版本，用于承接 P4/P4.1 功能与稳定性候选验证；不混入 P5 产品能力，不声明企业生产安全门禁闭环。
+- `1.1.0-RC1`：保留为历史候选口径，当前已被 `1.1.0-RC2` 取代。
+- 可以进入 `1.1.0` 正式版的前置条件：RC 后没有新增 P1/P2 级 review finding，README/配置文档/发布检查清单与代码一致，版本号从 `1.1.0-RC2` 切到 `1.1.0` 后完成全量测试。
 
 ## 企业生产就绪度评估
 
-结论：当前项目适合继续做 `1.1.0-RC1` 级预发布验证和受控内网 PoC，不建议直接作为企业生产环境默认部署版本。
+结论：当前项目适合发布 `1.1.0-RC2` 级预发布验证和受控内网 PoC，不建议直接作为企业生产环境默认部署版本。
 
 P4.1 首批已完成：
 
@@ -44,7 +44,7 @@ P4.1 首批已完成：
 
 建议把当前阶段拆成两个门槛：
 
-- `1.1.0-RC1`：可以用于验证 Starter 收敛、配置命名空间、`MessageSender` 注入语义和兼容性。
+- `1.1.0-RC2`：可以用于验证 Starter 收敛、配置命名空间、`MessageSender` 注入语义、P4.1 首批稳定性硬化和发布门禁。
 - `1.1.0`：应在完成剩余 `P4.1 生产准入硬化` 后再发布，避免把预发布候选误用为企业生产默认版本。
 
 ## 当前代码状态总结
@@ -141,7 +141,7 @@ P4.1 首批已完成：
 
 ### P4.1 生产准入硬化
 
-目标：把 `1.1.0-RC1` 从“框架功能候选”推进到“企业生产可评估候选”，先补齐安全、容量、失败路径和运维门禁。
+目标：把 `1.1.0-RC2` 从“框架功能候选”推进到“企业生产可评估候选”，先补齐安全、容量、失败路径和运维门禁。
 
 当前进度：
 
@@ -241,9 +241,9 @@ P4.1 首批已完成：
 - `1.0.0`：已发布基线，对应 `P0/P1/P2` 收口结果。
 - `1.0.1`：`P3.1`，先修 Starter 启动失败传播、补 Starter 最小集成测试和 demo smoke test。
 - `1.0.2`：已发布，完成 `P3.2` 的发布清单、异常 stop/startup failure 清理回归和 `1.0.x` 维护基线。
-- `1.1.0-SNAPSHOT`：当前开发线，已完成 `P4` 主要目标，包含 resolver 延迟取 bean、`MessageSenderSupport` 构造注入去 `@Lazy`、`netty-spring-boot-autoconfigure` 共用模块抽取、MVC/WebSocket enable 开关接线、`MessageSender` 接口注入语义固化，以及 `server.netty.http.*` 子命名空间引入并兼容旧顶层配置键。
-- `1.1.0-RC1`：建议作为下一次发版前候选版本，用于承接 P4 已完成内容的预发布验收；定位为受控环境验证，不作为企业生产默认部署版本。
-- `1.1.0-RC2`：建议用于承接 `P4.1` 生产准入硬化后的候选验证，重点验证安全、容量、失败路径、观测和依赖治理。
+- `1.1.0-RC2`：当前发布候选线，已完成 `P4` 主要目标，包含 resolver 延迟取 bean、`MessageSenderSupport` 构造注入去 `@Lazy`、`netty-spring-boot-autoconfigure` 共用模块抽取、MVC/WebSocket enable 开关接线、`MessageSender` 接口注入语义固化，以及 `server.netty.http.*` 子命名空间引入并兼容旧顶层配置键。
+- `1.1.0-RC1`：历史候选版本，用于承接 P4 已完成内容的预发布验收。
+- `1.1.0-RC2`：当前发布候选版本，用于承接 `P4.1` 首批稳定性硬化后的候选验证，重点验证容量、失败路径、观测入口、SBOM/依赖治理入口和 Starter 配置兼容性。
 - `1.1.0`：目标发布版本，完成 Starter 收敛、配置模型统一和生产准入硬化。这一阶段触及配置入口、自动配置结构、兼容模型和生产门禁，适合进入新的 minor 版本。
 - `1.2.0`：`P5`，WebSocket 产品能力增强，以新增能力为主。
 - `1.3.0`：`P6`，可观测与运维能力建设。
