@@ -101,6 +101,7 @@ server:
 - `crypto.reject-unencrypted`：启用 crypto 后，是否拒绝对应 text/binary 类型上的未加密数据帧，默认 `true`；灰度兼容明文客户端时可显式设置为 `false`。
 - 启用 `CUSTOM` crypto 时，应用必须提供唯一一个 `MessageCryptoCodec` Bean；启用 `AES-GCM` 时可以使用内置 codec，但必须提供 `MessageCryptoKeyProvider`，框架不会硬编码密钥。
 - 内置 AES-GCM 密文 envelope 包含 `alg`、`kid`、`typ`、`iv`、`ciphertext` 字段；Java AES-GCM authentication tag 会附加在 `ciphertext` 中，不单独暴露 `tag` 字段。
+- AES-GCM 密钥轮换建议：把 `crypto.key-id` 切到新 key 后，新发送的密文 envelope 会携带新的 `kid`；过渡期内 `MessageCryptoKeyProvider` 应同时保留旧 key 和新 key，确保旧 `kid` 的历史密文仍可解密。demo 中的 `demoProvider` 只是 toy 示例，生产环境应替换为 KMS、配置中心或等效密钥服务。
 - 应用层 crypto 不替代 TLS/WSS，也不承诺浏览器运行时完全不可见明文；如果前端需要解密，密钥或明文仍会在浏览器运行时出现。
 
 ## 当前行为说明
