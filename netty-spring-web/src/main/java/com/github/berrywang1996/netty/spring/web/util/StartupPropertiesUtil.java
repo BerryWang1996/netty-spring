@@ -133,9 +133,16 @@ public class StartupPropertiesUtil {
         }
         NettyServerStartupProperties.WebSocket.Crypto cryptoProperties = webSocketProperties.getCrypto();
         if (cryptoProperties != null && cryptoProperties.isEnable()) {
+            if (StringUtil.isBlank(cryptoProperties.getAlgorithm())) {
+                throw new IllegalArgumentException("Websocket crypto algorithm should not be blank.");
+            }
             if (!cryptoProperties.isEncryptText() && !cryptoProperties.isEncryptBinary()) {
                 throw new IllegalArgumentException(
                         "Websocket crypto must enable text or binary frame encryption when crypto is enabled.");
+            }
+            if ("AES-GCM".equalsIgnoreCase(cryptoProperties.getAlgorithm())
+                    && StringUtil.isBlank(cryptoProperties.getKeyId())) {
+                throw new IllegalArgumentException("Websocket AES-GCM crypto key id should not be blank.");
             }
         }
     }

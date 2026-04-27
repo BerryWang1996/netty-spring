@@ -738,6 +738,82 @@ class MessageMappingResolverTest {
     }
 
     @Test
+    void unencryptedTextFrameClosesSessionByDefaultWhenCryptoIsEnabled() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.TEXT_MESSAGE, method(endpoint, "onTextPayload", String.class, MessageSession.class));
+        methods.put(MessageType.ON_ERROR, method(endpoint, "onError", HttpRequest.class, MessageSession.class, Exception.class));
+        methods.put(MessageType.ON_CLOSE, method(endpoint, "onClose", CloseWebSocketFrame.class, MessageSession.class));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.getCrypto().setEnable(true);
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/test",
+                methods,
+                endpoint,
+                properties,
+                null,
+                new PrefixMessageCryptoCodec());
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        TextWebSocketFrame frame = new TextWebSocketFrame("tampered");
+        try {
+            resolver.resolve(testChannel.ctx, frame);
+
+            assertEquals(1, endpoint.errorCount);
+            assertEquals(1, endpoint.closeCount);
+            assertTrue(resolver.getSessionMap().isEmpty());
+            assertFalse(testChannel.channel.isActive());
+        } finally {
+            frame.release();
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void unencryptedTextFrameCanPassThroughWhenRejectUnencryptedIsDisabled() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.TEXT_MESSAGE, method(endpoint, "onTextPayload", String.class, MessageSession.class));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.getCrypto().setEnable(true);
+        properties.getCrypto().setRejectUnencrypted(false);
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/test",
+                methods,
+                endpoint,
+                properties,
+                null,
+                new PrefixMessageCryptoCodec());
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        TextWebSocketFrame frame = new TextWebSocketFrame("hello");
+        try {
+            resolver.resolve(testChannel.ctx, frame);
+
+            assertEquals("hello", endpoint.lastTextPayload);
+            assertEquals(1, endpoint.textPayloadCount);
+            assertTrue(testChannel.channel.isActive());
+        } finally {
+            frame.release();
+            testChannel.finish();
+        }
+    }
+
+    @Test
     void textMessageCanBindJsonPojoPayload() throws Exception {
         RecordingEndpoint endpoint = new RecordingEndpoint();
         Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
@@ -911,6 +987,12 @@ class MessageMappingResolverTest {
         @Override
         public TextWebSocketFrame encrypt(MessageSession session, io.netty.handler.codec.http.websocketx.WebSocketFrame plainFrame) {
             return new TextWebSocketFrame("enc:" + ((TextWebSocketFrame) plainFrame).text());
+        }
+
+        @Override
+        public boolean canDecrypt(MessageSession session, io.netty.handler.codec.http.websocketx.WebSocketFrame encryptedFrame) {
+            return encryptedFrame instanceof TextWebSocketFrame
+                    && ((TextWebSocketFrame) encryptedFrame).text().startsWith("enc:");
         }
 
         @Override

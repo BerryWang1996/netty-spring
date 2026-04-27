@@ -119,7 +119,9 @@ class NettyServerStartupPropertiesWrapperTest {
                         "server.netty.websocket.crypto.key-id=main",
                         "server.netty.websocket.crypto.key-provider=demoProvider",
                         "server.netty.websocket.crypto.encrypt-text=true",
-                        "server.netty.websocket.crypto.encrypt-binary=false")
+                        "server.netty.websocket.crypto.encrypt-binary=false",
+                        "server.netty.websocket.crypto.close-on-decrypt-failure=false",
+                        "server.netty.websocket.crypto.reject-unencrypted=false")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     NettyServerStartupPropertiesWrapper properties =
@@ -135,6 +137,8 @@ class NettyServerStartupPropertiesWrapperTest {
                     assertThat(properties.getWebSocket().getCrypto().getKeyProvider()).isEqualTo("demoProvider");
                     assertThat(properties.getWebSocket().getCrypto().isEncryptText()).isTrue();
                     assertThat(properties.getWebSocket().getCrypto().isEncryptBinary()).isFalse();
+                    assertThat(properties.getWebSocket().getCrypto().isCloseOnDecryptFailure()).isFalse();
+                    assertThat(properties.getWebSocket().getCrypto().isRejectUnencrypted()).isFalse();
                 });
     }
 

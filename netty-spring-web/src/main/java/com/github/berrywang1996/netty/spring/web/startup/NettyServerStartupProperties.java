@@ -803,6 +803,16 @@ public class NettyServerStartupProperties {
              */
             private boolean encryptBinary = true;
 
+            /**
+             * Close the websocket session when an encrypted frame cannot be decrypted.
+             */
+            private boolean closeOnDecryptFailure = true;
+
+            /**
+             * Reject plain text/binary frames when crypto is enabled for that frame type.
+             */
+            private boolean rejectUnencrypted = true;
+
             public boolean isEnable() {
                 return enable;
             }
@@ -849,6 +859,22 @@ public class NettyServerStartupProperties {
 
             public void setEncryptBinary(boolean encryptBinary) {
                 this.encryptBinary = encryptBinary;
+            }
+
+            public boolean isCloseOnDecryptFailure() {
+                return closeOnDecryptFailure;
+            }
+
+            public void setCloseOnDecryptFailure(boolean closeOnDecryptFailure) {
+                this.closeOnDecryptFailure = closeOnDecryptFailure;
+            }
+
+            public boolean isRejectUnencrypted() {
+                return rejectUnencrypted;
+            }
+
+            public void setRejectUnencrypted(boolean rejectUnencrypted) {
+                this.rejectUnencrypted = rejectUnencrypted;
             }
         }
 

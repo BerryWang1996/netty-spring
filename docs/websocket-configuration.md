@@ -25,11 +25,13 @@ server:
       heartbeat-timeout-seconds: 90
       crypto:
         enable: false
-        algorithm: CUSTOM
+        algorithm: AES-GCM
         key-id: main
         key-provider: demoProvider
         encrypt-text: true
         encrypt-binary: true
+        close-on-decrypt-failure: true
+        reject-unencrypted: true
       broadcast-non-writable-channel-policy: SKIP
       broadcast-rejected-execution-policy: DROP
 ```
@@ -87,12 +89,15 @@ server:
 ## 应用层消息加密扩展
 
 - `crypto.enable`：是否启用应用层 WebSocket 消息加密/解密扩展，默认 `false`。默认关闭时，发送和接收行为与明文版本完全一致。
-- `crypto.algorithm`：交给 `MessageCryptoCodec` 使用的算法标识，当前框架只做配置透传和扩展点接线，默认 `CUSTOM`。
-- `crypto.key-id` / `crypto.key-provider`：交给业务自定义 `MessageCryptoCodec` 使用的密钥标识或 provider 名称，框架不内置密钥。
+- `crypto.algorithm`：交给 `MessageCryptoCodec` 使用的算法标识，默认 `CUSTOM`；设置为 `AES-GCM` 且未提供自定义 `MessageCryptoCodec` Bean 时，会启用框架内置 `AesGcmMessageCryptoCodec`。
+- `crypto.key-id` / `crypto.key-provider`：AES-GCM 内置实现使用 `key-id` 写入密文 envelope，并通过 `MessageCryptoKeyProvider` 按 `kid` 解析密钥；`key-provider` 可指定 provider bean 名称，不配置时要求容器中只有一个 `MessageCryptoKeyProvider` Bean。
 - `crypto.encrypt-text`：启用 crypto 后是否处理 `TextWebSocketFrame`，默认 `true`。
 - `crypto.encrypt-binary`：启用 crypto 后是否处理 `BinaryWebSocketFrame`，默认 `true`。
-- 启用 crypto 时，应用必须提供唯一一个 `MessageCryptoCodec` Bean；否则启动阶段会失败，避免配置看似启用但实际仍发送明文。
-- 当前阶段只提供扩展骨架，不替代 TLS/WSS，也不承诺浏览器运行时完全不可见明文；如果前端需要解密，密钥或明文仍会在浏览器运行时出现。后续版本会在此骨架上继续补 AES-GCM 内置实现和 demo。
+- `crypto.close-on-decrypt-failure`：解密失败或未加密帧被拒绝时是否关闭 session，默认 `true`，关闭路径会进入统一 `ON_ERROR` / `ON_CLOSE` 生命周期。
+- `crypto.reject-unencrypted`：启用 crypto 后，是否拒绝对应 text/binary 类型上的未加密数据帧，默认 `true`；灰度兼容明文客户端时可显式设置为 `false`。
+- 启用 `CUSTOM` crypto 时，应用必须提供唯一一个 `MessageCryptoCodec` Bean；启用 `AES-GCM` 时可以使用内置 codec，但必须提供 `MessageCryptoKeyProvider`，框架不会硬编码密钥。
+- 内置 AES-GCM 密文 envelope 包含 `alg`、`kid`、`typ`、`iv`、`ciphertext` 字段；Java AES-GCM authentication tag 会附加在 `ciphertext` 中，不单独暴露 `tag` 字段。
+- 应用层 crypto 不替代 TLS/WSS，也不承诺浏览器运行时完全不可见明文；如果前端需要解密，密钥或明文仍会在浏览器运行时出现。
 
 ## 当前行为说明
 

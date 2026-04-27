@@ -10,5 +10,9 @@ public interface MessageCryptoCodec {
 
     WebSocketFrame encrypt(MessageSession session, WebSocketFrame plainFrame) throws Exception;
 
+    default boolean canDecrypt(MessageSession session, WebSocketFrame encryptedFrame) {
+        return true;
+    }
+
     WebSocketFrame decrypt(MessageSession session, WebSocketFrame encryptedFrame) throws Exception;
 }

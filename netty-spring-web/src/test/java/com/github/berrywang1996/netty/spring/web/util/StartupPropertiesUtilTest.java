@@ -133,6 +133,18 @@ class StartupPropertiesUtilTest {
     }
 
     @Test
+    void websocketAesGcmCryptoRequiresKeyId() {
+        NettyServerStartupProperties properties = new NettyServerStartupProperties();
+        properties.getWebSocket().getCrypto().setEnable(true);
+        properties.getWebSocket().getCrypto().setAlgorithm("AES-GCM");
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> StartupPropertiesUtil.checkAndImproveProperties(properties));
+        assertTrue(exception.getMessage().contains("key id"));
+    }
+
+    @Test
     void httpTimeoutSecondsMustNotBeNegative() {
         NettyServerStartupProperties readTimeoutProperties = new NettyServerStartupProperties();
         readTimeoutProperties.getHttp().setReadTimeoutSeconds(-1L);

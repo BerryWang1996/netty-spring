@@ -649,7 +649,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     }
 
     public WebSocketFrame encryptOutboundFrame(MessageSession session, WebSocketFrame frame) throws Exception {
-        if (!shouldApplyCrypto(frame)) {
+        if (!shouldEncryptFrame(frame)) {
             return frame;
         }
         WebSocketFrame encryptedFrame = requireMessageCryptoCodec().encrypt(session, frame);
@@ -712,7 +712,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             }
             dispatchInboundFrame(decodedFrame, session);
         } catch (Exception e) {
-            handleLifecycleException(decodedFrame == null ? frame : decodedFrame, session, extractException(e));
+            handleInboundDecodeFailure(decodedFrame == null ? frame : decodedFrame, session, extractException(e));
         } finally {
             if (decodedFrame != null && decodedFrame != frame) {
                 ReferenceCountUtil.release(decodedFrame);
@@ -721,14 +721,30 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     }
 
     private WebSocketFrame decryptInboundFrame(MessageSession session, WebSocketFrame frame) throws Exception {
-        if (!shouldApplyCrypto(frame)) {
+        if (!isCryptoEnabled() || !shouldHandleEncryptedInboundFrame(frame)) {
             return frame;
         }
-        WebSocketFrame decryptedFrame = requireMessageCryptoCodec().decrypt(session, frame);
+        MessageCryptoCodec cryptoCodec = requireMessageCryptoCodec();
+        if (!cryptoCodec.canDecrypt(session, frame)) {
+            if (shouldRejectUnencrypted()) {
+                throw new IllegalArgumentException(
+                        "Unencrypted websocket frame rejected by crypto policy.");
+            }
+            return frame;
+        }
+        WebSocketFrame decryptedFrame = cryptoCodec.decrypt(session, frame);
         if (decryptedFrame == null) {
             throw new IllegalStateException("MessageCryptoCodec returned null decrypted frame.");
         }
         return decryptedFrame;
+    }
+
+    private void handleInboundDecodeFailure(WebSocketFrame frame, MessageSession session, Exception exception) {
+        if (isCryptoEnabled() && shouldCloseOnDecryptFailure()) {
+            closeSessionOnTransportError(session, exception);
+            return;
+        }
+        handleLifecycleException(frame, session, exception);
     }
 
     private void dispatchInboundFrame(WebSocketFrame frame, MessageSession session) {
@@ -768,11 +784,11 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         }
     }
 
-    private boolean shouldApplyCrypto(WebSocketFrame frame) {
-        NettyServerStartupProperties.WebSocket.Crypto crypto = getCryptoProperties();
-        if (crypto == null || !crypto.isEnable()) {
+    private boolean shouldEncryptFrame(WebSocketFrame frame) {
+        if (!isCryptoEnabled()) {
             return false;
         }
+        NettyServerStartupProperties.WebSocket.Crypto crypto = getCryptoProperties();
         if (frame instanceof TextWebSocketFrame) {
             return crypto.isEncryptText();
         }
@@ -780,6 +796,32 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             return crypto.isEncryptBinary();
         }
         return false;
+    }
+
+    private boolean shouldHandleEncryptedInboundFrame(WebSocketFrame frame) {
+        NettyServerStartupProperties.WebSocket.Crypto crypto = getCryptoProperties();
+        if (frame instanceof TextWebSocketFrame) {
+            return crypto.isEncryptText();
+        }
+        if (frame instanceof BinaryWebSocketFrame) {
+            return crypto.isEncryptBinary();
+        }
+        return false;
+    }
+
+    private boolean isCryptoEnabled() {
+        NettyServerStartupProperties.WebSocket.Crypto crypto = getCryptoProperties();
+        return crypto != null && crypto.isEnable();
+    }
+
+    private boolean shouldCloseOnDecryptFailure() {
+        NettyServerStartupProperties.WebSocket.Crypto crypto = getCryptoProperties();
+        return crypto == null || crypto.isCloseOnDecryptFailure();
+    }
+
+    private boolean shouldRejectUnencrypted() {
+        NettyServerStartupProperties.WebSocket.Crypto crypto = getCryptoProperties();
+        return crypto == null || crypto.isRejectUnencrypted();
     }
 
     private MessageCryptoCodec requireMessageCryptoCodec() {

@@ -18,10 +18,13 @@ package com.github.berrywang1996.netty.spring.web.websocket.context;
 
 import com.github.berrywang1996.netty.spring.web.context.MappingSupporter;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
+import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.annotation.MessageMapping;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
+import com.github.berrywang1996.netty.spring.web.websocket.crypto.AesGcmMessageCryptoCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoCodec;
+import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoKeyProvider;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.annotation.AnnotatedElementUtils;
@@ -192,15 +195,47 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
             return null;
         }
         Map<String, MessageCryptoCodec> codecs = applicationContext.getBeansOfType(MessageCryptoCodec.class);
-        if (codecs.isEmpty()) {
-            throw new IllegalStateException(
-                    "Websocket crypto is enabled but no MessageCryptoCodec bean is available.");
-        }
         if (codecs.size() > 1) {
             throw new IllegalStateException(
                     "Websocket crypto requires exactly one MessageCryptoCodec bean, but found " + codecs.size() + ".");
         }
-        return codecs.values().iterator().next();
+        if (codecs.size() == 1) {
+            return codecs.values().iterator().next();
+        }
+        NettyServerStartupProperties.WebSocket.Crypto cryptoProperties = startupProperties.getWebSocket().getCrypto();
+        if (AesGcmMessageCryptoCodec.ALGORITHM.equalsIgnoreCase(cryptoProperties.getAlgorithm())) {
+            return new AesGcmMessageCryptoCodec(
+                    cryptoProperties,
+                    resolveMessageCryptoKeyProvider(applicationContext, cryptoProperties));
+        }
+        throw new IllegalStateException(
+                "Websocket crypto is enabled but no MessageCryptoCodec bean is available for algorithm "
+                        + cryptoProperties.getAlgorithm() + ".");
+    }
+
+    private MessageCryptoKeyProvider resolveMessageCryptoKeyProvider(
+            ApplicationContext applicationContext,
+            NettyServerStartupProperties.WebSocket.Crypto cryptoProperties) {
+        Map<String, MessageCryptoKeyProvider> providers =
+                applicationContext.getBeansOfType(MessageCryptoKeyProvider.class);
+        String providerName = cryptoProperties.getKeyProvider();
+        if (!StringUtil.isBlank(providerName)) {
+            MessageCryptoKeyProvider provider = providers.get(providerName);
+            if (provider == null) {
+                throw new IllegalStateException(
+                        "Websocket crypto key provider bean not found: " + providerName);
+            }
+            return provider;
+        }
+        if (providers.size() == 1) {
+            return providers.values().iterator().next();
+        }
+        if (providers.isEmpty()) {
+            throw new IllegalStateException(
+                    "AES-GCM websocket crypto requires a MessageCryptoKeyProvider bean.");
+        }
+        throw new IllegalStateException(
+                "AES-GCM websocket crypto requires exactly one MessageCryptoKeyProvider bean or crypto.key-provider.");
     }
 
     private boolean isCryptoEnabled(NettyServerStartupProperties startupProperties) {

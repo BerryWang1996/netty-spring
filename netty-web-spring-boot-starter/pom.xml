@@ -8,7 +8,7 @@
     <parent>
         <groupId>com.github.berrywang1996</groupId>
         <artifactId>netty-spring-parent</artifactId>
-        <version>1.2.0-SNAPSHOT</version>
+        <version>1.2.0</version>
     </parent>
 
     <artifactId>netty-web-spring-boot-starter</artifactId>

@@ -4,18 +4,18 @@
 
 ## 适用范围
 
-- 适用于 `1.0.x` 维护版本、`1.1.x` RC/正式版本发布。
+- 适用于 `1.0.x` 维护版本、`1.1.x` RC/正式版本、`1.2.x` WebSocket 产品能力版本发布。
 - 目标是保证发布动作可重复执行，而不是依赖一次性的人工记忆。
 - 当前计划暂时不把安全扫描和漏洞 triage 作为功能/稳定性版本发布阻塞项；企业安全发布另设更高门槛。
 
 ## 版本类型
 
-- 功能/稳定性发布：面向 `1.1.0-RC2` 和当前口径下的 `1.1.0`，重点确认全量测试、Starter 兼容、配置文档、SBOM 生成和基础 CI 链路。
+- 功能/稳定性发布：面向 `1.1.0-RC2`、`1.1.0` 和 `1.2.x`，重点确认全量测试、Starter 兼容、WebSocket 产品能力回归、配置文档、SBOM 生成和基础 CI 链路。
 - 企业安全发布：面向后续安全加固版本，除功能/稳定性发布要求外，还必须完成 Dependency-Check、Dependabot triage、CORS/鉴权/TLS 策略等安全项。
 
 ## 发布前
 
-1. 确认本次版本类型：`1.0.x` 只承接维护修复；`1.1.x` 承接 P4 Starter/配置模型收敛；P5+ 产品能力不混入 `1.1.0-RC1`。
+1. 确认本次版本类型：`1.0.x` 只承接维护修复；`1.1.x` 承接 P4 Starter/配置模型收敛；`1.2.x` 承接 P5/P5.x WebSocket 产品能力。
 2. 更新版本号、README 和 [开发计划](development-plan.md) 中的当前阶段说明。
 3. 运行全量 `mvn test`。
    生成 SBOM：`mvn -Psbom -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom`。
@@ -45,6 +45,10 @@
    如启用 `server.netty.management.enable=true`，必须确认管理端点只在受保护网络、网关或等效访问控制下暴露。
    handler/sender 线程池配置有启动期校验，非法容量和 `max < core` 不会静默兜底。
    README、配置文档和 demo 明确安全接入方式，不把 RC 候选描述为企业生产默认部署版本。
+8. `1.2.x` WebSocket 产品能力版本还需要确认：
+   P5 会话查询、单播、按 URI 广播、主动关闭、payload 绑定、JSON 发送、心跳/空闲断线和 crypto 链路均有回归测试。
+   启用 `server.netty.websocket.crypto.algorithm=AES-GCM` 时，必须提供 `MessageCryptoKeyProvider`，且 `reject-unencrypted` 默认拒绝对应 text/binary 明文数据帧。
+   文档明确应用层 crypto 不替代 TLS/WSS，也不承诺浏览器运行时完全不可见明文。
 
 ## 企业安全发布附加项
 
