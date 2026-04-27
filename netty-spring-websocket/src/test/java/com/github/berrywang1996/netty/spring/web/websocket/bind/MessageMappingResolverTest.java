@@ -6,6 +6,7 @@ import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
+import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
@@ -21,6 +22,7 @@ import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpVersion;
+import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.PingWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.PongWebSocketFrame;
@@ -594,6 +596,128 @@ class MessageMappingResolverTest {
         testChannel.finish();
     }
 
+    @Test
+    void textMessageCanBindStringPayload() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.TEXT_MESSAGE, method(endpoint, "onTextPayload", String.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        TextWebSocketFrame frame = new TextWebSocketFrame("hello");
+        try {
+            resolver.resolve(testChannel.ctx, frame);
+
+            assertEquals("hello", endpoint.lastTextPayload);
+            assertNotNull(endpoint.lastMessageSession);
+            assertEquals(1, endpoint.textPayloadCount);
+        } finally {
+            frame.release();
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void textMessageCanBindJsonPojoPayload() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.TEXT_MESSAGE,
+                method(endpoint, "onJsonPayload", TextJsonPayload.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        TextWebSocketFrame frame = new TextWebSocketFrame("{\"name\":\"alpha\",\"count\":2}");
+        try {
+            resolver.resolve(testChannel.ctx, frame);
+
+            assertNotNull(endpoint.lastJsonPayload);
+            assertEquals("alpha", endpoint.lastJsonPayload.name);
+            assertEquals(2, endpoint.lastJsonPayload.count);
+            assertNotNull(endpoint.lastMessageSession);
+            assertEquals(1, endpoint.jsonPayloadCount);
+        } finally {
+            frame.release();
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void invalidJsonPayloadDispatchesErrorLifecycle() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.TEXT_MESSAGE,
+                method(endpoint, "onJsonPayload", TextJsonPayload.class, MessageSession.class));
+        methods.put(MessageType.ON_ERROR,
+                method(endpoint, "onError", HttpRequest.class, MessageSession.class, Exception.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        TextWebSocketFrame frame = new TextWebSocketFrame("{");
+        try {
+            resolver.resolve(testChannel.ctx, frame);
+
+            assertEquals(1, endpoint.errorCount);
+            assertNotNull(endpoint.lastErrorMessage);
+            assertEquals(0, endpoint.jsonPayloadCount);
+            assertFalse(resolver.getSessionMap().isEmpty());
+        } finally {
+            frame.release();
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void binaryMessageCanBindByteBufAndByteArrayPayload() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.BINARY_MESSAGE,
+                method(endpoint, "onBinaryPayload", ByteBuf.class, byte[].class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        BinaryWebSocketFrame frame =
+                new BinaryWebSocketFrame(Unpooled.copiedBuffer("binary", CharsetUtil.UTF_8));
+        try {
+            resolver.resolve(testChannel.ctx, frame);
+
+            assertEquals("binary", endpoint.lastBinaryPayloadFromByteBuf);
+            assertEquals("binary", endpoint.lastBinaryPayloadFromBytes);
+            assertNotNull(endpoint.lastMessageSession);
+            assertEquals(1, endpoint.binaryPayloadCount);
+        } finally {
+            frame.release();
+            testChannel.finish();
+        }
+    }
+
     private static Method method(Object target, String methodName, Class<?>... parameterTypes) throws Exception {
         return target.getClass().getMethod(methodName, parameterTypes);
     }
@@ -680,6 +804,14 @@ class MessageMappingResolverTest {
         private int errorCount;
         private String lastErrorMessage;
         private int lastErrorRequestRefCnt;
+        private int textPayloadCount;
+        private int binaryPayloadCount;
+        private int jsonPayloadCount;
+        private String lastTextPayload;
+        private String lastBinaryPayloadFromByteBuf;
+        private String lastBinaryPayloadFromBytes;
+        private TextJsonPayload lastJsonPayload;
+        private MessageSession lastMessageSession;
 
         public Boolean onHandshake(HttpRequest request) {
             if (throwOnHandshake) {
@@ -709,5 +841,29 @@ class MessageMappingResolverTest {
                 throw new IllegalStateException("error handler failed");
             }
         }
+
+        public void onTextPayload(String payload, MessageSession session) {
+            textPayloadCount++;
+            lastTextPayload = payload;
+            lastMessageSession = session;
+        }
+
+        public void onJsonPayload(TextJsonPayload payload, MessageSession session) {
+            jsonPayloadCount++;
+            lastJsonPayload = payload;
+            lastMessageSession = session;
+        }
+
+        public void onBinaryPayload(ByteBuf payload, byte[] bytes, MessageSession session) {
+            binaryPayloadCount++;
+            lastBinaryPayloadFromByteBuf = payload.toString(CharsetUtil.UTF_8);
+            lastBinaryPayloadFromBytes = new String(bytes, CharsetUtil.UTF_8);
+            lastMessageSession = session;
+        }
+    }
+
+    public static final class TextJsonPayload {
+        public String name;
+        public int count;
     }
 }

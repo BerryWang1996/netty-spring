@@ -2,8 +2,16 @@ package com.github.berrywang1996.netty.spring.web.websocket.context;
 
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.QueryStringDecoder;
 import io.netty.util.ReferenceCountUtil;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -45,6 +53,54 @@ public class MessageSession {
 
     public FullHttpRequest getFirstRequest() {
         return firstRequest;
+    }
+
+    public String getUri() {
+        return firstRequest.uri();
+    }
+
+    public String getPath() {
+        return new QueryStringDecoder(firstRequest.uri()).path();
+    }
+
+    public String getQueryParam(String name) {
+        List<String> values = getQueryParams(name);
+        if (values.isEmpty()) {
+            return null;
+        }
+        return values.get(0);
+    }
+
+    public List<String> getQueryParams(String name) {
+        List<String> values = new QueryStringDecoder(firstRequest.uri()).parameters().get(name);
+        if (values == null || values.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return Collections.unmodifiableList(new ArrayList<>(values));
+    }
+
+    public Map<String, List<String>> getQueryParams() {
+        Map<String, List<String>> params = new HashMap<>();
+        for (Map.Entry<String, List<String>> entry : new QueryStringDecoder(firstRequest.uri()).parameters().entrySet()) {
+            params.put(entry.getKey(), Collections.unmodifiableList(new ArrayList<>(entry.getValue())));
+        }
+        return Collections.unmodifiableMap(params);
+    }
+
+    public String getHeader(String name) {
+        return firstRequest.headers().get(name);
+    }
+
+    public List<String> getHeaders(String name) {
+        List<String> values = firstRequest.headers().getAll(name);
+        if (values.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return Collections.unmodifiableList(new ArrayList<>(values));
+    }
+
+    public Set<String> getHeaderNames() {
+        return Collections.unmodifiableSet(new HashSet<>(firstRequest.headers().names()));
     }
 
     public boolean startClosing() {

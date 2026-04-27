@@ -65,6 +65,15 @@
     <dependencyManagement>
         <dependencies>
 
+            <!-- netty managed versions -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-bom</artifactId>
+                <version>${netty.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
             <!-- spring boot managed versions -->
             <dependency>
                 <groupId>org.springframework.boot</groupId>
@@ -80,13 +89,6 @@
                 <artifactId>lombok</artifactId>
                 <version>${lombok.version}</version>
                 <scope>provided</scope>
-            </dependency>
-
-            <!-- netty -->
-            <dependency>
-                <groupId>io.netty</groupId>
-                <artifactId>netty-all</artifactId>
-                <version>${netty.version}</version>
             </dependency>
 
             <!-- activation -->
@@ -209,6 +211,7 @@
                             <failOnError>true</failOnError>
                             <skipTestScope>true</skipTestScope>
                             <nvdApiKeyEnvironmentVariable>NVD_API_KEY</nvdApiKeyEnvironmentVariable>
+                            <dataDirectory>${settings.localRepository}/../dependency-check-data</dataDirectory>
                             <outputDirectory>${project.build.directory}/dependency-check</outputDirectory>
                             <suppressionFiles>
                                 <suppressionFile>${maven.multiModuleProjectDirectory}/dependency-check-suppressions.xml</suppressionFile>

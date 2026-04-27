@@ -5,6 +5,7 @@ import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
 import com.github.berrywang1996.netty.spring.web.websocket.context.AbstractMessage;
 import com.github.berrywang1996.netty.spring.web.websocket.context.DefaultMessageSender;
+import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSender;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSenderRuntimeStats;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSessionClosedException;
@@ -106,6 +107,21 @@ public class MessageSenderSupport implements MessageSender {
     }
 
     @Override
+    public Set<String> getSessionIds(String uri) {
+        return this.getMessageSender().getSessionIds(uri);
+    }
+
+    @Override
+    public MessageSession getSession(String uri, String sessionId) {
+        return this.getMessageSender().getSession(uri, sessionId);
+    }
+
+    @Override
+    public Map<String, MessageSession> getSessions(String uri) {
+        return this.getMessageSender().getSessions(uri);
+    }
+
+    @Override
     public boolean isSessionAlive(String uri, String... sessionIds) {
         return this.getMessageSender().isSessionAlive(uri, sessionIds);
     }
@@ -118,6 +134,17 @@ public class MessageSenderSupport implements MessageSender {
     @Override
     public void topicMessage(String uri, AbstractMessage message) throws MessageUriNotDefinedException {
         this.getMessageSender().topicMessage(uri, message);
+    }
+
+    @Override
+    public boolean closeSession(String uri, String sessionId, int statusCode, String reasonText)
+            throws MessageUriNotDefinedException {
+        return this.getMessageSender().closeSession(uri, sessionId, statusCode, reasonText);
+    }
+
+    @Override
+    public int closeSessions(String uri, int statusCode, String reasonText) throws MessageUriNotDefinedException {
+        return this.getMessageSender().closeSessions(uri, statusCode, reasonText);
     }
 
     @Override

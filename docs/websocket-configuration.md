@@ -77,6 +77,38 @@ server:
 - 当应用引入 websocket starter 但没有声明 `@MessageMapping` 时，`MessageSenderSupport` 会退化为空实现，不会再因为空指针导致启动后的调用失败。
 - 自动配置默认注册 `messageSenderSupport` Bean，并额外暴露 `messageSender` 别名；业务代码推荐按 `MessageSender` 接口注入，保留对 `MessageSenderSupport` 的兼容。应用自定义 `MessageSender` Bean 时，默认 `MessageSenderSupport` 会自动退让。
 
+## MessageSender API
+
+- `getSessionIds(uri)`：按 URI 获取当前 session id 的只读快照。
+- `getSession(uri, sessionId)`：按 URI 和 session id 获取当前 session，不存在或已关闭时返回 `null`。
+- `getSessions(uri)`：按 URI 获取 session 的只读快照，避免业务代码直接修改内部 session map。
+- `sendToSession(uri, message, sessionId)`：向单个 session 发送消息，是 `sendMessage()` 的语义化别名。
+- `broadcast(uri, message)`：向指定 URI 下全部 session 广播消息，是 `topicMessage()` 的语义化别名。
+- `closeSession(uri, sessionId)` / `closeSession(uri, sessionId, statusCode, reasonText)`：主动关闭单个 session，并走统一 `ON_CLOSE` 和 session 清理链路。
+- `closeSessions(uri)` / `closeSessions(uri, statusCode, reasonText)`：主动关闭指定 URI 下的全部 session，返回已启动关闭流程的 session 数。
+- 原有 `sendMessage()` / `topicMessage()` 保持兼容，后续文档和 demo 会优先使用更清晰的 `sendToSession()` / `broadcast()`。
+
+## MessageSession API
+
+- `getUri()` / `getPath()`：读取握手请求原始 URI 和 path。
+- `getQueryParam(name)`：读取第一个 query 参数值，不存在时返回 `null`。
+- `getQueryParams(name)` / `getQueryParams()`：读取 query 参数只读快照。
+- `getHeader(name)`：读取第一个 header 值。
+- `getHeaders(name)` / `getHeaderNames()`：读取 header 值和 header 名称只读快照。
+
+## Handler 参数绑定
+
+- `TEXT_MESSAGE` 继续支持绑定 `TextWebSocketFrame`，也可以直接绑定 `String` 消息正文。
+- `TEXT_MESSAGE` 还支持把 JSON 文本直接绑定到业务对象、`Map`、`Collection`、数组、枚举或基础包装类型；反序列化失败会进入现有 `ON_ERROR` 生命周期。
+- `BINARY_MESSAGE` 继续支持绑定 `BinaryWebSocketFrame`，也可以直接绑定 `ByteBuf` 或 `byte[]`。
+- `ByteBuf` 参数仅保证在当前回调内可用；如果业务需要异步持有，应自行 `retain()` 或优先使用 `byte[]` 参数。
+
+## 消息类型
+
+- `TextMessage`：发送普通文本帧。
+- `BinaryMessage`：发送二进制帧，每次发送会基于原始 `ByteBuf` 创建 retained duplicate。
+- `JsonMessage`：发送 JSON 文本帧，将业务对象序列化为 JSON 后写入 `TextWebSocketFrame`。
+
 ## 运行时观测入口
 
 - `NettyServerBootstrap#getHandlerRuntimeStats()`：读取 handler 线程池和 permit 运行时快照。

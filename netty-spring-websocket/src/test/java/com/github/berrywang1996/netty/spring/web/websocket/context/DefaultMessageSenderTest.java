@@ -6,6 +6,7 @@ import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupPrope
 import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSessionClosedException;
+import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageUriNotDefinedException;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -24,10 +25,13 @@ import org.junit.jupiter.api.Test;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.SynchronousQueue;
@@ -37,6 +41,7 @@ import java.util.concurrent.TimeUnit;
 import static io.netty.handler.codec.http.HttpMethod.GET;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -56,8 +61,19 @@ class DefaultMessageSenderTest {
         try {
             assertEquals(3, sender.getSessionNums());
             assertEquals(2, sender.getSessionNums("/ws/foo"));
+            assertEquals(new HashSet<>(Arrays.asList("foo-1", "foo-2")), sender.getSessionIds("/ws/foo"));
+            assertEquals("foo-1", sender.getSession("/ws/foo", "foo-1").getSessionId());
+            assertNull(sender.getSession("/ws/foo", "missing"));
+            assertEquals(2, sender.getSessions("/ws/foo").size());
+            assertTrue(sender.getSessionIds("/ws/missing").isEmpty());
+            assertTrue(sender.getSessions("/ws/missing").isEmpty());
             assertTrue(sender.isSessionAlive("/ws/foo", "foo-1", "foo-2"));
             assertFalse(sender.isSessionAlive("/ws/foo", "foo-1", "missing"));
+
+            Set<String> sessionIds = sender.getSessionIds("/ws/foo");
+            Map<String, MessageSession> sessions = sender.getSessions("/ws/foo");
+            assertThrows(UnsupportedOperationException.class, () -> sessionIds.add("new-session"));
+            assertThrows(UnsupportedOperationException.class, sessions::clear);
         } finally {
             cleanup(fooResolver, fooSession1, fooSession2);
             cleanup(barResolver, barSession);
@@ -400,6 +416,72 @@ class DefaultMessageSenderTest {
             releaseResponse.countDown();
             sender.shutdown();
             cleanup(resolver, session1, session2);
+        }
+    }
+
+    @Test
+    void closeSessionDispatchesCloseLifecycleAndWritesCloseFrame() throws Exception {
+        LifecycleEndpoint endpoint = new LifecycleEndpoint();
+        MessageMappingResolver resolver = lifecycleResolver("/ws/foo", endpoint);
+        SessionFixture session = addSession(resolver, "/ws/foo", "active");
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+
+        try {
+            assertTrue(sender.closeSession("/ws/foo", "active", 4001, "kick"));
+
+            assertEquals(1, endpoint.closeCount);
+            assertFalse(resolver.getSessionMap().containsKey("active"));
+            Object outbound = awaitOutbound(session);
+            try {
+                assertTrue(outbound instanceof CloseWebSocketFrame);
+                CloseWebSocketFrame closeFrame = (CloseWebSocketFrame) outbound;
+                assertEquals(4001, closeFrame.statusCode());
+                assertEquals("kick", closeFrame.reasonText());
+            } finally {
+                ReferenceCountUtil.release(outbound);
+            }
+            drainChannels(session);
+            assertFalse(session.channel.isActive());
+        } finally {
+            cleanup(resolver, session);
+        }
+    }
+
+    @Test
+    void closeSessionsClosesAllSessionsUnderUri() throws Exception {
+        LifecycleEndpoint endpoint = new LifecycleEndpoint();
+        MessageMappingResolver resolver = lifecycleResolver("/ws/foo", endpoint);
+        SessionFixture session1 = addSession(resolver, "/ws/foo", "s1");
+        SessionFixture session2 = addSession(resolver, "/ws/foo", "s2");
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+
+        try {
+            assertEquals(2, sender.closeSessions("/ws/foo", 1001, "server restart"));
+            assertFalse(sender.closeSession("/ws/foo", "missing"));
+            assertThrows(MessageUriNotDefinedException.class,
+                    () -> sender.closeSession("/ws/missing", "s1"));
+
+            assertEquals(2, endpoint.closeCount);
+            assertTrue(resolver.getSessionMap().isEmpty());
+            assertOnlyCloseFrames(session1);
+            assertOnlyCloseFrames(session2);
+        } finally {
+            cleanup(resolver, session1, session2);
+        }
+    }
+
+    @Test
+    void closeSessionReturnsFalseAndCleansUpInactiveSession() throws Exception {
+        MessageMappingResolver resolver = emptyResolver("/ws/foo");
+        SessionFixture session = addSession(resolver, "/ws/foo", "closed");
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+        session.channel.close();
+
+        try {
+            assertFalse(sender.closeSession("/ws/foo", "closed"));
+            assertFalse(resolver.getSessionMap().containsKey("closed"));
+        } finally {
+            cleanup(resolver, session);
         }
     }
 

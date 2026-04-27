@@ -16,6 +16,7 @@
 
 package com.github.berrywang1996.netty.spring.web.websocket.bind;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
 import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitter;
 import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitterAware;
@@ -41,7 +42,9 @@ import org.springframework.context.ApplicationContext;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -65,6 +68,8 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     private static final int SHUTDOWN_CLOSE_STATUS_CODE = 1001;
 
     private static final String SHUTDOWN_CLOSE_REASON = "Server shutting down";
+
+    private static final ObjectMapper DEFAULT_OBJECT_MAPPER = new ObjectMapper();
 
     public static final AttributeKey<String> SESSION_ID_IN_CHANNEL = AttributeKey.valueOf("sessionId");
 
@@ -504,7 +509,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     }
 
     private Object[] getMethodParam(Object message, ChannelHandlerContext ctx, MessageSession session,
-                                    MessageType messageType, Exception e) {
+                                    MessageType messageType, Exception e) throws Exception {
         List<Object> methodParams = new ArrayList<>();
         Map<String, Class> methodParamType = getMethodParamType(messageType);
         for (Map.Entry<String, Class> methodEntry : methodParamType.entrySet()) {
@@ -533,9 +538,24 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             } else if (TextWebSocketFrame.class.isAssignableFrom(value) && messageType == MessageType.TEXT_MESSAGE) {
                 // TextWebSocketFrame
                 methodParams.add(message);
+            } else if (String.class == value && messageType == MessageType.TEXT_MESSAGE) {
+                // Text payload
+                methodParams.add(((TextWebSocketFrame) message).text());
+            } else if (isJsonTextPayloadBindingTarget(value) && messageType == MessageType.TEXT_MESSAGE) {
+                // JSON text payload converted to business object
+                methodParams.add(readJsonTextPayload((TextWebSocketFrame) message, value));
             } else if (BinaryWebSocketFrame.class.isAssignableFrom(value) && messageType == MessageType.BINARY_MESSAGE) {
                 // BinaryWebSocketFrame
                 methodParams.add(message);
+            } else if (ByteBuf.class.isAssignableFrom(value) && messageType == MessageType.BINARY_MESSAGE) {
+                // Binary payload, valid during current callback
+                methodParams.add(((BinaryWebSocketFrame) message).content());
+            } else if (byte[].class == value && messageType == MessageType.BINARY_MESSAGE) {
+                // Binary payload copy
+                ByteBuf content = ((BinaryWebSocketFrame) message).content();
+                byte[] bytes = new byte[content.readableBytes()];
+                content.getBytes(content.readerIndex(), bytes);
+                methodParams.add(bytes);
             } else if (WebSocketFrame.class.isAssignableFrom(value) && messageType == MessageType.OTHER) {
                 // WebSocketFrame
                 methodParams.add(message);
@@ -553,6 +573,49 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             }
         }
         return methodParams.toArray();
+    }
+
+    private Object readJsonTextPayload(TextWebSocketFrame frame, Class<?> value) throws Exception {
+        return DEFAULT_OBJECT_MAPPER.readValue(frame.text(), value);
+    }
+
+    private boolean isJsonTextPayloadBindingTarget(Class<?> value) {
+        if (value == null || isReservedBindingType(value)) {
+            return false;
+        }
+        if (value.isPrimitive()
+                || isPrimitiveWrapper(value)
+                || value.isEnum()
+                || value.isArray()
+                || Map.class.isAssignableFrom(value)
+                || Collection.class.isAssignableFrom(value)
+                || Object.class == value) {
+            return true;
+        }
+        int modifiers = value.getModifiers();
+        return !value.isInterface() && !Modifier.isAbstract(modifiers);
+    }
+
+    private boolean isReservedBindingType(Class<?> value) {
+        return String.class == value
+                || CharSequence.class.isAssignableFrom(value)
+                || MessageSession.class.isAssignableFrom(value)
+                || ChannelHandlerContext.class.isAssignableFrom(value)
+                || HttpRequest.class.isAssignableFrom(value)
+                || WebSocketFrame.class.isAssignableFrom(value)
+                || ByteBuf.class.isAssignableFrom(value)
+                || Exception.class.isAssignableFrom(value);
+    }
+
+    private boolean isPrimitiveWrapper(Class<?> value) {
+        return Boolean.class == value
+                || Byte.class == value
+                || Short.class == value
+                || Integer.class == value
+                || Long.class == value
+                || Float.class == value
+                || Double.class == value
+                || Character.class == value;
     }
 
     private static void sendHttpResponse(ChannelHandlerContext ctx, FullHttpRequest req, FullHttpResponse res) {
@@ -573,6 +636,26 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
 
     public Map<String, MessageSession> getSessionMap() {
         return sessionMap;
+    }
+
+    public boolean closeSession(String sessionId, int statusCode, String reasonText) {
+        if (StringUtil.isBlank(sessionId)) {
+            return false;
+        }
+        MessageSession session = sessionMap.get(sessionId);
+        if (session == null) {
+            return false;
+        }
+        if (!session.getChannelHandlerContext().channel().isActive()) {
+            removeSession(sessionId);
+            return false;
+        }
+        CloseWebSocketFrame closeFrame = new CloseWebSocketFrame(statusCode, reasonText == null ? "" : reasonText);
+        try {
+            return closeSession(session, closeFrame, true);
+        } finally {
+            ReferenceCountUtil.release(closeFrame);
+        }
     }
 
     private Runnable tryAcquireConnectionSlot(ChannelHandlerContext ctx, FullHttpRequest request) {
@@ -671,9 +754,9 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         this.handlerSubmitter = handlerSubmitter;
     }
 
-    private void closeSession(MessageSession session, CloseWebSocketFrame closeFrame, boolean notifyClose) {
+    private boolean closeSession(MessageSession session, CloseWebSocketFrame closeFrame, boolean notifyClose) {
         if (session == null || !session.startClosing()) {
-            return;
+            return false;
         }
         try {
             if (notifyClose) {
@@ -682,6 +765,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         } finally {
             cleanupClosedSession(session, closeFrame);
         }
+        return true;
     }
 
     private void notifyCloseLifecycle(CloseWebSocketFrame closeFrame, MessageSession session) {

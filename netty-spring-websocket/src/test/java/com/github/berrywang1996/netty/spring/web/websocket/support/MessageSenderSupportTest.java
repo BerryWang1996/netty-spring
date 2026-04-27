@@ -63,8 +63,13 @@ class MessageSenderSupportTest {
 
         assertEquals(0, support.getSessionNums());
         assertEquals(0, support.getSessionNums("/ws/test"));
+        assertTrue(support.getSessionIds("/ws/test").isEmpty());
+        assertNull(support.getSession("/ws/test", "session-1"));
+        assertTrue(support.getSessions("/ws/test").isEmpty());
         assertTrue(support.getRegisteredUri().isEmpty());
         assertFalse(support.isSessionAlive("/ws/test", "session-1"));
+        assertFalse(support.closeSession("/ws/test", "session-1"));
+        assertEquals(0, support.closeSessions("/ws/test"));
         MessageSenderRuntimeStats stats = support.getRuntimeStats();
         assertEquals(0L, stats.getRejectedBroadcastCount());
         assertTrue(stats.getExecutor().isShutdown());
@@ -107,7 +112,12 @@ class MessageSenderSupportTest {
                         Collections.singletonMap("/ws/test", secondResolver);
                 setField(NettyServerBootstrap.class, bootstrap, "webSockeMappingtResolverMap", restartedMap);
 
-                support.sendMessage("/ws/test", new TextMessage("hello"), "new-session");
+                assertEquals(Collections.singleton("new-session"), support.getSessionIds("/ws/test"));
+                assertEquals("new-session", support.getSession("/ws/test", "new-session").getSessionId());
+                assertEquals(1, support.getSessions("/ws/test").size());
+                assertThrows(UnsupportedOperationException.class, () -> support.getSessions("/ws/test").clear());
+
+                support.sendToSession("/ws/test", new TextMessage("hello"), "new-session");
 
                 Object outbound = secondSession.channel.readOutbound();
                 try {
@@ -117,9 +127,11 @@ class MessageSenderSupportTest {
                     ReferenceCountUtil.release(outbound);
                 }
 
+                assertTrue(support.closeSession("/ws/test", "new-session"));
+                assertEquals(0, support.getSessionNums("/ws/test"));
+
                 DefaultMessageSender restartedSender = (DefaultMessageSender) support.getMessageSender();
                 assertNotSame(firstSender, restartedSender);
-                assertEquals(1, support.getSessionNums("/ws/test"));
                 assertNull(firstSession.channel.readOutbound());
             } finally {
                 cleanup(secondResolver, secondSession);

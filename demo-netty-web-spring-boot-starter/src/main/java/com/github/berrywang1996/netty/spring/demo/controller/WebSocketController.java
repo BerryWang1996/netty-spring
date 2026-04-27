@@ -1,20 +1,19 @@
 package com.github.berrywang1996.netty.spring.demo.controller;
 
-import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestMapping;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.ResponseBody;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.annotation.MessageMapping;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
+import com.github.berrywang1996.netty.spring.web.websocket.context.JsonMessage;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSender;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
 import com.github.berrywang1996.netty.spring.web.websocket.context.TextMessage;
-import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.HttpRequest;
-import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
-import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
-import io.netty.util.Attribute;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Controller;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * @author berrywang1996
@@ -29,6 +28,8 @@ public class WebSocketController {
 
     private static final String TEST_URI = "/ws/test";
 
+    private static final String JSON_URI = "/ws/json";
+
     public WebSocketController(MessageSender messageSender) {
         this.messageSender = messageSender;
     }
@@ -37,11 +38,33 @@ public class WebSocketController {
     @ResponseBody
     public String sendWebsocketMessage(String message) {
         try {
-            messageSender.topicMessage(TEST_URI, new TextMessage(message));
+            messageSender.broadcast(TEST_URI, new TextMessage(message));
         } catch (Exception e) {
-            e.printStackTrace();
+            log.warn("Broadcast websocket text message failed.", e);
         }
         return "success";
+    }
+
+    @RequestMapping("/sendWebsocketJson")
+    @ResponseBody
+    public String sendWebsocketJson(String message) {
+        try {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("message", message);
+            payload.put("activeSessions", messageSender.getSessionNums(TEST_URI));
+            messageSender.broadcast(TEST_URI, new JsonMessage(payload));
+        } catch (Exception e) {
+            log.warn("Broadcast websocket json message failed.", e);
+        }
+        return "success";
+    }
+
+    @RequestMapping("/closeWebsocketSession")
+    @ResponseBody
+    public String closeWebsocketSession(String sessionId) {
+        return messageSender.closeSession(TEST_URI, sessionId, 1000, "Closed by demo API")
+                ? "closed"
+                : "session not found";
     }
 
     @MessageMapping(value = TEST_URI, messageType = MessageType.ON_HANDSHAKE)
@@ -50,21 +73,35 @@ public class WebSocketController {
     }
 
     @MessageMapping(value = TEST_URI, messageType = MessageType.ON_CONNECTED)
-    public void testConnected(HttpRequest request, MessageSession messageSession) {
-        log.info("testConnected ok");
+    public void testConnected(MessageSession messageSession) {
+        log.info("testConnected ok, sessionId={}, path={}, room={}",
+                messageSession.getSessionId(),
+                messageSession.getPath(),
+                messageSession.getQueryParam("room"));
     }
 
     @MessageMapping(value = TEST_URI, messageType = MessageType.TEXT_MESSAGE)
-    public void testTextMessage(HttpRequest request, TextWebSocketFrame text, ChannelHandlerContext ctx) {
-        log.info("testTextMessage ok, received message: {}", text.text());
-        // response
-        Attribute<String> sessionId = ctx.channel().attr(ServiceHandler.SESSION_ID_IN_CHANNEL);
-        messageSender.sendMessage(TEST_URI, new TextMessage(text.text()), sessionId.get());
+    public void testTextMessage(String text, MessageSession session) {
+        log.info("testTextMessage ok, sessionId={}, received message: {}", session.getSessionId(), text);
+        messageSender.sendToSession(TEST_URI, new TextMessage(text), session.getSessionId());
+    }
+
+    @MessageMapping(value = JSON_URI, messageType = MessageType.TEXT_MESSAGE)
+    public void testJsonMessage(DemoWebSocketMessage message, MessageSession session) {
+        log.info("testJsonMessage ok, sessionId={}, room={}, message={}",
+                session.getSessionId(),
+                message.getRoom(),
+                message.getMessage());
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("sessionId", session.getSessionId());
+        payload.put("room", message.getRoom());
+        payload.put("message", message.getMessage());
+        messageSender.sendToSession(JSON_URI, new JsonMessage(payload), session.getSessionId());
     }
 
     @MessageMapping(value = TEST_URI, messageType = MessageType.BINARY_MESSAGE)
-    public void testBinaryMessage(HttpRequest request, BinaryWebSocketFrame binary) {
-        log.info("testTextMessage ok, received message: {}", binary.content());
+    public void testBinaryMessage(byte[] binary, MessageSession session) {
+        log.info("testBinaryMessage ok, sessionId={}, bytes={}", session.getSessionId(), binary.length);
     }
 
     @MessageMapping(value = TEST_URI, messageType = MessageType.ON_PING)
@@ -92,5 +129,26 @@ public class WebSocketController {
 //
 //        return dataMap;
 //    }
+
+    public static final class DemoWebSocketMessage {
+        private String room;
+        private String message;
+
+        public String getRoom() {
+            return room;
+        }
+
+        public void setRoom(String room) {
+            this.room = room;
+        }
+
+        public String getMessage() {
+            return message;
+        }
+
+        public void setMessage(String message) {
+            this.message = message;
+        }
+    }
 
 }

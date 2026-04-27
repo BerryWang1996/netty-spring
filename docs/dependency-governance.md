@@ -1,20 +1,27 @@
 # 依赖治理与供应链门禁
 
-更新时间：2026-04-26
+更新时间：2026-04-27
 
 ## 目标
 
-- 让 `1.1.0` 正式版发布前具备可重复执行的依赖清单和漏洞扫描入口。
+- 让后续企业安全发布前具备可重复执行的依赖清单和漏洞扫描入口。
 - 把 GitHub Dependabot 或等效工具提示的问题纳入发布判断，而不是只依赖人工记忆。
 - 普通开发命令保持轻量，依赖扫描和 SBOM 生成只在显式 profile 下运行。
+- 当前功能/稳定性版本暂时不把 Dependency-Check 和 Dependabot triage 作为发布阻塞项；本文件记录的是后续安全轨道门槛。
 
 ## Maven Profiles
+
+## 版本一致性
+
+- 根 POM 显式导入 `io.netty:netty-bom:${netty.version}`，避免 Netty 子模块被 Spring Boot BOM 中较旧的版本覆盖，导致 Netty 组件混版。
+- Runtime 不再依赖 `netty-all`，只显式引入当前代码实际使用的 `netty-codec-http`、`netty-handler`、`netty-transport`、`netty-buffer` 和 `netty-common`，减少无关协议模块带来的漏洞面和扫描噪音。
+- Spring Boot 仍由 `org.springframework.boot:spring-boot-dependencies:${spring-boot.version}` 管理；如果后续升级 Spring Boot，需要重新确认 Netty BOM 覆盖顺序和 `mvn dependency:tree -Dincludes=io.netty` 输出。
 
 ### 生成 SBOM
 
 ```powershell
 $env:JAVA_HOME='C:\Program Files\graalvm-jdk-17.0.11+7.1'
-& 'C:\Users\qq951\.m2\wrapper\dists\apache-maven-3.9.9-bin\4nf9hui3q3djbarqar9g711ggc\apache-maven-3.9.9\bin\mvn.cmd' -Psbom -DskipTests package org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom
+& 'C:\Users\qq951\.m2\wrapper\dists\apache-maven-3.9.9-bin\4nf9hui3q3djbarqar9g711ggc\apache-maven-3.9.9\bin\mvn.cmd' -Psbom -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom
 ```
 
 输出位置：
@@ -41,7 +48,17 @@ $env:JAVA_HOME='C:\Program Files\graalvm-jdk-17.0.11+7.1'
 $env:NVD_API_KEY='replace-with-ci-secret'
 ```
 
-如果本地首次扫描长时间停留在漏洞库初始化阶段，可以先确认 Maven 本地仓库中的 Dependency-Check data cache 是否可复用，再放到 CI 中执行完整扫描。不能因为本地首次拉库超时就跳过正式版发布门禁。
+Dependency-Check data cache 已固定到 `${settings.localRepository}/../dependency-check-data`，默认 Maven 环境下即 `~/.m2/dependency-check-data`，便于本地和 CI 复用同一个缓存约定。如果本地首次扫描长时间停留在漏洞库初始化阶段，可以先确认该缓存是否可复用，再放到 CI 中执行完整扫描。不能因为本地首次拉库超时就跳过正式版发布门禁。
+
+## GitHub Actions 门禁
+
+仓库提供 `.github/workflows/ci.yml`：
+
+- `Maven Test`：push 和 pull request 默认执行全量 `mvn test`。
+- `Generate SBOM`：测试通过后生成 `target/netty-spring-sbom.json` 和 `target/netty-spring-sbom.xml`，并上传为 `netty-spring-sbom` artifact。
+- `Dependency Scan`：只在 `workflow_dispatch`、每周定时任务或 `v*` tag push 时执行，用于发布前门禁；该 job 要求仓库配置 `NVD_API_KEY` secret，并缓存 `~/.m2/dependency-check-data`。
+
+企业安全发布前必须确认 `Dependency Scan` job 成功，或有清晰的扫描失败原因和延期/处置记录。普通 PR 不默认跑漏洞库扫描，避免外部贡献和日常开发被 NVD 初始化耗时拖住。
 
 ## 告警处理规则
 
@@ -51,13 +68,14 @@ $env:NVD_API_KEY='replace-with-ci-secret'
 4. 误报只能写入 `dependency-check-suppressions.xml`，不能通过降低 `failBuildOnCVSS` 绕过。
 5. 每条 suppression 必须包含依赖/CVE、理由和后续清理计划；长期 suppression 需要在发布前重新复核。
 
-## 发布门槛
+## 企业安全发布门槛
 
-`1.1.0` 正式版发布前至少需要完成：
+企业安全发布前至少需要完成：
 
 - `mvn test`
-- `mvn -Psbom -DskipTests package org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom`
+- `mvn -Psbom -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom`
 - `mvn -Pdependency-scan org.owasp:dependency-check-maven:12.2.1:aggregate`
+- GitHub Actions `CI` workflow 中的 `Maven Test`、`Generate SBOM` 和发布门禁 `Dependency Scan`
 - GitHub Dependabot 或等效扫描告警已处理、记录或明确延期
 
-如果依赖扫描因为网络或漏洞数据库不可用而失败，本次只能作为开发提交或 RC 验证，不能直接打正式发布 tag。
+如果依赖扫描因为网络或漏洞数据库不可用而失败，本次只能作为开发提交、功能/稳定性发布或 RC 验证，不能直接声明为企业安全发布。

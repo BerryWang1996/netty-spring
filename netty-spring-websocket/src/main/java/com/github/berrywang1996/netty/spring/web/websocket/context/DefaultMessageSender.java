@@ -11,6 +11,9 @@ import io.netty.channel.ChannelFutureListener;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -101,6 +104,45 @@ public class DefaultMessageSender implements MessageSender {
     }
 
     @Override
+    public Set<String> getSessionIds(String uri) {
+        MessageMappingResolver resolver = resolverMap.get(uri);
+        if (resolver == null) {
+            return Collections.emptySet();
+        }
+        Set<String> sessionIds = new HashSet<>();
+        for (String sessionId : resolver.getSessionMap().keySet()) {
+            if (isSessionActive(resolver, sessionId)) {
+                sessionIds.add(sessionId);
+            }
+        }
+        return Collections.unmodifiableSet(sessionIds);
+    }
+
+    @Override
+    public MessageSession getSession(String uri, String sessionId) {
+        MessageMappingResolver resolver = resolverMap.get(uri);
+        if (resolver == null || !isSessionActive(resolver, sessionId)) {
+            return null;
+        }
+        return resolver.getSessionMap().get(sessionId);
+    }
+
+    @Override
+    public Map<String, MessageSession> getSessions(String uri) {
+        MessageMappingResolver resolver = resolverMap.get(uri);
+        if (resolver == null) {
+            return Collections.emptyMap();
+        }
+        Map<String, MessageSession> sessions = new HashMap<>();
+        for (Map.Entry<String, MessageSession> entry : resolver.getSessionMap().entrySet()) {
+            if (isSessionActive(resolver, entry.getKey())) {
+                sessions.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return Collections.unmodifiableMap(sessions);
+    }
+
+    @Override
     public Set<String> getRegisteredUri() {
         return resolverMap.keySet();
     }
@@ -160,6 +202,31 @@ public class DefaultMessageSender implements MessageSender {
             }
             submitBroadcastTask(resolver, session, message);
         }
+    }
+
+    @Override
+    public boolean closeSession(String uri, String sessionId, int statusCode, String reasonText)
+            throws MessageUriNotDefinedException {
+        MessageMappingResolver resolver = resolverMap.get(uri);
+        if (resolver == null) {
+            throw new MessageUriNotDefinedException(uri);
+        }
+        return resolver.closeSession(sessionId, statusCode, reasonText);
+    }
+
+    @Override
+    public int closeSessions(String uri, int statusCode, String reasonText) throws MessageUriNotDefinedException {
+        MessageMappingResolver resolver = resolverMap.get(uri);
+        if (resolver == null) {
+            throw new MessageUriNotDefinedException(uri);
+        }
+        int closed = 0;
+        for (String sessionId : new ArrayList<>(resolver.getSessionMap().keySet())) {
+            if (resolver.closeSession(sessionId, statusCode, reasonText)) {
+                closed++;
+            }
+        }
+        return closed;
     }
 
     @Override
