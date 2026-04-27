@@ -118,6 +118,8 @@ class NettyServerStartupPropertiesWrapperTest {
                         "server.netty.websocket.crypto.algorithm=AES-GCM",
                         "server.netty.websocket.crypto.key-id=main",
                         "server.netty.websocket.crypto.key-provider=demoProvider",
+                        "server.netty.websocket.crypto.include-uris=/ws/secure,/ws/private",
+                        "server.netty.websocket.crypto.exclude-uris=/ws/public",
                         "server.netty.websocket.crypto.encrypt-text=true",
                         "server.netty.websocket.crypto.encrypt-binary=false",
                         "server.netty.websocket.crypto.close-on-decrypt-failure=false",
@@ -135,6 +137,8 @@ class NettyServerStartupPropertiesWrapperTest {
                     assertThat(properties.getWebSocket().getCrypto().getAlgorithm()).isEqualTo("AES-GCM");
                     assertThat(properties.getWebSocket().getCrypto().getKeyId()).isEqualTo("main");
                     assertThat(properties.getWebSocket().getCrypto().getKeyProvider()).isEqualTo("demoProvider");
+                    assertThat(properties.getWebSocket().getCrypto().getIncludeUris()).isEqualTo("/ws/secure,/ws/private");
+                    assertThat(properties.getWebSocket().getCrypto().getExcludeUris()).isEqualTo("/ws/public");
                     assertThat(properties.getWebSocket().getCrypto().isEncryptText()).isTrue();
                     assertThat(properties.getWebSocket().getCrypto().isEncryptBinary()).isFalse();
                     assertThat(properties.getWebSocket().getCrypto().isCloseOnDecryptFailure()).isFalse();

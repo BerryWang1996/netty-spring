@@ -48,6 +48,7 @@
 8. `1.2.x` WebSocket 产品能力版本还需要确认：
    P5 会话查询、单播、按 URI 广播、主动关闭、payload 绑定、JSON 发送、心跳/空闲断线和 crypto 链路均有回归测试。
    启用 `server.netty.websocket.crypto.algorithm=AES-GCM` 时，必须提供 `MessageCryptoKeyProvider`，且 `reject-unencrypted` 默认拒绝对应 text/binary 明文数据帧。
+   如配置 `crypto.include-uris` / `crypto.exclude-uris`，必须确认发送加密、接收解密和未加密帧拒绝策略都按 URI 策略一致生效。
    文档明确应用层 crypto 不替代 TLS/WSS，也不承诺浏览器运行时完全不可见明文。
 
 ## 企业安全发布附加项

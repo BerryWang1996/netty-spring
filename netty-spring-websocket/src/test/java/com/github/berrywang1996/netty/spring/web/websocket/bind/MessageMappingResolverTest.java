@@ -814,6 +814,80 @@ class MessageMappingResolverTest {
     }
 
     @Test
+    void unencryptedTextFrameCanPassThroughWhenSessionPathIsExcludedByCryptoPolicy() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.TEXT_MESSAGE, method(endpoint, "onTextPayload", String.class, MessageSession.class));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.getCrypto().setEnable(true);
+        properties.getCrypto().setExcludeUris("/ws/test");
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/test",
+                methods,
+                endpoint,
+                properties,
+                null,
+                new PrefixMessageCryptoCodec());
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test?client=legacy");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        TextWebSocketFrame frame = new TextWebSocketFrame("hello");
+        try {
+            resolver.resolve(testChannel.ctx, frame);
+
+            assertEquals("hello", endpoint.lastTextPayload);
+            assertEquals(1, endpoint.textPayloadCount);
+            assertTrue(testChannel.channel.isActive());
+        } finally {
+            frame.release();
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void unencryptedTextFrameCanPassThroughWhenSessionPathIsNotIncludedByCryptoPolicy() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.TEXT_MESSAGE, method(endpoint, "onTextPayload", String.class, MessageSession.class));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.getCrypto().setEnable(true);
+        properties.getCrypto().setIncludeUris("/ws/secure");
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/test",
+                methods,
+                endpoint,
+                properties,
+                null,
+                new PrefixMessageCryptoCodec());
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test?client=legacy");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        TextWebSocketFrame frame = new TextWebSocketFrame("hello");
+        try {
+            resolver.resolve(testChannel.ctx, frame);
+
+            assertEquals("hello", endpoint.lastTextPayload);
+            assertEquals(1, endpoint.textPayloadCount);
+            assertTrue(testChannel.channel.isActive());
+        } finally {
+            frame.release();
+            testChannel.finish();
+        }
+    }
+
+    @Test
     void textMessageCanBindJsonPojoPayload() throws Exception {
         RecordingEndpoint endpoint = new RecordingEndpoint();
         Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);

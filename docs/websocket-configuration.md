@@ -28,6 +28,8 @@ server:
         algorithm: AES-GCM
         key-id: main
         key-provider: demoProvider
+        include-uris: /ws/secure,/ws/private
+        exclude-uris: /ws/public
         encrypt-text: true
         encrypt-binary: true
         close-on-decrypt-failure: true
@@ -91,6 +93,8 @@ server:
 - `crypto.enable`：是否启用应用层 WebSocket 消息加密/解密扩展，默认 `false`。默认关闭时，发送和接收行为与明文版本完全一致。
 - `crypto.algorithm`：交给 `MessageCryptoCodec` 使用的算法标识，默认 `CUSTOM`；设置为 `AES-GCM` 且未提供自定义 `MessageCryptoCodec` Bean 时，会启用框架内置 `AesGcmMessageCryptoCodec`。
 - `crypto.key-id` / `crypto.key-provider`：AES-GCM 内置实现使用 `key-id` 写入密文 envelope，并通过 `MessageCryptoKeyProvider` 按 `kid` 解析密钥；`key-provider` 可指定 provider bean 名称，不配置时要求容器中只有一个 `MessageCryptoKeyProvider` Bean。
+- `crypto.include-uris`：逗号或空白分隔的 WebSocket path/URI 列表。为空时 crypto 对全部 session 生效；配置后只对匹配的 session 生效。支持精确 path、原始 URI、mapping URL 或 `*`。
+- `crypto.exclude-uris`：逗号或空白分隔的 WebSocket path/URI 排除列表。匹配后该 session 不做发送加密、接收解密，也不会因未加密 text/binary 数据帧触发 `reject-unencrypted`。
 - `crypto.encrypt-text`：启用 crypto 后是否处理 `TextWebSocketFrame`，默认 `true`。
 - `crypto.encrypt-binary`：启用 crypto 后是否处理 `BinaryWebSocketFrame`，默认 `true`。
 - `crypto.close-on-decrypt-failure`：解密失败或未加密帧被拒绝时是否关闭 session，默认 `true`，关闭路径会进入统一 `ON_ERROR` / `ON_CLOSE` 生命周期。

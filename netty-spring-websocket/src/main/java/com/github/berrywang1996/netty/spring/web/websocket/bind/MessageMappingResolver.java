@@ -649,7 +649,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     }
 
     public WebSocketFrame encryptOutboundFrame(MessageSession session, WebSocketFrame frame) throws Exception {
-        if (!shouldEncryptFrame(frame)) {
+        if (!shouldEncryptFrame(session, frame)) {
             return frame;
         }
         WebSocketFrame encryptedFrame = requireMessageCryptoCodec().encrypt(session, frame);
@@ -721,7 +721,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     }
 
     private WebSocketFrame decryptInboundFrame(MessageSession session, WebSocketFrame frame) throws Exception {
-        if (!isCryptoEnabled() || !shouldHandleEncryptedInboundFrame(frame)) {
+        if (!isCryptoEnabledForSession(session) || !shouldHandleEncryptedInboundFrame(frame)) {
             return frame;
         }
         MessageCryptoCodec cryptoCodec = requireMessageCryptoCodec();
@@ -740,7 +740,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     }
 
     private void handleInboundDecodeFailure(WebSocketFrame frame, MessageSession session, Exception exception) {
-        if (isCryptoEnabled() && shouldCloseOnDecryptFailure()) {
+        if (isCryptoEnabledForSession(session) && shouldCloseOnDecryptFailure()) {
             closeSessionOnTransportError(session, exception);
             return;
         }
@@ -784,10 +784,14 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         }
     }
 
-    private boolean shouldEncryptFrame(WebSocketFrame frame) {
-        if (!isCryptoEnabled()) {
+    private boolean shouldEncryptFrame(MessageSession session, WebSocketFrame frame) {
+        if (!isCryptoEnabledForSession(session)) {
             return false;
         }
+        return shouldHandleEncryptedInboundFrame(frame);
+    }
+
+    private boolean shouldHandleEncryptedInboundFrame(WebSocketFrame frame) {
         NettyServerStartupProperties.WebSocket.Crypto crypto = getCryptoProperties();
         if (frame instanceof TextWebSocketFrame) {
             return crypto.isEncryptText();
@@ -798,13 +802,37 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         return false;
     }
 
-    private boolean shouldHandleEncryptedInboundFrame(WebSocketFrame frame) {
-        NettyServerStartupProperties.WebSocket.Crypto crypto = getCryptoProperties();
-        if (frame instanceof TextWebSocketFrame) {
-            return crypto.isEncryptText();
+    private boolean isCryptoEnabledForSession(MessageSession session) {
+        if (!isCryptoEnabled()) {
+            return false;
         }
-        if (frame instanceof BinaryWebSocketFrame) {
-            return crypto.isEncryptBinary();
+        NettyServerStartupProperties.WebSocket.Crypto crypto = getCryptoProperties();
+        return isCryptoUriIncluded(crypto, session) && !matchesCryptoUri(crypto.getExcludeUris(), session);
+    }
+
+    private boolean isCryptoUriIncluded(NettyServerStartupProperties.WebSocket.Crypto crypto,
+                                        MessageSession session) {
+        return StringUtil.isBlank(crypto.getIncludeUris()) || matchesCryptoUri(crypto.getIncludeUris(), session);
+    }
+
+    private boolean matchesCryptoUri(String configuredUris, MessageSession session) {
+        if (StringUtil.isBlank(configuredUris)) {
+            return false;
+        }
+        String sessionUri = session == null ? null : session.getUri();
+        String sessionPath = session == null ? null : session.getPath();
+        String mappingUrl = getUrl();
+        for (String configuredUri : configuredUris.split("[,\\s]+")) {
+            if (StringUtil.isBlank(configuredUri)) {
+                continue;
+            }
+            String candidate = configuredUri.trim();
+            if ("*".equals(candidate)
+                    || candidate.equals(sessionUri)
+                    || candidate.equals(sessionPath)
+                    || candidate.equals(mappingUrl)) {
+                return true;
+            }
         }
         return false;
     }

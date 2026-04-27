@@ -139,6 +139,66 @@ class DefaultMessageSenderTest {
     }
 
     @Test
+    void sendMessageSkipsEncryptionWhenSessionPathIsExcludedByCryptoPolicy() throws Exception {
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.getCrypto().setEnable(true);
+        properties.getCrypto().setExcludeUris("/ws/foo");
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/foo",
+                Collections.<MessageType, Method>emptyMap(),
+                new Object(),
+                properties,
+                null,
+                new PrefixMessageCryptoCodec());
+        SessionFixture session = addSession(resolver, "/ws/foo?client=legacy", "active");
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+
+        try {
+            sender.sendMessage("/ws/foo", new TextMessage("hello"), "active");
+
+            Object outbound = awaitOutbound(session);
+            try {
+                assertTrue(outbound instanceof TextWebSocketFrame);
+                assertEquals("hello", ((TextWebSocketFrame) outbound).text());
+            } finally {
+                ReferenceCountUtil.release(outbound);
+            }
+        } finally {
+            cleanup(resolver, session);
+        }
+    }
+
+    @Test
+    void sendMessageSkipsEncryptionWhenSessionPathIsNotIncludedByCryptoPolicy() throws Exception {
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.getCrypto().setEnable(true);
+        properties.getCrypto().setIncludeUris("/ws/secure");
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/foo",
+                Collections.<MessageType, Method>emptyMap(),
+                new Object(),
+                properties,
+                null,
+                new PrefixMessageCryptoCodec());
+        SessionFixture session = addSession(resolver, "/ws/foo", "active");
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+
+        try {
+            sender.sendMessage("/ws/foo", new TextMessage("hello"), "active");
+
+            Object outbound = awaitOutbound(session);
+            try {
+                assertTrue(outbound instanceof TextWebSocketFrame);
+                assertEquals("hello", ((TextWebSocketFrame) outbound).text());
+            } finally {
+                ReferenceCountUtil.release(outbound);
+            }
+        } finally {
+            cleanup(resolver, session);
+        }
+    }
+
+    @Test
     void sendMessageWriteFailureDispatchesErrorThenCloseLifecycle() throws Exception {
         LifecycleEndpoint endpoint = new LifecycleEndpoint();
         MessageMappingResolver resolver = lifecycleResolver("/ws/foo", endpoint);

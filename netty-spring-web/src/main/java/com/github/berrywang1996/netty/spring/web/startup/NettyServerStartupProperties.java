@@ -794,6 +794,16 @@ public class NettyServerStartupProperties {
             private String keyProvider;
 
             /**
+             * Comma or whitespace separated websocket paths/URIs that should use crypto. Blank means all.
+             */
+            private String includeUris;
+
+            /**
+             * Comma or whitespace separated websocket paths/URIs that should not use crypto.
+             */
+            private String excludeUris;
+
+            /**
              * Encrypt/decrypt text frames when crypto is enabled.
              */
             private boolean encryptText = true;
@@ -843,6 +853,22 @@ public class NettyServerStartupProperties {
 
             public void setKeyProvider(String keyProvider) {
                 this.keyProvider = keyProvider;
+            }
+
+            public String getIncludeUris() {
+                return includeUris;
+            }
+
+            public void setIncludeUris(String includeUris) {
+                this.includeUris = includeUris;
+            }
+
+            public String getExcludeUris() {
+                return excludeUris;
+            }
+
+            public void setExcludeUris(String excludeUris) {
+                this.excludeUris = excludeUris;
             }
 
             public boolean isEncryptText() {
