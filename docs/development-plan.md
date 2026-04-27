@@ -262,7 +262,7 @@ P4.1 首批已完成：
 - 接收侧在 handler 参数绑定前完成解密，解密失败或未加密数据帧被策略拒绝时进入统一 `ON_ERROR` / `ON_CLOSE`，并可通过 `close-on-decrypt-failure` 和 `reject-unencrypted` 调整兼容策略。
 - 支持按 URI 或按 session 选择是否加密，避免和公开 echo、健康检查、调试通道混用；`1.2.1-SNAPSHOT` 已落地 URI include/exclude 策略，并新增 `MessageCryptoPolicy` 作为 session 粒度二次筛选扩展点。
 - demo 增加 key provider 与 `/ws/crypto-demo` 浏览器端加密/解密示例，展示 Network 面板看到密文、业务回调拿到明文对象的完整流程。
-- 回归测试覆盖加密发送、解密接收、错误密钥/篡改 tag 失败、未启用时保持兼容、按 URI 开关和密钥轮换基础路径。
+- 回归测试覆盖加密发送、解密接收、错误密钥/篡改 tag 失败、未启用时保持兼容、按 URI/session 策略开关和密钥轮换基础路径。
 
 完成标准：
 
