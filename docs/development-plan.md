@@ -62,7 +62,7 @@ P4.1 首批已完成：
 - HTTP/静态文件失败路径已有轻量运行时计数：MVC 写失败、静态文件拒绝/写失败、idle 关闭、WebSocket handshake/origin 拒绝可通过 `NettyServerBootstrap#getHttpRuntimeStats()` 读取；内置 health/status 管理端点已提供运维读取入口，后续仍需接入 Micrometer/Actuator，并补齐关闭原因维度。
 - 线程池配置校验已有基础约束，后续还需要把校验错误接入更清晰的 starter 启动失败诊断和文档示例。
 - 安全基线暂时冻结：TLS 证书文件校验和 Origin 白名单已补齐，但标准握手鉴权扩展、完整 CORS 策略、TLS 策略深化和安全示例暂不进入当前主线。
-- 可观测性已从快照/API 层推进到轻量管理端点：已有 handler/http/sender runtime stats，且 handler/http 可通过内置 health/status 读取；后续还缺 Micrometer/Actuator 指标、拒绝/过载/写失败统一事件和更完整的关闭原因维度。
+- 可观测性已从快照/API 层推进到轻量管理端点：已有 handler/http/websocket/sender runtime stats，且 handler/http/websocket 可通过内置 health/status 读取；后续还缺 Micrometer/Actuator 指标、拒绝/过载/写失败统一事件和更完整的关闭原因维度。
 - 依赖与供应链治理暂时冻结：新增 `sbom` / `dependency-scan` Maven profile、Dependency-Check suppression 占位文件、处理规则、Netty BOM 版本对齐、`netty-all` 瘦身和 GitHub Actions 门禁已完成；Dependabot/Dependency-Check 漏洞 triage 暂不作为当前版本阻塞。
 - Demo 仍是基础示例：demo 中仍有 `printStackTrace` 和极简 echo/send 用法，不足以作为企业接入、安全配置和运维排障示范。
 
@@ -278,7 +278,7 @@ P4.1 首批已完成：
 重点项：
 
 - 暴露连接数、消息收发数、失败数、广播耗时、线程池状态等指标。
-- 在已有内置 health/status 管理端点基础上，继续补 Micrometer/Actuator 对接和更标准的指标命名。
+- 在已有内置 health/status 管理端点基础上，继续补 Micrometer/Actuator 对接和更标准的指标命名；`/netty/status` 已开始输出 WebSocket mapping 数和活跃 session 数。
 - 统一关键过载、拒绝、关闭路径的日志格式和诊断信息。
 - 补齐关闭原因、拒绝原因、写失败原因等可聚合维度，而不是只停留在日志和内存快照。
 

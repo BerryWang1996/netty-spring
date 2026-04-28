@@ -103,6 +103,9 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
         this.mappingResolverMap = mappingResolverMap == null
                 ? initMappingResolverMap(startupProperties, applicationContext)
                 : adaptMappingResolverMap(mappingResolverMap);
+        if (this.webSocketMappingtResolverMap == null) {
+            this.webSocketMappingtResolverMap = Collections.emptyMap();
+        }
         configureHttpRuntimeRecorder(this.mappingResolverMap);
         configureHandlerSubmitter(this.mappingResolverMap);
     }
@@ -248,6 +251,17 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
 
     public HttpRuntimeStats getHttpRuntimeStats() {
         return this.httpRuntimeRecorder.getRuntimeStats();
+    }
+
+    public WebSocketRuntimeStats getWebSocketRuntimeStats() {
+        if (this.webSocketMappingtResolverMap == null || this.webSocketMappingtResolverMap.isEmpty()) {
+            return WebSocketRuntimeStats.empty();
+        }
+        int activeSessionCount = 0;
+        for (AbstractMappingResolver resolver : this.webSocketMappingtResolverMap.values()) {
+            activeSessionCount += Math.max(0, resolver.getActiveSessionCount());
+        }
+        return new WebSocketRuntimeStats(this.webSocketMappingtResolverMap.size(), activeSessionCount);
     }
 
     public void shutdown() {

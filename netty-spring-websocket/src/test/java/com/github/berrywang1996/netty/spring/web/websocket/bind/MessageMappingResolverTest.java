@@ -425,6 +425,35 @@ class MessageMappingResolverTest {
     }
 
     @Test
+    void activeSessionCountReflectsSuccessfulHandshakeAndClose() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/test",
+                new EnumMap<>(MessageType.class),
+                endpoint);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        assertEquals(1, resolver.getActiveSessionCount());
+
+        CloseWebSocketFrame closeFrame = new CloseWebSocketFrame();
+        try {
+            resolver.resolve(testChannel.ctx, closeFrame);
+
+            assertEquals(0, resolver.getActiveSessionCount());
+        } finally {
+            closeFrame.release();
+            testChannel.finish();
+        }
+    }
+
+    @Test
     void resolveExceptionDispatchesErrorThenCloseLifecycle() throws Exception {
         RecordingEndpoint endpoint = new RecordingEndpoint();
         Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);

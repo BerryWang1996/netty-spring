@@ -677,6 +677,11 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         return sessionMap;
     }
 
+    @Override
+    public int getActiveSessionCount() {
+        return sessionMap.size();
+    }
+
     public WebSocketFrame encryptOutboundFrame(MessageSession session, WebSocketFrame frame) throws Exception {
         if (!shouldEncryptFrame(session, frame)) {
             return frame;

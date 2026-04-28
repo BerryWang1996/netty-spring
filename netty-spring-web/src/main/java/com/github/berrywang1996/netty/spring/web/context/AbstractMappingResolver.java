@@ -132,6 +132,10 @@ public abstract class AbstractMappingResolver<T, K> {
     public void shutdown() throws Exception {
     }
 
+    public int getActiveSessionCount() {
+        return 0;
+    }
+
     public Map<K, Map<String, Class>> parseMethodParameters() {
         Map<K, Map<String, Class>> tempMethodParamTypes = new HashMap<>();
         for (Map.Entry<K, Method> kMethodEntry : methods.entrySet()) {

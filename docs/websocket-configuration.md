@@ -153,5 +153,6 @@ server:
 
 - `NettyServerBootstrap#getHandlerRuntimeStats()`：读取 handler 线程池和 permit 运行时快照。
 - `NettyServerBootstrap#getHttpRuntimeStats()`：读取 WebSocket handshake/origin 拒绝计数，以及 HTTP/静态文件失败路径计数。
+- `NettyServerBootstrap#getWebSocketRuntimeStats()`：读取 WebSocket mapping 数和活跃 session 数；启用 `server.netty.management.enable=true` 后，`/netty/status` 也会包含同一份 `websocket` 快照。
 - `MessageSender#getRuntimeStats()`：读取 websocket 发送线程池、广播拒绝、caller-runs 回退、不可写 channel 策略命中和写失败计数。
 - Spring Boot Starter 场景下，推荐通过 `MessageSender#getRuntimeStats()` 获取发送侧快照；`MessageSenderSupport#getRuntimeStats()` 继续兼容。

@@ -197,6 +197,8 @@ class ServiceHandlerTest {
                 assertTrue(content.contains("\"status\":\"UP\""));
                 assertTrue(content.contains("\"handler\""));
                 assertTrue(content.contains("\"http\""));
+                assertTrue(content.contains("\"websocket\""));
+                assertTrue(content.contains("\"activeSessionCount\""));
                 assertTrue(content.contains("\"mappingCount\""));
             } finally {
                 ReferenceCountUtil.release(response);

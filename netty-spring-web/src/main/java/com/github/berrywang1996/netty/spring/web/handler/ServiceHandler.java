@@ -251,6 +251,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         Map<String, Object> body = healthBody();
         body.put("handler", supporter == null ? null : supporter.getRuntimeStats());
         body.put("http", supporter == null ? null : supporter.getHttpRuntimeStats());
+        body.put("websocket", supporter == null ? null : supporter.getWebSocketRuntimeStats());
         body.put("mappingCount", supporter == null ? 0 : supporter.getMappingResolverMap().size());
         return body;
     }
