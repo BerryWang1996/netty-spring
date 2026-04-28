@@ -1,6 +1,6 @@
 # 版本发布检查清单
 
-更新时间：2026-04-27
+更新时间：2026-04-28
 
 ## 适用范围
 
@@ -12,6 +12,22 @@
 
 - 功能/稳定性发布：面向 `1.1.0-RC2`、`1.1.0` 和 `1.2.x`，重点确认全量测试、Starter 兼容、WebSocket 产品能力回归、配置文档、SBOM 生成和基础 CI 链路。
 - 企业安全发布：面向后续安全加固版本，除功能/稳定性发布要求外，还必须完成 Dependency-Check、Dependabot triage、CORS/鉴权/TLS 策略等安全项。
+
+## `1.2.1` 发布口径
+
+`1.2.1` 定位为 WebSocket P5.x 功能/稳定性正式版。本次可以发布的前提是：
+
+- 根版本从 `1.2.1-SNAPSHOT` 切到 `1.2.1` 后，全量 reactor `mvn test` 通过。
+- README、开发计划、WebSocket 配置文档、Netty 配置文档和本清单均已说明 `1.2.1` 的功能边界与延期项。
+- 已补 `docs/release-notes-1.2.1.md`，明确本次新增能力、验证方式和已知延期。
+- URI/session 粒度 crypto 策略、AES-GCM 密钥轮换基础路径、浏览器端 crypto demo 和 WebSocket runtime stats 均已有测试或文档验收入口。
+- 工作树不包含 `.m2/`、`target/`、本地缓存或实验文件。
+
+以下内容不阻塞 `1.2.1` 功能/稳定性发布，但必须保留在后续计划中：
+
+- Dependency-Check / Dependabot 漏洞 triage。
+- 标准握手鉴权扩展、完整 CORS/TLS 策略和企业级密钥分发方案。
+- Micrometer/Actuator 指标、关闭原因维度和完整 demo 体系重写。
 
 ## 发布前
 
@@ -53,6 +69,11 @@
    如进行 AES-GCM 密钥轮换，必须确认新 `key-id` 用于新消息加密，同时 `MessageCryptoKeyProvider` 在过渡期仍能解析旧 `kid` 的历史密文。
    demo `/ws/crypto-demo` 页面至少完成 smoke 验证，确保浏览器端 WebCrypto envelope 与服务端 AES-GCM envelope 格式一致。
    文档明确应用层 crypto 不替代 TLS/WSS，也不承诺浏览器运行时完全不可见明文。
+9. `1.2.1` 正式发布前额外确认：
+   `docs/release-notes-1.2.1.md` 已同步本次功能边界。
+   `README.md` 不再把已完成能力描述为未完成计划。
+   `docs/development-plan.md` 明确后续进入 P6/P7，而不是继续扩大 `1.2.1` 范围。
+   根 `pom.xml` 版本号已切到 `1.2.1`，并在切换后重新跑全量测试。
 
 ## 企业安全发布附加项
 
