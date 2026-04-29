@@ -168,7 +168,7 @@ public class DefaultMessageSender implements MessageSender {
             throws MessageUriNotDefinedException, MessageSessionClosedException {
         MessageMappingResolver resolver = resolverMap.get(uri);
         if (resolver == null) {
-            throw new MessageUriNotDefinedException(uri);
+            throw new MessageUriNotDefinedException(uri, resolverMap.keySet());
         }
         Map<String, MessageSession> sessionMap = resolver.getSessionMap();
         List<String> closedSessionIds = null;
@@ -187,7 +187,7 @@ public class DefaultMessageSender implements MessageSender {
             }
         }
         if (closedSessionIds != null && closedSessionIds.size() > 0) {
-            throw new MessageSessionClosedException(closedSessionIds);
+            throw new MessageSessionClosedException(uri, closedSessionIds);
         }
     }
 
@@ -195,7 +195,7 @@ public class DefaultMessageSender implements MessageSender {
     public void topicMessage(String uri, final AbstractMessage message) throws MessageUriNotDefinedException {
         MessageMappingResolver resolver = resolverMap.get(uri);
         if (resolver == null) {
-            throw new MessageUriNotDefinedException(uri);
+            throw new MessageUriNotDefinedException(uri, resolverMap.keySet());
         }
         Map<String, MessageSession> sessionMap = resolver.getSessionMap();
         for (final MessageSession session : sessionMap.values()) {
@@ -211,7 +211,7 @@ public class DefaultMessageSender implements MessageSender {
             throws MessageUriNotDefinedException {
         MessageMappingResolver resolver = resolverMap.get(uri);
         if (resolver == null) {
-            throw new MessageUriNotDefinedException(uri);
+            throw new MessageUriNotDefinedException(uri, resolverMap.keySet());
         }
         return resolver.closeSession(sessionId, statusCode, reasonText);
     }
@@ -220,7 +220,7 @@ public class DefaultMessageSender implements MessageSender {
     public int closeSessions(String uri, int statusCode, String reasonText) throws MessageUriNotDefinedException {
         MessageMappingResolver resolver = resolverMap.get(uri);
         if (resolver == null) {
-            throw new MessageUriNotDefinedException(uri);
+            throw new MessageUriNotDefinedException(uri, resolverMap.keySet());
         }
         int closed = 0;
         for (String sessionId : new ArrayList<>(resolver.getSessionMap().keySet())) {

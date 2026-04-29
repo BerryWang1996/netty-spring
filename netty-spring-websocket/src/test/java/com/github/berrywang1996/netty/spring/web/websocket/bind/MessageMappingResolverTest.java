@@ -155,6 +155,9 @@ class MessageMappingResolverTest {
         try {
             assertTrue(outbound instanceof FullHttpResponse);
             assertEquals(FORBIDDEN, ((FullHttpResponse) outbound).status());
+            assertTrue(((FullHttpResponse) outbound).content()
+                    .toString(CharsetUtil.UTF_8)
+                    .contains("server.netty.websocket.allowed-origins"));
             assertTrue(resolver.getSessionMap().isEmpty());
             assertNull(testChannel.channel.attr(MessageMappingResolver.SESSION_ID_IN_CHANNEL).get());
             assertEquals(1L, recorder.getRuntimeStats().getWebSocketOriginRejectedCount());
@@ -568,6 +571,9 @@ class MessageMappingResolverTest {
         try {
             assertTrue(outbound instanceof FullHttpResponse);
             assertEquals(SERVICE_UNAVAILABLE, ((FullHttpResponse) outbound).status());
+            assertTrue(((FullHttpResponse) outbound).content()
+                    .toString(CharsetUtil.UTF_8)
+                    .contains("server.netty.websocket.max-connections"));
             assertEquals(1, resolver.getSessionMap().size());
             assertNull(secondChannel.channel.attr(ServiceHandler.REQUEST_IN_CHANNEL).get());
             assertNull(secondChannel.channel.attr(MessageMappingResolver.SESSION_ID_IN_CHANNEL).get());
@@ -1009,6 +1015,8 @@ class MessageMappingResolverTest {
 
             assertEquals(1, endpoint.errorCount);
             assertNotNull(endpoint.lastErrorMessage);
+            assertTrue(endpoint.lastErrorMessage.contains("Failed to deserialize websocket text payload"));
+            assertTrue(endpoint.lastErrorMessage.contains("Action: verify the incoming JSON shape"));
             assertEquals(0, endpoint.jsonPayloadCount);
             assertFalse(resolver.getSessionMap().isEmpty());
         } finally {

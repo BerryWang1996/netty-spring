@@ -96,6 +96,8 @@ class DefaultMessageSenderTest {
                     () -> sender.sendMessage("/ws/foo", new TextMessage("hello"), "active", "closed"));
 
             assertEquals(Collections.singletonList("closed"), exception.getSessionIds());
+            assertTrue(exception.getMessage().contains("uri=/ws/foo"));
+            assertTrue(exception.getMessage().contains("MessageSender#getSessionIds"));
             Object outbound = awaitOutbound(activeSession);
             try {
                 assertTrue(outbound instanceof TextWebSocketFrame);
@@ -579,8 +581,10 @@ class DefaultMessageSenderTest {
         try {
             assertEquals(2, sender.closeSessions("/ws/foo", 1001, "server restart"));
             assertFalse(sender.closeSession("/ws/foo", "missing"));
-            assertThrows(MessageUriNotDefinedException.class,
+            MessageUriNotDefinedException missingUriException = assertThrows(MessageUriNotDefinedException.class,
                     () -> sender.closeSession("/ws/missing", "s1"));
+            assertTrue(missingUriException.getMessage().contains("Registered websocket uri(s): [/ws/foo]"));
+            assertTrue(missingUriException.getMessage().contains("server.netty.websocket.enable"));
 
             assertEquals(2, endpoint.closeCount);
             assertTrue(resolver.getSessionMap().isEmpty());

@@ -105,7 +105,7 @@ server:
 - AES-GCM 密钥轮换建议：把 `crypto.key-id` 切到新 key 后，新发送的密文 envelope 会携带新的 `kid`；过渡期内 `MessageCryptoKeyProvider` 应同时保留旧 key 和新 key，确保旧 `kid` 的历史密文仍可解密。demo 中的 `demoProvider` 只是 toy 示例，生产环境应替换为 KMS、配置中心或等效密钥服务。
 - 应用层 crypto 不替代 TLS/WSS，也不承诺浏览器运行时完全不可见明文；如果前端需要解密，密钥或明文仍会在浏览器运行时出现。
 
-- demo 工程提供 `/ws/crypto-demo` 页面用于浏览器端 AES-GCM 联调。先取消 `demo-netty-web-spring-boot-starter/src/main/resources/application.properties` 中 `server.netty.websocket.crypto.*` 示例配置的注释，再打开该页面连接 `/ws/test?room=crypto-demo`，浏览器 Network/WebSocket 面板会看到 JSON envelope，页面日志会展示解密后的 echo 文本。
+- demo 工程提供 `/ws/crypto-demo` 页面用于浏览器端 AES-GCM 联调。使用 `crypto-demo` Spring profile 启动 demo 后打开该页面连接 `/ws/test?room=crypto-demo`，浏览器 Network/WebSocket 面板会看到 JSON envelope，页面日志会展示解密后的 echo 文本。
 - `/ws/crypto-demo` 页面内置的 `demo-2026-04` / `demo-2026-05` key 只对应 demoProvider 的 toy key，不能作为生产密钥分发方案。
 
 ## 当前行为说明
@@ -117,13 +117,30 @@ server:
 - 当应用引入 websocket starter 但没有声明 `@MessageMapping` 时，`MessageSenderSupport` 会退化为空实现，不会再因为空指针导致启动后的调用失败。
 - 自动配置默认注册 `messageSenderSupport` Bean，并额外暴露 `messageSender` 别名；业务代码推荐按 `MessageSender` 接口注入，保留对 `MessageSenderSupport` 的兼容。应用自定义 `MessageSender` Bean 时，默认 `MessageSenderSupport` 会自动退让。
 
+## 常见错误与排障
+
+| 现象或错误信息 | 常见原因 | 建议动作 |
+| --- | --- | --- |
+| `WebSocket message uri "..." is not registered` | 发送、广播或关闭 session 时使用的 URI 没有对应 `@MessageMapping`。 | 对齐 `@MessageMapping` 的 path，检查是否引入 websocket starter，并确认 `server.netty.websocket.enable=true`。 |
+| `No websocket mappings are currently registered` | 应用没有声明 WebSocket 端点，或 WebSocket mapping 被关闭。 | 增加至少一个 `@MessageMapping`，或在没有 WebSocket 端点的应用中避免调用 `MessageSender` 发送方法。 |
+| `target sessions are closed or missing` | 目标 session 已断开、被心跳/关闭链路清理，或业务缓存了过期 session id。 | 使用 `MessageSender#getSessionIds(uri)` 获取最新快照，或发送前调用 `isSessionAlive(uri, sessionIds...)`。 |
+| `Forbidden by origin` | 配置了 `allowed-origins`，但浏览器 `Origin` 缺失或不匹配。 | 把实际前端 Origin 加入 `server.netty.websocket.allowed-origins`；仅本地调试时可显式配置 `*`。 |
+| `WebSocket connection limit exceeded` | `max-connections` 已达到上限。 | 清理空闲连接，调大 `server.netty.websocket.max-connections`，或配合心跳/客户端退避。 |
+| `No handler permits available` / `Handler executor rejected task` | handler 执行过慢、permit 用尽或线程池/队列过小。 | 优化业务 handler，调大 `handler-permit-limit`、`handler-max-pool-size` 或 `handler-queue-capacity`，并加入客户端重试退避。 |
+| `Failed to deserialize websocket text payload` | `TEXT_MESSAGE` handler 绑定 JSON 对象，但客户端发送的文本结构不匹配。 | 先用 `String` 或 `TextWebSocketFrame` 接收原始文本排查，补 `ON_ERROR` 记录坏 payload，再修正 JSON schema。 |
+| `MessageCryptoKeyProvider bean` 相关启动失败 | AES-GCM crypto 已开启，但没有唯一 key provider，或 `crypto.key-provider` 名称写错。 | 提供唯一 `MessageCryptoKeyProvider` Bean，或设置 `server.netty.websocket.crypto.key-provider` 指向正确 bean。 |
+| `Unencrypted websocket frame rejected by crypto policy` | 当前 session 命中 crypto 策略，但客户端仍发送明文 text/binary frame。 | 让客户端发送 AES-GCM/custom envelope，或通过 `crypto.include-uris` / `exclude-uris` / `reject-unencrypted=false` 做灰度兼容。 |
+
 ## MessageSender API
 
 - `getSessionIds(uri)`：按 URI 获取当前 session id 的只读快照。
 - `getSession(uri, sessionId)`：按 URI 和 session id 获取当前 session，不存在或已关闭时返回 `null`。
 - `getSessions(uri)`：按 URI 获取 session 的只读快照，避免业务代码直接修改内部 session map。
 - `sendToSession(uri, message, sessionId)`：向单个 session 发送消息，是 `sendMessage()` 的语义化别名。
+- `sendText(uri, text, sessionIds...)` / `sendTextToSession(uri, text, sessionId)`：发送文本消息的便利方法，业务侧不必手动创建 `TextMessage`。
+- `sendJson(uri, payload, sessionIds...)` / `sendJsonToSession(uri, payload, sessionId)`：发送 JSON 消息的便利方法，业务侧不必手动创建 `JsonMessage`。
 - `broadcast(uri, message)`：向指定 URI 下全部 session 广播消息，是 `topicMessage()` 的语义化别名。
+- `broadcastText(uri, text)` / `broadcastJson(uri, payload)`：广播文本或 JSON 消息的便利方法。
 - `closeSession(uri, sessionId)` / `closeSession(uri, sessionId, statusCode, reasonText)`：主动关闭单个 session，并走统一 `ON_CLOSE` 和 session 清理链路。
 - `closeSessions(uri)` / `closeSessions(uri, statusCode, reasonText)`：主动关闭指定 URI 下的全部 session，返回已启动关闭流程的 session 数。
 - 原有 `sendMessage()` / `topicMessage()` 保持兼容，后续文档和 demo 会优先使用更清晰的 `sendToSession()` / `broadcast()`。

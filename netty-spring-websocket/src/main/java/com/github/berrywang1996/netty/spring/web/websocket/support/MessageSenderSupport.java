@@ -42,12 +42,12 @@ public class MessageSenderSupport implements MessageSender {
         @Override
         public void sendMessage(String uri, AbstractMessage message, String... sessionIds)
                 throws MessageUriNotDefinedException, MessageSessionClosedException {
-            throw new MessageUriNotDefinedException(uri);
+            throw new MessageUriNotDefinedException(uri, getRegisteredUri());
         }
 
         @Override
         public void topicMessage(String uri, AbstractMessage message) throws MessageUriNotDefinedException {
-            throw new MessageUriNotDefinedException(uri);
+            throw new MessageUriNotDefinedException(uri, getRegisteredUri());
         }
     };
 

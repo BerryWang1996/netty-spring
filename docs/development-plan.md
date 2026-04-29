@@ -1,21 +1,22 @@
 # 开发计划与阶段状态
 
-更新时间：2026-04-28
+更新时间：2026-04-29
 
 ## 当前结论
 
 - `1.0.2` 已完成 `P3.2` 发布后治理收口，可作为当前 `1.0.x` 稳定发布版本。
-- `1.1.0-RC2` 已从 P4/P4.1 稳定线切出并发布；`1.2.0` 已作为 P5/P5.x WebSocket 产品能力正式版发布，`1.2.1` 已按功能/稳定性正式版口径完成收口。
+- `1.1.0-RC2` 已从 P4/P4.1 稳定线切出并发布；`1.2.0` 已作为 P5/P5.x WebSocket 产品能力正式版发布，`1.2.1` 已按功能/稳定性正式版口径完成收口；`1.2.2` 已按用户体验与开源接入体验增强版本口径完成收口。
 - `1.1.0-RC2` 发布线已具备框架功能候选基础：P4 配置边界、自动配置兼容性、`@Lazy` 依赖消除、`P4.1` 首批容量、失败路径、运行时统计、内置 health/status、线程池校验、SBOM/Dependency-Check 入口、Netty BOM 版本对齐、`netty-all` 瘦身和 GitHub Actions 门禁均已推进，并已在本地正常 Maven 环境完成全量 reactor `mvn test` 复验。
 - 按当前决策，后续暂时不把安全问题作为主线阻塞项：Dependency-Check、Dependabot、安全扩展、CORS/鉴权/TLS 策略等进入冻结 backlog，后续需要企业生产安全版时再集中处理。
-- 后续计划调整为“先完成可发布功能基线复验，再做 WebSocket 产品能力，再做观测与 demo”，避免当前阶段继续被安全门禁拖住主线演进。
+- 后续计划调整为“先完成可发布功能基线复验，再做 WebSocket 产品能力，再补开箱体验、观测与 demo”，避免当前阶段继续被安全门禁拖住主线演进。
 
 ## 当前发版判断
 
 - `1.0.x`：`1.0.2` 仍是当前可发布/可回退的稳定线。
 - `1.1.0-RC2`：已从 P4/P4.1 复验点切出并推送 tag，定位为功能/稳定性候选，不混入 P5 产品能力。
 - `1.2.0`：已发布的 WebSocket 产品能力正式版，承接 P5 首批 API、心跳/空闲断线和 AES-GCM 应用层消息加密首版。
-- `1.2.1`：目标功能/稳定性正式版，URI/session 粒度 crypto 策略、密钥轮换基础示例、浏览器端加密 demo 和 WebSocket 轻量 runtime stats 已进入发布范围；不定位为企业安全正式版。
+- `1.2.1`：已发布的功能/稳定性正式版，URI/session 粒度 crypto 策略、密钥轮换基础示例、浏览器端加密 demo 和 WebSocket 轻量 runtime stats 已进入发布范围；不定位为企业安全正式版。
+- `1.2.2`：用户体验版本，重点降低开源用户第一次接入、demo 运行、配置选择、常见错误排查和常用发送 API 的使用门槛。
 - `1.1.0-RC1`：历史候选口径，已被 `1.1.0-RC2` 取代。
 - `1.1.0-RC2`：已作为“非安全阻塞版候选”发布，重点验证 Starter 收敛、配置兼容、核心 runtime 回归、SBOM 生成、Netty 依赖瘦身和 CI 基础链路；暂不要求 Dependency-Check/Dependabot triage 闭环。
 - 可以进入当前口径下 `1.1.0` 功能正式版的前置条件：RC 后没有新增 P1/P2 级功能/稳定性 review finding，README/配置文档/发布检查清单与代码一致，版本号从 `1.1.0-RC2` 切到 `1.1.0` 后完成全量 `mvn test` 或 CI 等效验证。
@@ -50,14 +51,68 @@
 
 ## 下一步判断
 
-下一步暂时不继续推进安全问题，不再把 Dependency-Check、Dependabot、CORS/鉴权/TLS 安全扩展作为当前阻塞。`1.2.1` 功能/稳定性正式版发版后，主线进入后续 P6/P7。
+下一步暂时不继续推进安全问题，不再把 Dependency-Check、Dependabot、CORS/鉴权/TLS 安全扩展作为当前阻塞。`1.2.2` 已作为用户体验版本收口，接下来进入更重的 P6/P7。
 
 优先级建议：
 
 1. `1.1.0-RC2` 已从 P4.1 全量回归通过点切出并发布；后续若要发正式 `1.1.0`，只做 RC 验证与最终版本号切换，不混入 P5。
 2. P5 首批能力已完成并提交：query/header/session 访问抽象、text/json/binary 编解码、会话查询/单播/按 URI 广播和主动关闭 API。
 3. `1.2.1` 集中收口 URI/session 粒度 crypto 策略、密钥轮换基础示例、浏览器端加密 demo、WebSocket runtime stats 和配套回归。
-4. `1.2.1` 发版后进入 `P6`：Micrometer/Actuator 指标、关闭原因维度、日志与运行时诊断增强；P7 demo/文档体系随能力版本滚动补齐。
+4. `1.2.2` 已补开箱体验和开发者体验；下一步进入 `P6`：Micrometer/Actuator 指标、关闭原因维度、日志与运行时诊断增强；P7 demo/文档体系随能力版本滚动补齐。
+
+## `1.2.2` 用户体验版本规划
+
+目标：让一个第一次接触项目的开源用户，在不读源码、不翻历史 issue、不理解全部底层 Netty 细节的情况下，可以快速完成依赖接入、启动 demo、连上 WebSocket、发送消息、启用常见配置，并在出错时知道下一步该查什么。
+
+版本定位：
+
+- `1.2.2` 是用户体验 patch 版本，不引入大规模核心架构调整。
+- 优先解决“会用但不好上手”的问题，而不是继续堆底层能力。
+- 不把企业安全准入、完整 Micrometer/Actuator、完整聊天室产品 demo 作为本版本阻塞项。
+
+从当前项目使用路径观察到的主要不便：
+
+- 快速开始路径不够短：README 说明了阶段状态，但缺少从 Maven 依赖、最小配置、示例 controller、浏览器连接到消息发送的 5 分钟闭环。
+- Starter 选择不够直观：新用户不容易判断应该引入 web、webmvc、websocket 还是组合 starter，也不清楚 `server.netty.mvc.enable` / `server.netty.websocket.enable` 对装配行为的影响。
+- 配置项较多但缺少场景化推荐：HTTP、WebSocket、线程池、心跳、crypto、管理端点都有配置说明，但缺少“开发环境最小配置”“公网生产建议配置”“只启用 WebSocket”“启用 crypto demo”这样的 presets。
+- demo 缺少统一入口：当前 demo 有 HTTP 接口、WebSocket echo/json/binary、crypto 页面，但没有一个首页把这些能力、连接地址、操作步骤和状态端点串起来。
+- crypto demo 启用成本偏高：用户需要手工取消 properties 注释，且 toy key、include-uris、浏览器 WebCrypto envelope 的关系需要来回读文档才能理解。
+- 常用发送 API 仍有样板代码：业务侧发送文本或 JSON 时需要显式 new `TextMessage` / `JsonMessage`，对新手不如 `sendText()` / `broadcastJson()` 直观。
+- 错误体验偏底层：部分异常和 demo 日志仍偏框架/Netty 视角，例如 mapping 不存在、session 不存在、crypto 未配置 key provider、解密失败、握手被 Origin 拒绝时，用户需要从日志和源码中反推解决方案。
+- API 文档发现性不足：`MessageSession`、`MessageSender`、`MessageCryptoPolicy`、`MessageCryptoKeyProvider` 已经可用，但 README 没有面向业务开发者的“应该怎么写”示例索引。
+- 测试入口对使用者不够友好：开发者知道 `mvn test`，但不知道改 demo、改 starter、改 websocket crypto 后应该优先跑哪组 targeted tests。
+- 发版后版本节奏需要继续保持显性：`1.2.2` 发布后，下一条开发线应明确聚焦 P6/P7 的可观测性、demo 和文档体系，避免和安全专项同时拉扯。
+
+`1.2.2` 建议拆成四刀：
+
+1. 第一刀：开源接入文档重写。
+   补 README 快速开始：依赖选择、最小 application 配置、最小 WebSocket controller、浏览器连接、发送文本/JSON、主动关闭 session、常见测试命令。
+   增加 starter 选择表：只用 Netty 基础、HTTP MVC、WebSocket、HTTP + WebSocket 四种场景分别应该引入什么。
+2. 第二刀：demo 体验入口。
+   新增 demo 首页或导航页，列出 HTTP 示例、WebSocket echo、JSON 消息、binary 消息、crypto demo、health/status，并给出可直接复制的 URL。
+   增加 demo profile 或独立配置文件，例如 `application-crypto-demo.properties`，避免用户通过手工取消注释来启用 crypto。
+3. 第三刀：常用 API 便利方法。
+   在不破坏现有 API 的前提下，为 `MessageSender` 增加 `sendText()`、`broadcastText()`、`sendJson()`、`broadcastJson()` 等默认方法，减少业务侧样板代码。
+   同步 demo 和文档优先使用便利方法，保留 `TextMessage` / `JsonMessage` 作为高级入口。
+4. 第四刀：错误提示与排障体验。
+   梳理常见错误场景：未注册 URI、session 不存在、未配置 crypto key provider、多个 crypto Bean、Origin 拒绝、handler 过载、JSON 反序列化失败。
+   为异常消息、日志和文档补“原因 + 建议动作”，避免只输出底层异常或 `printStackTrace`。
+
+当前 `1.2.2` 已完成进度：
+
+- 第一刀已完成首批：README 增加 5 分钟快速开始、starter 选择表、最小配置、最小 controller、demo 启动命令和 targeted test 命令。
+- 第二刀已完成首批：demo 增加统一首页入口，并新增 `crypto-demo` Spring profile，避免通过手工取消注释启用加密演示。
+- 第三刀已完成首批：`MessageSender` 增加 `sendText()`、`sendTextToSession()`、`broadcastText()`、`sendJson()`、`sendJsonToSession()`、`broadcastJson()` 便利方法，demo 已优先使用新 API。
+- 第四刀已完成首批：未注册 URI、空 websocket mapping、session 过期、Origin 拒绝、连接数上限、handler 过载、JSON 反序列化失败和 crypto key provider/明文拒绝等常见错误，已补“原因 + 建议动作”的异常、日志或文档说明。
+
+`1.2.2` 完成标准：
+
+- 新用户可以只读 README 在 5 分钟内跑起 demo，并完成一次 WebSocket 文本 echo 和一次 JSON 消息收发。
+- demo 首页能直接发现当前可体验的能力和连接地址，不需要翻源码找 URL。
+- 启用 crypto demo 有明确 profile/配置入口，且文档解释 toy key 与生产 key provider 的边界。
+- 常用发送文本/JSON 不再必须手写 `new TextMessage()` / `new JsonMessage()`。
+- 常见错误日志或异常消息包含可执行的下一步建议。
+- 开发计划、README、配置文档和 demo smoke test 与 `1.2.2` 状态一致。
 
 ## 企业生产就绪度评估
 
@@ -83,7 +138,7 @@ P4.1 首批已完成：
 - 安全基线暂时冻结：TLS 证书文件校验和 Origin 白名单已补齐，但标准握手鉴权扩展、完整 CORS 策略、TLS 策略深化和安全示例暂不进入当前主线。
 - 可观测性已从快照/API 层推进到轻量管理端点：已有 handler/http/websocket/sender runtime stats，且 handler/http/websocket 可通过内置 health/status 读取；后续还缺 Micrometer/Actuator 指标、拒绝/过载/写失败统一事件和更完整的关闭原因维度。
 - 依赖与供应链治理暂时冻结：新增 `sbom` / `dependency-scan` Maven profile、Dependency-Check suppression 占位文件、处理规则、Netty BOM 版本对齐、`netty-all` 瘦身和 GitHub Actions 门禁已完成；Dependabot/Dependency-Check 漏洞 triage 暂不作为当前版本阻塞。
-- Demo 仍是基础示例：demo 中仍有 `printStackTrace` 和极简 echo/send 用法，不足以作为企业接入、安全配置和运维排障示范。
+- Demo 已补统一首页、crypto profile 和更直观的 MessageSender 便利 API 示例；后续还需要继续把它扩展为更完整的企业接入、配置推荐和运维排障示范。
 
 建议把当前阶段拆成两个门槛：
 
@@ -343,6 +398,8 @@ P4.1 首批已完成：
 - `1.1.0`：目标功能正式版本，完成 Starter 收敛、配置模型统一和稳定性硬化。这一阶段触及配置入口、自动配置结构、兼容模型和发布门禁，适合进入新的 minor 版本。
 - `1.2.0`：已发布的正式版本，`P5` 首批 WebSocket 产品能力增强已落地，心跳/空闲断线第一刀已完成，应用层消息加密扩展点和 AES-GCM 首版实现已完成。
 - `1.2.1`：目标功能/稳定性正式版，承接 URI/session 粒度 crypto 策略、密钥轮换基础示例、浏览器端 crypto demo、WebSocket runtime stats 与对应配置文档/回归测试；发布条件见本文 `1.2.1 正式版门槛`；不承诺企业安全准入，不混入 Micrometer/Actuator 或大规模 demo 重写。
+- `1.2.2`：用户体验正式版，通过标准见本文 `1.2.2 用户体验版本规划`；不混入企业安全准入和完整 P6 指标体系。
+- `1.2.3-SNAPSHOT`：建议作为下一条开发线，优先承接 P6/P7 的 Micrometer/Actuator 指标、关闭原因维度、demo 场景化示例和文档体系整理。
 - `1.2.x`：`P5.x` 继续补齐高级产品能力，优先承接握手鉴权扩展、crypto 灰度示例和浏览器端加密 demo 的持续完善。
 - `1.3.0`：`P6`，可观测与运维能力建设。
 - `1.3.x`：`P7`，demo 和文档体系持续补齐，跟随能力版本滚动完善，而不是等到最后一次性补文档。

@@ -78,6 +78,16 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
 
     private static final ObjectMapper DEFAULT_OBJECT_MAPPER = new ObjectMapper();
 
+    private static final String ORIGIN_REJECT_ACTION =
+            "Action: add the browser Origin to server.netty.websocket.allowed-origins.";
+
+    private static final String CONNECTION_LIMIT_ACTION =
+            "Action: close idle sessions or tune server.netty.websocket.max-connections.";
+
+    private static final String CRYPTO_UNENCRYPTED_REJECT_ACTION =
+            "Action: send the AES-GCM/custom crypto envelope, exclude this uri from crypto, "
+                    + "or set server.netty.websocket.crypto.reject-unencrypted=false during migration.";
+
     public static final AttributeKey<String> SESSION_ID_IN_CHANNEL = AttributeKey.valueOf("sessionId");
 
     private final NettyServerStartupProperties.WebSocket webSocketProperties;
@@ -358,9 +368,13 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         }
         String origin = request.headers().get(HttpHeaderNames.ORIGIN);
         if (StringUtil.isBlank(origin)) {
-            log.warn("Reject websocket handshake because Origin header is missing. uri={}", request.uri());
+            log.warn("Reject websocket handshake because Origin header is missing. uri={}, allowedOrigins={}, {}",
+                    request.uri(),
+                    allowedOrigins,
+                    ORIGIN_REJECT_ACTION);
             getHttpRuntimeRecorder().recordWebSocketOriginRejected();
-            return rejectWithHttp(ctx, request, HttpResponseStatus.FORBIDDEN, "Forbidden by origin");
+            return rejectWithHttp(ctx, request, HttpResponseStatus.FORBIDDEN,
+                    "Forbidden by origin. " + ORIGIN_REJECT_ACTION);
         }
         for (String allowedOrigin : allowedOrigins.split("[,\\s]+")) {
             if (StringUtil.isBlank(allowedOrigin)) {
@@ -370,9 +384,14 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                 return true;
             }
         }
-        log.warn("Reject websocket handshake because Origin is not allowed. uri={}, origin={}", request.uri(), origin);
+        log.warn("Reject websocket handshake because Origin is not allowed. uri={}, origin={}, allowedOrigins={}, {}",
+                request.uri(),
+                origin,
+                allowedOrigins,
+                ORIGIN_REJECT_ACTION);
         getHttpRuntimeRecorder().recordWebSocketOriginRejected();
-        return rejectWithHttp(ctx, request, HttpResponseStatus.FORBIDDEN, "Forbidden by origin");
+        return rejectWithHttp(ctx, request, HttpResponseStatus.FORBIDDEN,
+                "Forbidden by origin. " + ORIGIN_REJECT_ACTION);
     }
 
     private boolean allowsAnyOrigin(String allowedOrigins) {
@@ -456,7 +475,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                 method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
                         messageSession, MessageType.ON_PING, null));
             } catch (IllegalAccessException e) {
-                e.printStackTrace();
+                throw inaccessibleHandlerException(MessageType.ON_PING, method, e);
             } catch (InvocationTargetException e1) {
                 throw extractException(e1);
             }
@@ -477,7 +496,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                 method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
                         messageSession, MessageType.TEXT_MESSAGE, null));
             } catch (IllegalAccessException e) {
-                e.printStackTrace();
+                throw inaccessibleHandlerException(MessageType.TEXT_MESSAGE, method, e);
             } catch (InvocationTargetException e1) {
                 throw extractException(e1);
             }
@@ -491,7 +510,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                 method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
                         messageSession, MessageType.BINARY_MESSAGE, null));
             } catch (IllegalAccessException e) {
-                e.printStackTrace();
+                throw inaccessibleHandlerException(MessageType.BINARY_MESSAGE, method, e);
             } catch (InvocationTargetException e1) {
                 throw extractException(e1);
             }
@@ -507,7 +526,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             method.invoke(getInvokeRef(), getMethodParam(msg, messageSession.getChannelHandlerContext(),
                     messageSession, MessageType.OTHER, null));
         } catch (IllegalAccessException e) {
-            e.printStackTrace();
+            throw inaccessibleHandlerException(MessageType.OTHER, method, e);
         } catch (InvocationTargetException e1) {
             throw extractException(e1);
         }
@@ -615,7 +634,15 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     }
 
     private Object readJsonTextPayload(TextWebSocketFrame frame, Class<?> value) throws Exception {
-        return DEFAULT_OBJECT_MAPPER.readValue(frame.text(), value);
+        try {
+            return DEFAULT_OBJECT_MAPPER.readValue(frame.text(), value);
+        } catch (Exception e) {
+            throw new IllegalArgumentException(
+                    "Failed to deserialize websocket text payload to " + value.getName()
+                            + ". Action: verify the incoming JSON shape, keep the handler parameter as String "
+                            + "or TextWebSocketFrame for raw text, or add an ON_ERROR handler to inspect bad payloads.",
+                    e);
+        }
     }
 
     private boolean isJsonTextPayloadBindingTarget(Class<?> value) {
@@ -721,7 +748,8 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             return null;
         }
         if (!connectionSemaphore.tryAcquire()) {
-            rejectWithHttp(ctx, request, HttpResponseStatus.SERVICE_UNAVAILABLE, "WebSocket connection limit exceeded");
+            rejectWithHttp(ctx, request, HttpResponseStatus.SERVICE_UNAVAILABLE,
+                    "WebSocket connection limit exceeded. " + CONNECTION_LIMIT_ACTION);
             return null;
         }
         return new Runnable() {
@@ -762,7 +790,8 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (!cryptoCodec.canDecrypt(session, frame)) {
             if (shouldRejectUnencrypted()) {
                 throw new IllegalArgumentException(
-                        "Unencrypted websocket frame rejected by crypto policy.");
+                        "Unencrypted websocket frame rejected by crypto policy. "
+                                + CRYPTO_UNENCRYPTED_REJECT_ACTION);
             }
             return frame;
         }
@@ -895,7 +924,10 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     private MessageCryptoCodec requireMessageCryptoCodec() {
         if (messageCryptoCodec == null) {
             throw new IllegalStateException(
-                    "Websocket crypto is enabled but no MessageCryptoCodec is configured.");
+                    "Websocket crypto is enabled but no MessageCryptoCodec is configured. "
+                            + "Action: define a MessageCryptoCodec bean, or set "
+                            + "server.netty.websocket.crypto.algorithm=AES-GCM and provide a "
+                            + "MessageCryptoKeyProvider bean.");
         }
         return messageCryptoCodec;
     }
@@ -1272,6 +1304,14 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             return (Exception) target;
         }
         return new RuntimeException(target);
+    }
+
+    private IllegalStateException inaccessibleHandlerException(MessageType messageType,
+                                                              Method method,
+                                                              IllegalAccessException cause) {
+        return new IllegalStateException("Cannot access websocket " + messageType + " handler " + method
+                + ". Action: make the @MessageMapping method public, or move it to a public Spring component.",
+                cause);
     }
 
     private CloseWebSocketFrame newShutdownCloseFrame() {

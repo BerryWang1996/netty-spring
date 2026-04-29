@@ -3,6 +3,7 @@ package com.github.berrywang1996.netty.spring.web.websocket.context;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.annotation.MessageMapping;
+import com.github.berrywang1996.netty.spring.web.websocket.crypto.AesGcmMessageCryptoCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoPolicy;
 import io.netty.channel.ChannelHandlerContext;
@@ -81,6 +82,40 @@ class MessageMappingSupporterTest {
                     () -> supporter.initMappingResolverMap(cryptoEnabledProperties(), context));
 
             assertTrue(exception.getMessage().contains("at most one MessageCryptoPolicy"));
+            assertTrue(exception.getMessage().contains("Action: keep one policy bean"));
+        }
+    }
+
+    @Test
+    void missingCustomCryptoCodecExplainsNextAction() {
+        try (GenericApplicationContext context = new GenericApplicationContext()) {
+            context.registerBean(TestEndpoint.class);
+            context.refresh();
+            MessageMappingSupporter supporter = new MessageMappingSupporter();
+
+            IllegalStateException exception = assertThrows(IllegalStateException.class,
+                    () -> supporter.initMappingResolverMap(cryptoEnabledProperties(), context));
+
+            assertTrue(exception.getMessage().contains("no MessageCryptoCodec bean"));
+            assertTrue(exception.getMessage().contains("Action: define a MessageCryptoCodec bean"));
+        }
+    }
+
+    @Test
+    void missingAesGcmKeyProviderExplainsNextAction() {
+        try (GenericApplicationContext context = new GenericApplicationContext()) {
+            context.registerBean(TestEndpoint.class);
+            context.refresh();
+            MessageMappingSupporter supporter = new MessageMappingSupporter();
+            NettyServerStartupProperties properties = cryptoEnabledProperties();
+            properties.getWebSocket().getCrypto().setAlgorithm(AesGcmMessageCryptoCodec.ALGORITHM);
+            properties.getWebSocket().getCrypto().setKeyId("main");
+
+            IllegalStateException exception = assertThrows(IllegalStateException.class,
+                    () -> supporter.initMappingResolverMap(properties, context));
+
+            assertTrue(exception.getMessage().contains("MessageCryptoKeyProvider bean"));
+            assertTrue(exception.getMessage().contains("Action: define a bean"));
         }
     }
 

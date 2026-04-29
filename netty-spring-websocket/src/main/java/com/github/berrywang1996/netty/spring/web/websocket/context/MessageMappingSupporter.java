@@ -202,7 +202,9 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         Map<String, MessageCryptoCodec> codecs = applicationContext.getBeansOfType(MessageCryptoCodec.class);
         if (codecs.size() > 1) {
             throw new IllegalStateException(
-                    "Websocket crypto requires exactly one MessageCryptoCodec bean, but found " + codecs.size() + ".");
+                    "Websocket crypto requires exactly one MessageCryptoCodec bean, but found " + codecs.size()
+                            + ": " + codecs.keySet() + ". Action: keep one codec bean, or set "
+                            + "server.netty.websocket.crypto.algorithm=AES-GCM and remove custom codec beans.");
         }
         if (codecs.size() == 1) {
             return codecs.values().iterator().next();
@@ -215,7 +217,8 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         }
         throw new IllegalStateException(
                 "Websocket crypto is enabled but no MessageCryptoCodec bean is available for algorithm "
-                        + cryptoProperties.getAlgorithm() + ".");
+                        + cryptoProperties.getAlgorithm() + ". Action: define a MessageCryptoCodec bean for CUSTOM "
+                        + "or set server.netty.websocket.crypto.algorithm=AES-GCM.");
     }
 
     private MessageCryptoPolicy initMessageCryptoPolicy(NettyServerStartupProperties startupProperties,
@@ -227,7 +230,8 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         if (policies.size() > 1) {
             throw new IllegalStateException(
                     "Websocket crypto requires at most one MessageCryptoPolicy bean, but found "
-                            + policies.size() + ".");
+                            + policies.size() + ": " + policies.keySet()
+                            + ". Action: keep one policy bean, or merge policy rules into a composite policy.");
         }
         if (policies.size() == 1) {
             return policies.values().iterator().next();
@@ -245,7 +249,9 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
             MessageCryptoKeyProvider provider = providers.get(providerName);
             if (provider == null) {
                 throw new IllegalStateException(
-                        "Websocket crypto key provider bean not found: " + providerName);
+                        "Websocket crypto key provider bean not found: " + providerName
+                                + ". Available provider bean(s): " + providers.keySet()
+                                + ". Action: check server.netty.websocket.crypto.key-provider or rename the bean.");
             }
             return provider;
         }
@@ -254,10 +260,13 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         }
         if (providers.isEmpty()) {
             throw new IllegalStateException(
-                    "AES-GCM websocket crypto requires a MessageCryptoKeyProvider bean.");
+                    "AES-GCM websocket crypto requires a MessageCryptoKeyProvider bean. Action: define a bean that "
+                            + "resolves server.netty.websocket.crypto.key-id, or disable crypto for this profile.");
         }
         throw new IllegalStateException(
-                "AES-GCM websocket crypto requires exactly one MessageCryptoKeyProvider bean or crypto.key-provider.");
+                "AES-GCM websocket crypto requires exactly one MessageCryptoKeyProvider bean or crypto.key-provider, "
+                        + "but found " + providers.keySet()
+                        + ". Action: set server.netty.websocket.crypto.key-provider to the intended bean name.");
     }
 
     private boolean isCryptoEnabled(NettyServerStartupProperties startupProperties) {

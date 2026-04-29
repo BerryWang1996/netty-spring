@@ -19,7 +19,23 @@ public class MessageSessionClosedException extends RuntimeException {
     }
 
     public MessageSessionClosedException(List<String> sessionIds) {
-        super("The session is closed while send message. Session id(s): " + sessionIds.toString());
+        this(null, sessionIds);
+    }
+
+    public MessageSessionClosedException(String uri, List<String> sessionIds) {
+        super(buildMessage(uri, sessionIds));
         this.sessionIds = sessionIds;
+    }
+
+    private static String buildMessage(String uri, List<String> sessionIds) {
+        StringBuilder message = new StringBuilder();
+        message.append("Cannot send websocket message because one or more target sessions are closed or missing. ");
+        if (uri != null) {
+            message.append("uri=").append(uri).append(", ");
+        }
+        message.append("sessionId(s)=").append(sessionIds).append(". ");
+        message.append("Action: refresh session ids with MessageSender#getSessionIds(uri), ");
+        message.append("or call isSessionAlive(uri, sessionIds...) before targeted sends.");
+        return message.toString();
     }
 }

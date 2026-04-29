@@ -174,18 +174,22 @@ public class AesGcmMessageCryptoCodec implements MessageCryptoCodec {
 
     private String resolveConfiguredKeyId() {
         if (cryptoProperties == null || StringUtil.isBlank(cryptoProperties.getKeyId())) {
-            throw new IllegalStateException("AES-GCM websocket crypto requires server.netty.websocket.crypto.key-id.");
+            throw new IllegalStateException("AES-GCM websocket crypto requires server.netty.websocket.crypto.key-id. "
+                    + "Action: set a key id that your MessageCryptoKeyProvider can resolve.");
         }
         return cryptoProperties.getKeyId();
     }
 
     private SecretKey resolveKey(String keyId, MessageSession session) {
         if (keyProvider == null) {
-            throw new IllegalStateException("AES-GCM websocket crypto requires a MessageCryptoKeyProvider.");
+            throw new IllegalStateException("AES-GCM websocket crypto requires a MessageCryptoKeyProvider. "
+                    + "Action: define a provider bean or disable server.netty.websocket.crypto.enable.");
         }
         SecretKey key = keyProvider.resolveKey(keyId, session);
         if (key == null) {
-            throw new IllegalStateException("No websocket crypto key resolved for key id: " + keyId);
+            throw new IllegalStateException("No websocket crypto key resolved for key id: " + keyId
+                    + ". Action: check server.netty.websocket.crypto.key-id and make sure the provider keeps "
+                    + "both current and rolling keys during migration.");
         }
         return key;
     }

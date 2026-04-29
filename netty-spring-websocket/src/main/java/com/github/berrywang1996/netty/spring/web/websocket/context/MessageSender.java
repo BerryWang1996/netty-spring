@@ -91,6 +91,34 @@ public interface MessageSender {
             MessageSessionClosedException;
 
     /**
+     * Send a text message to one or more sessions without manually creating {@link TextMessage}.
+     *
+     * @param uri        target uri
+     * @param text       text payload
+     * @param sessionIds session ids
+     * @throws MessageUriNotDefinedException Message uri not defined
+     * @throws MessageSessionClosedException if any session closed, throw exception after execution
+     */
+    default void sendText(String uri, String text, String... sessionIds) throws MessageUriNotDefinedException,
+            MessageSessionClosedException {
+        sendMessage(uri, new TextMessage(text), sessionIds);
+    }
+
+    /**
+     * Send a JSON message to one or more sessions without manually creating {@link JsonMessage}.
+     *
+     * @param uri        target uri
+     * @param payload    JSON serializable payload
+     * @param sessionIds session ids
+     * @throws MessageUriNotDefinedException Message uri not defined
+     * @throws MessageSessionClosedException if any session closed, throw exception after execution
+     */
+    default void sendJson(String uri, Object payload, String... sessionIds) throws MessageUriNotDefinedException,
+            MessageSessionClosedException {
+        sendMessage(uri, new JsonMessage(payload), sessionIds);
+    }
+
+    /**
      * Send message to one session.
      *
      * @param uri       target uri
@@ -102,6 +130,34 @@ public interface MessageSender {
     default void sendToSession(String uri, AbstractMessage message, String sessionId)
             throws MessageUriNotDefinedException, MessageSessionClosedException {
         sendMessage(uri, message, sessionId);
+    }
+
+    /**
+     * Send a text message to one session.
+     *
+     * @param uri       target uri
+     * @param text      text payload
+     * @param sessionId session id
+     * @throws MessageUriNotDefinedException Message uri not defined
+     * @throws MessageSessionClosedException if session closed, throw exception after execution
+     */
+    default void sendTextToSession(String uri, String text, String sessionId)
+            throws MessageUriNotDefinedException, MessageSessionClosedException {
+        sendToSession(uri, new TextMessage(text), sessionId);
+    }
+
+    /**
+     * Send a JSON message to one session.
+     *
+     * @param uri       target uri
+     * @param payload   JSON serializable payload
+     * @param sessionId session id
+     * @throws MessageUriNotDefinedException Message uri not defined
+     * @throws MessageSessionClosedException if session closed, throw exception after execution
+     */
+    default void sendJsonToSession(String uri, Object payload, String sessionId)
+            throws MessageUriNotDefinedException, MessageSessionClosedException {
+        sendToSession(uri, new JsonMessage(payload), sessionId);
     }
 
     /**
@@ -122,6 +178,28 @@ public interface MessageSender {
      */
     default void broadcast(String uri, AbstractMessage message) throws MessageUriNotDefinedException {
         topicMessage(uri, message);
+    }
+
+    /**
+     * Broadcast a text message to all sessions under the uri.
+     *
+     * @param uri  target uri
+     * @param text text payload
+     * @throws MessageUriNotDefinedException Message uri not defined
+     */
+    default void broadcastText(String uri, String text) throws MessageUriNotDefinedException {
+        broadcast(uri, new TextMessage(text));
+    }
+
+    /**
+     * Broadcast a JSON message to all sessions under the uri.
+     *
+     * @param uri     target uri
+     * @param payload JSON serializable payload
+     * @throws MessageUriNotDefinedException Message uri not defined
+     */
+    default void broadcastJson(String uri, Object payload) throws MessageUriNotDefinedException {
+        broadcast(uri, new JsonMessage(payload));
     }
 
     /**

@@ -215,7 +215,9 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
     public void submitHandle(final Runnable runnable) {
         if (!this.semaphore.tryAcquire()) {
             this.permitRejectedCount.incrementAndGet();
-            throw new RejectedExecutionException("No handler permits available. " + getRuntimeStats());
+            throw new RejectedExecutionException("No handler permits available. " + getRuntimeStats()
+                    + " Action: increase server.netty.websocket.handler-permit-limit, reduce handler latency, "
+                    + "or add client-side retry/backoff.");
         }
         try {
             this.executor.execute(new Runnable() {
@@ -234,7 +236,9 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
             this.semaphore.release();
             if (e instanceof RejectedExecutionException) {
                 this.executorRejectedCount.incrementAndGet();
-                throw new RejectedExecutionException("Handler executor rejected task. " + getRuntimeStats(), e);
+                throw new RejectedExecutionException("Handler executor rejected task. " + getRuntimeStats()
+                        + " Action: tune server.netty.websocket.handler-core-pool-size, "
+                        + "handler-max-pool-size or handler-queue-capacity.", e);
             }
             throw e;
         }

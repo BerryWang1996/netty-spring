@@ -73,10 +73,13 @@ class MessageSenderSupportTest {
         MessageSenderRuntimeStats stats = support.getRuntimeStats();
         assertEquals(0L, stats.getRejectedBroadcastCount());
         assertTrue(stats.getExecutor().isShutdown());
-        assertThrows(MessageUriNotDefinedException.class,
+        MessageUriNotDefinedException sendException = assertThrows(MessageUriNotDefinedException.class,
                 () -> support.sendMessage("/ws/test", new TextMessage("hello"), "session-1"));
-        assertThrows(MessageUriNotDefinedException.class,
+        assertTrue(sendException.getMessage().contains("No websocket mappings are currently registered"));
+        assertTrue(sendException.getMessage().contains("server.netty.websocket.enable"));
+        MessageUriNotDefinedException broadcastException = assertThrows(MessageUriNotDefinedException.class,
                 () -> support.topicMessage("/ws/test", new TextMessage("hello")));
+        assertTrue(broadcastException.getMessage().contains("No websocket mappings are currently registered"));
     }
 
     @Test
@@ -139,6 +142,43 @@ class MessageSenderSupportTest {
         } finally {
             support.shutdown();
             cleanup(firstResolver, firstSession);
+        }
+    }
+
+    @Test
+    void textAndJsonConvenienceMethodsSendExpectedFrames() throws Exception {
+        NettyServerBootstrap bootstrap = new NettyServerBootstrap(null);
+        MessageSenderSupport support = new MessageSenderSupport(bootstrap);
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/test",
+                Collections.emptyMap(),
+                new Object());
+        SessionFixture session = addSession(resolver, "/ws/test", "session-1");
+
+        try {
+            setField(NettyServerBootstrap.class, bootstrap, "webSockeMappingtResolverMap",
+                    Collections.singletonMap("/ws/test", resolver));
+
+            support.sendTextToSession("/ws/test", "hello-text", "session-1");
+            Object textOutbound = session.channel.readOutbound();
+            try {
+                assertTrue(textOutbound instanceof TextWebSocketFrame);
+                assertEquals("hello-text", ((TextWebSocketFrame) textOutbound).text());
+            } finally {
+                ReferenceCountUtil.release(textOutbound);
+            }
+
+            support.sendJsonToSession("/ws/test", Collections.singletonMap("message", "hello-json"), "session-1");
+            Object jsonOutbound = session.channel.readOutbound();
+            try {
+                assertTrue(jsonOutbound instanceof TextWebSocketFrame);
+                assertTrue(((TextWebSocketFrame) jsonOutbound).text().contains("\"message\":\"hello-json\""));
+            } finally {
+                ReferenceCountUtil.release(jsonOutbound);
+            }
+        } finally {
+            support.shutdown();
+            cleanup(resolver, session);
         }
     }
 
