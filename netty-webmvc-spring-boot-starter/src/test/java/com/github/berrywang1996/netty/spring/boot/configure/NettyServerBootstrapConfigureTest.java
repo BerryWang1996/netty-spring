@@ -26,7 +26,6 @@ class NettyServerBootstrapConfigureTest {
             .withConfiguration(AutoConfigurations.of(
                     ConfigurationPropertiesAutoConfiguration.class,
                     NettyServerBootstrapConfigure.class,
-                    NettyServerStartupPropertiesWrapper.class,
                     MessageSenderSupportConfigure.class));
 
     @Test

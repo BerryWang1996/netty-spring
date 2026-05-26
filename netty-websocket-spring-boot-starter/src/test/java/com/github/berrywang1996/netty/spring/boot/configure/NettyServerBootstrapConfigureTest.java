@@ -31,7 +31,6 @@ class NettyServerBootstrapConfigureTest {
             .withConfiguration(AutoConfigurations.of(
                     ConfigurationPropertiesAutoConfiguration.class,
                     NettyServerBootstrapConfigure.class,
-                    NettyServerStartupPropertiesWrapper.class,
                     MessageSenderSupportConfigure.class));
 
     @Test
@@ -60,7 +59,7 @@ class NettyServerBootstrapConfigureTest {
                 .withPropertyValues("server.netty.port=" + port)
                 .run(context -> {
                     assertThat(context).hasNotFailed();
-                    assertThat(context.getBean(NettyServerBootstrap.class).getWebSockeMappingtResolverMap())
+                    assertThat(context.getBean(NettyServerBootstrap.class).getWebSocketMappingResolverMap())
                             .containsKey(TEST_WEBSOCKET_URI);
                 });
     }
@@ -108,7 +107,7 @@ class NettyServerBootstrapConfigureTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).doesNotHaveBean(MessageSenderSupport.class);
-                    assertThat(context.getBean(NettyServerBootstrap.class).getWebSockeMappingtResolverMap()).isEmpty();
+                    assertThat(context.getBean(NettyServerBootstrap.class).getWebSocketMappingResolverMap()).isEmpty();
                 });
     }
 

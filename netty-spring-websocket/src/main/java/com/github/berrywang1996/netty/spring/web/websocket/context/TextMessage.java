@@ -8,7 +8,7 @@ import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
  */
 public class TextMessage extends AbstractMessage<TextWebSocketFrame> {
 
-    private String content;
+    private volatile String content;
 
     public TextMessage(String content) {
         this.content = content;

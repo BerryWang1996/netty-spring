@@ -68,7 +68,7 @@ public class MessageSenderSupport implements MessageSender {
     }
 
     public synchronized MessageSender getMessageSender() {
-        Map<String, AbstractMappingResolver> resolverMap = this.nettyServerBootstrap.getWebSockeMappingtResolverMap();
+        Map<String, AbstractMappingResolver> resolverMap = this.nettyServerBootstrap.getWebSocketMappingResolverMap();
         if (this.messageSender != null && this.resolverSource == resolverMap) {
             return this.messageSender;
         }

@@ -90,6 +90,8 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
             });
 
         } catch (RejectedExecutionException e) {
+            // Release the retained msg since the task was never submitted
+            ReferenceCountUtil.release(msg);
             log.warn("Too many requests. Close request. reason={}", e.getMessage());
             ctx.close();
         }

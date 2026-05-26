@@ -64,7 +64,7 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
     private SslContext sslCtx = null;
 
     @Getter
-    private final Map<String, AbstractMappingResolver> webSockeMappingtResolverMap;
+    private final Map<String, AbstractMappingResolver> webSocketMappingResolverMap;
 
     public NettyChannelInitializer(NettyServerBootstrap nettyServerBootstrap) throws Exception {
 
@@ -89,7 +89,7 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
                 nettyServerBootstrap.getStartupProperties(),
                 nettyServerBootstrap.getApplicationContext());
 
-        this.webSockeMappingtResolverMap = supporter.getWebSocketMappingtResolverMap();
+        this.webSocketMappingResolverMap = supporter.getWebSocketMappingResolverMap();
     }
 
     @Override

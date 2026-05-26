@@ -67,7 +67,7 @@ public final class NettyServerBootstrap {
     private final List<Runnable> stopListeners = new CopyOnWriteArrayList<>();
 
     @Getter
-    private Map<String, AbstractMappingResolver> webSockeMappingtResolverMap;
+    private Map<String, AbstractMappingResolver> webSocketMappingResolverMap;
 
     public NettyServerBootstrap(ApplicationContext applicationContext) {
         this.applicationContext = applicationContext;
@@ -96,7 +96,7 @@ public final class NettyServerBootstrap {
 
             NettyChannelInitializer initializer = new NettyChannelInitializer(this);
             this.webMappingSupporter = initializer.getSupporter();
-            this.webSockeMappingtResolverMap = initializer.getWebSockeMappingtResolverMap();
+            this.webSocketMappingResolverMap = initializer.getWebSocketMappingResolverMap();
 
             bootstrap.group(this.bossGroup, this.workerGroup)
                     .channel(NioServerSocketChannel.class)
@@ -223,7 +223,7 @@ public final class NettyServerBootstrap {
         this.startupProperties = null;
         this.serverChannel = null;
         this.webMappingSupporter = null;
-        this.webSockeMappingtResolverMap = null;
+        this.webSocketMappingResolverMap = null;
         this.bossGroup = null;
         this.workerGroup = null;
     }

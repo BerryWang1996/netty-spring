@@ -32,7 +32,8 @@ import io.netty.channel.ChannelFutureListener;
 import io.netty.handler.codec.http.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
-import org.springframework.core.LocalVariableTableParameterNameDiscoverer;
+import org.springframework.core.DefaultParameterNameDiscoverer;
+import org.springframework.core.ParameterNameDiscoverer;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.util.PathMatcher;
 
@@ -47,6 +48,9 @@ import java.util.*;
  */
 @Slf4j
 public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequest, HttpRequestMethod> {
+
+    private static final ParameterNameDiscoverer PARAMETER_NAME_DISCOVERER =
+            new DefaultParameterNameDiscoverer();
 
     private final boolean isRestfulUrl;
 
@@ -113,8 +117,7 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         Map<HttpRequestMethod, Map<String, Class>> tempMethodParamTypes = new HashMap<>();
         for (Map.Entry<HttpRequestMethod, Method> kMethodEntry : getMethods().entrySet()) {
             LinkedHashMap<String, Class> methodParams = new LinkedHashMap<>();
-            LocalVariableTableParameterNameDiscoverer u = new LocalVariableTableParameterNameDiscoverer();
-            String[] params = u.getParameterNames(kMethodEntry.getValue());
+            String[] params = PARAMETER_NAME_DISCOVERER.getParameterNames(kMethodEntry.getValue());
             Annotation[][] parameterAnnotations = kMethodEntry.getValue().getParameterAnnotations();
             Class<?>[] parameterTypes = kMethodEntry.getValue().getParameterTypes();
             if (params != null && parameterTypes.length == params.length) {

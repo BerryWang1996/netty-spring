@@ -88,7 +88,10 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             "Action: send the AES-GCM/custom crypto envelope, exclude this uri from crypto, "
                     + "or set server.netty.websocket.crypto.reject-unencrypted=false during migration.";
 
-    public static final AttributeKey<String> SESSION_ID_IN_CHANNEL = AttributeKey.valueOf("sessionId");
+    /**
+     * Alias for {@link ServiceHandler#SESSION_ID_IN_CHANNEL} to keep existing references compiling.
+     */
+    public static final AttributeKey<String> SESSION_ID_IN_CHANNEL = ServiceHandler.SESSION_ID_IN_CHANNEL;
 
     private final NettyServerStartupProperties.WebSocket webSocketProperties;
 
@@ -249,7 +252,6 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             session.recordInboundActivity();
 
             handleInboundFrame(frame, session);
-            ctx.flush();
         }
     }
 
@@ -404,19 +406,23 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     }
 
 
+    private static final int MAX_SESSION_ID_RETRIES = 5;
+
     private MessageSession createMessageSession(ChannelHandlerContext ctx,
                                                 FullHttpRequest request,
                                                 Runnable cleanupAction) {
 
-        // generate session id
-        String sessionId = UUID.randomUUID().toString();
-        if (sessionMap.containsKey(sessionId)) {
-            log.warn("Duplicate session id {}, retry.", sessionId);
-            return createMessageSession(ctx, request, cleanupAction);
+        // generate session id with bounded retry to avoid stack overflow
+        for (int i = 0; i < MAX_SESSION_ID_RETRIES; i++) {
+            String sessionId = UUID.randomUUID().toString();
+            if (!sessionMap.containsKey(sessionId)) {
+                return new MessageSession(sessionId, ctx, request, cleanupAction);
+            }
+            log.warn("Duplicate session id {}, retry {}/{}.", sessionId, i + 1, MAX_SESSION_ID_RETRIES);
         }
-
-        // return new message session
-        return new MessageSession(sessionId, ctx, request, cleanupAction);
+        throw new IllegalStateException(
+                "Failed to generate unique websocket session id after " + MAX_SESSION_ID_RETRIES
+                        + " attempts. Active sessions: " + sessionMap.size());
     }
 
     private ChannelFuture doHandshake(ChannelHandlerContext ctx, FullHttpRequest request) {
@@ -1006,10 +1012,18 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             return;
         }
         long timeoutMillis = resolveHeartbeatTimeoutMillis();
-        long idleMillis = System.currentTimeMillis() - session.getLastReadTimeMillis();
-        if (timeoutMillis > 0L && idleMillis > timeoutMillis) {
-            closeSessionOnHeartbeatTimeout(session, idleMillis);
-            return;
+        if (timeoutMillis > 0L) {
+            long now = System.currentTimeMillis();
+            // Check both general inbound activity and pong response time.
+            // A client that sends data frames but never replies to pings is considered unhealthy.
+            long inboundIdleMillis = now - session.getLastReadTimeMillis();
+            long pongIdleMillis = now - session.getLastPongTimeMillis();
+            long effectiveIdleMillis = Math.min(inboundIdleMillis, pongIdleMillis);
+            // Close when BOTH indicators exceed the timeout, meaning neither data nor pong arrived
+            if (inboundIdleMillis > timeoutMillis && pongIdleMillis > timeoutMillis) {
+                closeSessionOnHeartbeatTimeout(session, effectiveIdleMillis);
+                return;
+            }
         }
         PingWebSocketFrame pingFrame = new PingWebSocketFrame(
                 Unpooled.copiedBuffer(Long.toString(System.currentTimeMillis()), CharsetUtil.UTF_8));

@@ -93,14 +93,14 @@ class MessageSenderSupportTest {
         SessionFixture firstSession = addSession(firstResolver, "/ws/test", "old-session");
 
         try {
-            setField(NettyServerBootstrap.class, bootstrap, "webSockeMappingtResolverMap",
+            setField(NettyServerBootstrap.class, bootstrap, "webSocketMappingResolverMap",
                     Collections.singletonMap("/ws/test", firstResolver));
 
             DefaultMessageSender firstSender = (DefaultMessageSender) support.getMessageSender();
             ThreadPoolExecutor firstExecutor = extractExecutor(firstSender);
             assertEquals(1, support.getSessionNums("/ws/test"));
 
-            setField(NettyServerBootstrap.class, bootstrap, "webSockeMappingtResolverMap", null);
+            setField(NettyServerBootstrap.class, bootstrap, "webSocketMappingResolverMap", null);
 
             assertEquals(0, support.getSessionNums());
             assertTrue(firstExecutor.isShutdown());
@@ -113,7 +113,7 @@ class MessageSenderSupportTest {
             try {
                 Map<String, MessageMappingResolver> restartedMap =
                         Collections.singletonMap("/ws/test", secondResolver);
-                setField(NettyServerBootstrap.class, bootstrap, "webSockeMappingtResolverMap", restartedMap);
+                setField(NettyServerBootstrap.class, bootstrap, "webSocketMappingResolverMap", restartedMap);
 
                 assertEquals(Collections.singleton("new-session"), support.getSessionIds("/ws/test"));
                 assertEquals("new-session", support.getSession("/ws/test", "new-session").getSessionId());
@@ -156,7 +156,7 @@ class MessageSenderSupportTest {
         SessionFixture session = addSession(resolver, "/ws/test", "session-1");
 
         try {
-            setField(NettyServerBootstrap.class, bootstrap, "webSockeMappingtResolverMap",
+            setField(NettyServerBootstrap.class, bootstrap, "webSocketMappingResolverMap",
                     Collections.singletonMap("/ws/test", resolver));
 
             support.sendTextToSession("/ws/test", "hello-text", "session-1");
@@ -191,7 +191,7 @@ class MessageSenderSupportTest {
                 Collections.emptyMap(),
                 new Object());
 
-        setField(NettyServerBootstrap.class, bootstrap, "webSockeMappingtResolverMap",
+        setField(NettyServerBootstrap.class, bootstrap, "webSocketMappingResolverMap",
                 Collections.singletonMap("/ws/test", resolver));
         ((AtomicBoolean) getField(NettyServerBootstrap.class, bootstrap, "stopped")).set(false);
 

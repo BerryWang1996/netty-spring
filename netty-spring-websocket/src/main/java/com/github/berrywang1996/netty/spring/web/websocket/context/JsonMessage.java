@@ -11,9 +11,9 @@ public class JsonMessage extends AbstractMessage<TextWebSocketFrame> {
 
     private static final ObjectMapper DEFAULT_OBJECT_MAPPER = new ObjectMapper();
 
-    private Object content;
+    private volatile Object content;
 
-    private ObjectMapper objectMapper;
+    private volatile ObjectMapper objectMapper;
 
     public JsonMessage(Object content) {
         this(content, DEFAULT_OBJECT_MAPPER);

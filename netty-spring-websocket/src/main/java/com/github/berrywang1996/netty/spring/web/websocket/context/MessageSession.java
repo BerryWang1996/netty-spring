@@ -28,6 +28,16 @@ public class MessageSession {
 
     private final Runnable cleanupAction;
 
+    /**
+     * Cached path parsed from the first request URI. Computed once on construction.
+     */
+    private final String cachedPath;
+
+    /**
+     * Cached query parameters parsed from the first request URI. Computed once on construction.
+     */
+    private final Map<String, List<String>> cachedQueryParams;
+
     private final AtomicBoolean closing = new AtomicBoolean(false);
 
     private final AtomicBoolean released = new AtomicBoolean(false);
@@ -47,6 +57,15 @@ public class MessageSession {
         this.channelHandlerContext = ctx;
         this.firstRequest = request.retainedDuplicate();
         this.cleanupAction = cleanupAction;
+        // Parse URI once and cache results to avoid repeated QueryStringDecoder allocation
+        QueryStringDecoder decoder = new QueryStringDecoder(request.uri());
+        this.cachedPath = decoder.path();
+        Map<String, List<String>> rawParams = decoder.parameters();
+        Map<String, List<String>> immutableParams = new HashMap<>(rawParams.size());
+        for (Map.Entry<String, List<String>> entry : rawParams.entrySet()) {
+            immutableParams.put(entry.getKey(), Collections.unmodifiableList(new ArrayList<>(entry.getValue())));
+        }
+        this.cachedQueryParams = Collections.unmodifiableMap(immutableParams);
     }
 
     public String getSessionId() {
@@ -66,31 +85,27 @@ public class MessageSession {
     }
 
     public String getPath() {
-        return new QueryStringDecoder(firstRequest.uri()).path();
+        return cachedPath;
     }
 
     public String getQueryParam(String name) {
-        List<String> values = getQueryParams(name);
-        if (values.isEmpty()) {
+        List<String> values = cachedQueryParams.get(name);
+        if (values == null || values.isEmpty()) {
             return null;
         }
         return values.get(0);
     }
 
     public List<String> getQueryParams(String name) {
-        List<String> values = new QueryStringDecoder(firstRequest.uri()).parameters().get(name);
+        List<String> values = cachedQueryParams.get(name);
         if (values == null || values.isEmpty()) {
             return Collections.emptyList();
         }
-        return Collections.unmodifiableList(new ArrayList<>(values));
+        return values;
     }
 
     public Map<String, List<String>> getQueryParams() {
-        Map<String, List<String>> params = new HashMap<>();
-        for (Map.Entry<String, List<String>> entry : new QueryStringDecoder(firstRequest.uri()).parameters().entrySet()) {
-            params.put(entry.getKey(), Collections.unmodifiableList(new ArrayList<>(entry.getValue())));
-        }
-        return Collections.unmodifiableMap(params);
+        return cachedQueryParams;
     }
 
     public String getHeader(String name) {

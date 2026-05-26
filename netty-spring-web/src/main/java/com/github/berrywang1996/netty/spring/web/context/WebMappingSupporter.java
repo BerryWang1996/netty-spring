@@ -81,7 +81,7 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
 
     private final AtomicLong executorRejectedCount = new AtomicLong();
 
-    private Map<String, AbstractMappingResolver> webSocketMappingtResolverMap;
+    private Map<String, AbstractMappingResolver> webSocketMappingResolverMap;
 
     public WebMappingSupporter(NettyServerStartupProperties startupProperties,
                                ApplicationContext applicationContext) {
@@ -103,8 +103,8 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
         this.mappingResolverMap = mappingResolverMap == null
                 ? initMappingResolverMap(startupProperties, applicationContext)
                 : adaptMappingResolverMap(mappingResolverMap);
-        if (this.webSocketMappingtResolverMap == null) {
-            this.webSocketMappingtResolverMap = Collections.emptyMap();
+        if (this.webSocketMappingResolverMap == null) {
+            this.webSocketMappingResolverMap = Collections.emptyMap();
         }
         configureHttpRuntimeRecorder(this.mappingResolverMap);
         configureHandlerSubmitter(this.mappingResolverMap);
@@ -126,14 +126,14 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
                         supporter.initMappingResolverMap(startupProperties, applicationContext);
                 // if websocket
                 if ("com.github.berrywang1996.netty.spring.web.websocket.context.MessageMappingSupporter".equals(mappingClass)) {
-                    this.webSocketMappingtResolverMap = Collections.unmodifiableMap(resolverMap);
+                    this.webSocketMappingResolverMap = Collections.unmodifiableMap(resolverMap);
                 }
                 MapUtil.checkDuplicateKey(mappingResolverMap, resolverMap);
                 mappingResolverMap.putAll(resolverMap);
             }
         }
-        if (this.webSocketMappingtResolverMap == null) {
-            this.webSocketMappingtResolverMap = Collections.emptyMap();
+        if (this.webSocketMappingResolverMap == null) {
+            this.webSocketMappingResolverMap = Collections.emptyMap();
         }
         if (mappingResolverMap.size() == 0) {
             log.warn("No mapping resolvers are mapped.");
@@ -258,14 +258,14 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
     }
 
     public WebSocketRuntimeStats getWebSocketRuntimeStats() {
-        if (this.webSocketMappingtResolverMap == null || this.webSocketMappingtResolverMap.isEmpty()) {
+        if (this.webSocketMappingResolverMap == null || this.webSocketMappingResolverMap.isEmpty()) {
             return WebSocketRuntimeStats.empty();
         }
         int activeSessionCount = 0;
-        for (AbstractMappingResolver resolver : this.webSocketMappingtResolverMap.values()) {
+        for (AbstractMappingResolver resolver : this.webSocketMappingResolverMap.values()) {
             activeSessionCount += Math.max(0, resolver.getActiveSessionCount());
         }
-        return new WebSocketRuntimeStats(this.webSocketMappingtResolverMap.size(), activeSessionCount);
+        return new WebSocketRuntimeStats(this.webSocketMappingResolverMap.size(), activeSessionCount);
     }
 
     public void shutdown() {

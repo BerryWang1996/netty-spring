@@ -18,7 +18,7 @@ package com.github.berrywang1996.netty.spring.web.context;
 
 import io.netty.channel.ChannelHandlerContext;
 import org.springframework.context.ApplicationContext;
-import org.springframework.core.LocalVariableTableParameterNameDiscoverer;
+import org.springframework.core.DefaultParameterNameDiscoverer;
 import org.springframework.util.PathMatcher;
 
 import java.lang.reflect.Method;
@@ -136,12 +136,14 @@ public abstract class AbstractMappingResolver<T, K> {
         return 0;
     }
 
+    private static final DefaultParameterNameDiscoverer PARAMETER_NAME_DISCOVERER =
+            new DefaultParameterNameDiscoverer();
+
     public Map<K, Map<String, Class>> parseMethodParameters() {
         Map<K, Map<String, Class>> tempMethodParamTypes = new HashMap<>();
         for (Map.Entry<K, Method> kMethodEntry : methods.entrySet()) {
             LinkedHashMap<String, Class> methodParams = new LinkedHashMap<>();
-            LocalVariableTableParameterNameDiscoverer u = new LocalVariableTableParameterNameDiscoverer();
-            String[] params = u.getParameterNames(kMethodEntry.getValue());
+            String[] params = PARAMETER_NAME_DISCOVERER.getParameterNames(kMethodEntry.getValue());
             Class<?>[] parameterTypes = kMethodEntry.getValue().getParameterTypes();
             if (params != null && parameterTypes.length == params.length) {
                 for (int i = 0; i < params.length; i++) {

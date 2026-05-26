@@ -151,6 +151,9 @@ public class DefaultMessageSender implements MessageSender {
 
     @Override
     public boolean isSessionAlive(String uri, String... sessionIds) {
+        if (sessionIds == null || sessionIds.length == 0) {
+            return false;
+        }
         MessageMappingResolver resolver = resolverMap.get(uri);
         if (resolver == null) {
             return false;

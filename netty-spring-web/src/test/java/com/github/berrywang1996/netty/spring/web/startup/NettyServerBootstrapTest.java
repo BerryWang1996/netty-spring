@@ -97,7 +97,7 @@ class NettyServerBootstrapTest {
             bootstrap.stop();
 
             assertNull(bootstrap.getApplicationContext());
-            assertNull(bootstrap.getWebSockeMappingtResolverMap());
+            assertNull(bootstrap.getWebSocketMappingResolverMap());
 
             startupProperties.setPort(findAvailablePort());
             bootstrap.start(startupProperties);
@@ -164,7 +164,7 @@ class NettyServerBootstrapTest {
 
             assertTrue(((AtomicBoolean) getField(NettyServerBootstrap.class, bootstrap, "stopped")).get());
             assertNull(bootstrap.getApplicationContext());
-            assertNull(bootstrap.getWebSockeMappingtResolverMap());
+            assertNull(bootstrap.getWebSocketMappingResolverMap());
             assertNull(getField(NettyServerBootstrap.class, bootstrap, "bossGroup"));
             assertNull(getField(NettyServerBootstrap.class, bootstrap, "workerGroup"));
             assertNull(getField(NettyServerBootstrap.class, bootstrap, "serverChannel"));
