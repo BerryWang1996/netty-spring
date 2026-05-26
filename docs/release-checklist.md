@@ -1,6 +1,6 @@
 # 版本发布检查清单
 
-更新时间：2026-04-29
+更新时间：2026-05-26
 
 ## 适用范围
 
@@ -13,21 +13,33 @@
 - 功能/稳定性发布：面向 `1.1.0-RC2`、`1.1.0` 和 `1.2.x`，重点确认全量测试、Starter 兼容、WebSocket 产品能力回归、配置文档、SBOM 生成和基础 CI 链路。
 - 企业安全发布：面向后续安全加固版本，除功能/稳定性发布要求外，还必须完成 Dependency-Check、Dependabot triage、CORS/鉴权/TLS 策略等安全项。
 
-## `1.2.2` 发布口径
+## `1.2.3` 发布口径
 
-`1.2.2` 定位为 WebSocket 用户体验与开源接入体验增强版本。本次可以发布的前提是：
+`1.2.3` 定位为生产就绪代码质量版本，集中修复 10 项影响生产稳定性的核心缺陷。已发布（tag `v1.2.3`）。
 
-- 根版本从 `1.2.2-SNAPSHOT` 切到 `1.2.2` 后，全量 reactor `mvn test` 通过。
-- README、开发计划、WebSocket 配置文档、Netty 配置文档和本清单均已说明 `1.2.2` 的功能边界与延期项。
-- 已补 `docs/release-notes-1.2.2.md`，明确本次新增能力、验证方式和后续方向。
-- README 快速开始、starter 选择表、demo 首页、crypto demo profile、MessageSender 便利 API 和常见错误排障提示均已有测试或文档验收入口。
-- 工作树不包含 `.m2/`、`target/`、本地缓存或实验文件。
+完成确认项：
 
-以下内容不阻塞 `1.2.2` 用户体验发布，但必须保留在后续计划中：
+- 全量 reactor `mvn verify` 通过（9 个模块、约 138 个测试）。
+- 已补 `docs/release-notes-1.2.3.md`，明确本次修复内容和后续方向。
+- 开发计划已更新至 `1.2.3` 收口状态，下一步进入 P6/P7。
+- Spring Boot 自动配置已改为标准 `@EnableConfigurationProperties` 模式。
 
+## `1.3.0` 发布口径（下一版本）
+
+`1.3.0` 定位为 P6 可观测与运维能力正式版。本次可以发布的前提是：
+
+- Micrometer/Actuator 指标接入或等效可观测入口能监控核心运行时状态。
+- session 关闭原因可聚合、可告警，具备维度化标签。
+- 握手鉴权扩展点 `WebSocketHandshakeInterceptor` 可用，并有 demo 示例。
+- 全量 reactor `mvn verify` 通过。
+- 开发计划、README 和配置文档与 `1.3.0` 状态一致。
+
+以下内容不阻塞 `1.3.0` 发布，但必须保留在后续计划中：
+
+- Spring Boot 3.x / Jakarta namespace 迁移。
 - Dependency-Check / Dependabot 漏洞 triage。
-- 标准握手鉴权扩展、完整 CORS/TLS 策略和企业级密钥分发方案。
-- Micrometer/Actuator 指标、关闭原因维度和完整 demo 体系重写。
+- 完整企业安全准入（CORS 策略、TLS 策略深化）。
+- 集群/分布式 session 方案和 WebSocket 子协议支持。
 
 ## 发布前
 
