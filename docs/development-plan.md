@@ -4,27 +4,23 @@
 
 ## 当前结论
 
-- `1.0.2` 已完成 `P3.2` 发布后治理收口，可作为当前 `1.0.x` 稳定发布版本。
-- `1.1.0-RC2` 已从 P4/P4.1 稳定线切出并发布；`1.2.0` 已作为 P5/P5.x WebSocket 产品能力正式版发布，`1.2.1` 已按功能/稳定性正式版口径完成收口；`1.2.2` 已按用户体验与开源接入体验增强版本口径完成收口；**`1.2.3` 已按生产就绪代码质量版本口径完成收口并发布**。
-- `1.2.3` 集中修复了影响生产稳定性的核心代码缺陷：ByteBuf 生命周期安全、WebSocket session 创建死循环防护、心跳检测逻辑完善、线程可见性保证、Spring Boot 自动配置规范化和废弃 API 替换。
-- `1.1.0-RC2` 发布线已具备框架功能候选基础：P4 配置边界、自动配置兼容性、`@Lazy` 依赖消除、`P4.1` 首批容量、失败路径、运行时统计、内置 health/status、线程池校验、SBOM/Dependency-Check 入口、Netty BOM 版本对齐、`netty-all` 瘦身和 GitHub Actions 门禁均已推进，并已在本地正常 Maven 环境完成全量 reactor `mvn test` 复验。
-- 按当前决策，后续暂时不把安全问题作为主线阻塞项：Dependency-Check、Dependabot、安全扩展、CORS/鉴权/TLS 策略等进入冻结 backlog，后续需要企业生产安全版时再集中处理。
-- **P6 核心已完成**：关闭原因维度化（`CloseReason` 枚举 + `WebSocketEventRecorder` 事件计数器）、握手鉴权扩展点（`WebSocketHandshakeInterceptor` 接口）已完成核心实现并接入 `MessageMappingResolver` 和 `DefaultMessageSender`，所有 close path 均已标注具体 `CloseReason`，管理端点 `/netty/status` 已包含 eventCounters；Micrometer 可选指标桥接已完成（`NettyWebSocketMeterBinder` + `NettyHttpMeterBinder` + `NettyMicrometerConfigure` 条件装配），demo 已增加 `auth-demo` profile 的 token 鉴权拦截器示例和 Actuator 指标端点。下一步：demo 聊天室升级、README 生产部署建议和 1.3.0 发布准备。
+- **`1.3.0` 已作为 P6 可观测与运维能力正式版发布**（tag `v1.3.0`）。关闭原因维度化、Micrometer 指标桥接、握手鉴权扩展点、生产部署建议文档均已完成。
+- `P0` 至 `P6` 全部阶段已完成，项目从"功能建设期"进入"质量深化与产品化"阶段。
+- 代码审计发现 `netty-spring-web` 和 `netty-spring-webmvc` 模块中仍存在遗留代码质量问题：`e.printStackTrace()` 生产代码（8 处）、`SimpleDateFormat` 线程安全隐患（6 处）、HTTP 错误响应空实现、`ObjectMapper` 每请求重建、webmvc 模块测试近乎空白（18 个源文件仅 1 个测试方法）。
+- 下一步分两条线推进：**1.3.1 代码质量深度治理**（修复遗留代码缺陷、补齐 webmvc 测试覆盖）和 **1.4.0 P7 Demo 与文档产品化**（聊天室示例、完整接入文档、Spring Boot 3.x 兼容性评估）。
 
 ## 当前发版判断
 
-- `1.0.x`：`1.0.2` 仍是当前可发布/可回退的稳定线。
-- `1.1.0-RC2`：已从 P4/P4.1 复验点切出并推送 tag，定位为功能/稳定性候选，不混入 P5 产品能力。
-- `1.2.0`：已发布的 WebSocket 产品能力正式版，承接 P5 首批 API、心跳/空闲断线和 AES-GCM 应用层消息加密首版。
-- `1.2.1`：已发布的功能/稳定性正式版，URI/session 粒度 crypto 策略、密钥轮换基础示例、浏览器端加密 demo 和 WebSocket 轻量 runtime stats 已进入发布范围；不定位为企业安全正式版。
-- `1.2.2`：用户体验版本，重点降低开源用户第一次接入、demo 运行、配置选择、常见错误排查和常用发送 API 的使用门槛。
-- **`1.2.3`：生产就绪代码质量版本，集中修复了 10 项影响生产稳定性的核心缺陷，包括 ByteBuf 安全、session 死循环、心跳检测、线程可见性、RejectedExecutionException 泄漏、Spring Boot 自动配置规范化和废弃 API 替换。**
-- `1.1.0-RC1`：历史候选口径，已被 `1.1.0-RC2` 取代。
-- `1.1.0-RC2`：已作为”非安全阻塞版候选”发布，重点验证 Starter 收敛、配置兼容、核心 runtime 回归、SBOM 生成、Netty 依赖瘦身和 CI 基础链路；暂不要求 Dependency-Check/Dependabot triage 闭环。
-- 可以进入当前口径下 `1.1.0` 功能正式版的前置条件：RC 后没有新增 P1/P2 级功能/稳定性 review finding，README/配置文档/发布检查清单与代码一致，版本号从 `1.1.0-RC2` 切到 `1.1.0` 后完成全量 `mvn test` 或 CI 等效验证。
-- 企业生产安全版另行设门槛：Dependency-Check、Dependabot、安全扩展、CORS/鉴权/TLS 策略不再阻塞当前开发计划，但也不应被误认为已经完成。
+- **`1.3.0`（当前推荐版本）**：P6 可观测与运维能力正式版。Micrometer 指标桥接、关闭原因维度化、握手鉴权扩展点、生产部署建议均已完成。
+- `1.2.3`：生产就绪代码质量版本，修复了 10 项生产稳定性缺陷。
+- `1.2.2`：用户体验增强版本。
+- `1.2.1`：功能/稳定性正式版。
+- `1.2.0`：WebSocket 产品能力正式版。
+- `1.1.0-RC2`：P4/P4.1 功能候选版。
+- `1.0.2`：`1.0.x` 稳定基线。
+- 企业生产安全版另行设门槛：Dependency-Check、Dependabot、安全扩展、CORS/鉴权/TLS 策略不再阻塞当前开发计划。
 
-## `1.2.1` 正式版门槛
+## `1.2.1` 正式版门槛（已完成）
 
 本次 `1.2.1` 定位为 P5.x 功能/稳定性正式版，不定位为企业安全正式版。正式版需要完成以下功能和验收项：
 
@@ -53,14 +49,27 @@
 
 ## 下一步判断
 
-`1.2.3` 已作为生产就绪代码质量版本收口并发布（tag `v1.2.3`）。核心代码缺陷已修复，Spring Boot 自动配置已规范化，项目代码质量达到可发布新版本的标准。下一步正式进入 P6/P7 阶段。
+`1.3.0` 已作为 P6 可观测与运维能力正式版发布（tag `v1.3.0`）。P0 至 P6 全部阶段完成后，项目核心能力已覆盖 Web/WebMVC/WebSocket 基础、Starter 收敛、配置统一、产品 API、加密扩展、可观测性和握手鉴权。
+
+代码审计发现两类遗留问题需要优先处理：
+
+**生产代码缺陷（影响运行时质量）**：
+- `e.printStackTrace()` 在 8 处生产代码中使用，绕过日志框架，无法被收集和监控。
+- `SimpleDateFormat` 在 6 处多线程环境中使用，存在线程安全风险，可能导致日期格式化错误。
+- HTTP 错误响应（`errorResponseHtml` / `errorResponseJson`）返回空字符串，用户得到空白错误页面。
+- `JsonViewHandler` 每次请求创建 `new ObjectMapper()`，带来不必要的性能开销。
+- `HttpErrorMessage` 字段名 `timestrap` 拼写错误（应为 `timestamp`）。
+- `text/plain` 等非 form 类型的 POST 请求无法解析参数。
+
+**测试覆盖缺口（影响可维护性）**：
+- `netty-spring-webmvc` 模块有 18 个源文件但仅 1 个测试方法，覆盖率接近零。
+- 三个 Starter 模块各有 5-6 个测试，缺少自动装配边缘场景覆盖。
 
 优先级建议：
 
-1. **P6 可观测与运维能力（下一个主要方向）**：Micrometer/Actuator 指标接入、关闭原因维度化、运行时诊断增强、统一事件模型。目标版本 `1.3.0`。
-2. **P7 Demo 与文档体系**：随 P6 能力滚动补齐，demo 升级为更完整的聊天室/推送场景，README 和配置文档同步更新。
-3. **握手鉴权扩展**：作为 P5 遗留项，可在 P6 阶段并行推进，为 WebSocket 连接增加标准的 token/session 鉴权扩展点。
-4. **企业安全版本**：Dependency-Check、Dependabot、CORS/鉴权/TLS 策略深化继续保留冻结 backlog，不阻塞 P6/P7 推进。
+1. **1.3.1 代码质量深度治理（下一个紧急方向）**：修复上述生产代码缺陷，补齐 webmvc 模块测试覆盖。
+2. **1.4.0 P7 Demo 与文档产品化**：demo 升级为聊天室/推送场景，完整接入文档，API 使用指南。
+3. **2.0.0 远期规划**：Spring Boot 3.x / Jakarta namespace 迁移 + 企业安全版本。
 
 ## `1.2.3` 生产就绪代码质量版本
 
@@ -136,10 +145,9 @@
    - 已有 interceptor 拒绝/异常/通过三种场景的单元测试。
    - Demo 增加 `auth-demo` profile 的 token 鉴权拦截器示例（`WebSocketAuthDemoConfiguration`），支持 query parameter 和 Authorization Bearer header 两种传参方式。
 
-4. **第四刀：运行时诊断与 demo 升级（P7 首批）**
-   - 为常见运维场景（连接上限、线程池满、心跳超时、crypto 失败）增加结构化诊断日志。
-   - demo 升级为简易聊天室示例：支持加入/离开通知、在线用户列表、广播消息。
-   - README 文档更新：新增"生产部署建议"章节，覆盖线程池调优、超时配置、指标接入和常见问题排障。
+4. **第四刀：运行时诊断与 demo 升级（P7 首批）** ⏳ 部分完成
+   - README 已新增"生产部署建议"章节。 ✅
+   - demo 聊天室升级和结构化诊断日志推迟到 `1.4.0` P7 阶段。
 
 `1.3.0` 完成标准：
 
@@ -156,7 +164,73 @@
 - 完整的集群/分布式 session 方案。
 - WebSocket 子协议（STOMP 等）支持。
 
-## `1.2.2` 用户体验版本规划
+## `1.3.1` 代码质量深度治理版本规划（下一版本）
+
+目标：修复代码审计发现的所有遗留生产代码缺陷，补齐 `netty-spring-webmvc` 模块测试覆盖，使项目整体代码质量达到可长期维护的标准。
+
+版本定位：
+
+- `1.3.1` 是纯质量修复 patch 版本，不引入新功能或 API 变更。
+- 所有改动向后兼容，不需要业务侧修改代码。
+- 目标：修完即可发布，不拖入新需求。
+
+建议拆成四刀：
+
+1. **第一刀：消灭 `e.printStackTrace()` 和日志规范化**
+   - 将 `ServiceHandlerUtil.java`、`ClassUtil.java`、`DataBindUtil.java` 中的 `e.printStackTrace()` 替换为 `log.error()`。
+   - 确保所有异常都进入 SLF4J 日志框架，可被生产日志系统收集和监控。
+   - 预计涉及 8 处代码修改。
+
+2. **第二刀：`SimpleDateFormat` 线程安全修复**
+   - 将 `ServiceHandlerUtil.java`（2 处）、`ServiceHandler.java`（1 处）、`JsonViewHandler.java`（1 处）、`Cookie.java`（1 处）、`DataBindUtil.java`（1 处）中的 `SimpleDateFormat` 替换为线程安全的 `DateTimeFormatter`。
+   - 同步修复 `HttpErrorMessage.timestrap` 字段拼写错误（应为 `timestamp`）。
+   - 预计涉及 6 个文件。
+
+3. **第三刀：HTTP 错误响应与 MVC 代码质量**
+   - 实现 `ServiceHandlerUtil.errorResponseHtml()` — 返回包含状态码、时间戳、路径和错误消息的结构化 HTML 错误页面。
+   - 实现 `ServiceHandlerUtil.errorResponseJson()` — 返回包含 `status`、`timestamp`、`path`、`error`、`message` 字段的 JSON 错误响应。
+   - 将 `JsonViewHandler` 中每次请求创建 `new ObjectMapper()` 改为静态单例。
+   - 评估 `text/plain` POST 请求参数解析和请求编码检测的可行性。
+
+4. **第四刀：`netty-spring-webmvc` 测试覆盖补齐**
+   - 当前 18 个源文件仅 1 个测试方法，覆盖率接近零。
+   - 优先补齐 `RequestMappingResolver`、`RequestMappingSupporter`、`JsonViewHandler`、`DataBindUtil` 的核心路径测试。
+   - 目标：至少达到 15-20 个测试方法，覆盖参数绑定、视图处理、路由匹配的正常和异常路径。
+
+`1.3.1` 完成标准：
+
+- 全量 `mvn test` 通过，不引入新的测试失败。
+- 生产代码中不再有 `e.printStackTrace()`。
+- 生产代码中不再有 `SimpleDateFormat`（已替换为 `DateTimeFormatter`）。
+- HTTP 错误响应返回有意义的结构化内容（不再是空字符串）。
+- `netty-spring-webmvc` 至少有 15 个测试方法。
+- `JsonViewHandler` 中 `ObjectMapper` 为静态单例。
+
+`1.3.1` 不作为阻塞项的内容：
+
+- 新功能或 API 变更。
+- MVC `text/plain` 请求参数完整支持（评估后决定是否进入 `1.4.0`）。
+- MVC 数据校验框架集成（`RequestMappingResolver` 中的 TODO，可留给 `1.4.0` 或 `2.0.0`）。
+
+## `1.4.0` P7 Demo 与文档产品化版本规划
+
+目标：把项目从"框架能跑"升级到"新用户能快速理解并接入真实业务场景"。
+
+版本定位：
+
+- `1.4.0` 是 P7 产品化版本，重点是 demo 场景升级和文档完善。
+- 不引入核心架构调整，以展示现有能力为主。
+
+初步规划：
+
+1. **聊天室 demo**：支持用户昵称、加入/离开通知、在线用户列表、广播消息和私聊功能，展示 WebSocket 在真实协作场景中的完整用法。
+2. **API 使用指南文档**：面向业务开发者的分场景指南（只用 HTTP、HTTP + WebSocket、启用加密、自定义鉴权、指标监控接入）。
+3. **Spring Boot 3.x 兼容性评估**：调研 Jakarta namespace 迁移路径，评估双版本支持或大版本切换的成本。
+4. **Starter 集成测试增强**：补齐自定义 Bean 覆盖、开关组合禁用、多 Starter 混用等边缘装配场景。
+
+具体细节在 `1.3.1` 完成后再细化。
+
+## `1.2.2` 用户体验版本规划（已完成）
 
 目标：让一个第一次接触项目的开源用户，在不读源码、不翻历史 issue、不理解全部底层 Netty 细节的情况下，可以快速完成依赖接入、启动 demo、连上 WebSocket、发送消息、启用常见配置，并在出错时知道下一步该查什么。
 
@@ -262,11 +336,31 @@ P4.1 首批已完成：
 
 ### 代码里已经暴露出的下一阶段问题
 
-- **可观测性已完成核心链路**：`CloseReason` 枚举 + `WebSocketEventRecorder` + Micrometer `MeterBinder` 桥接 + `/netty/status` eventCounters 均已落地；后续可选扩展：handler 线程池指标、广播耗时直方图、Prometheus endpoint 演示。
-- **握手鉴权扩展点已完成**：`WebSocketHandshakeInterceptor` 接口 + `auth-demo` profile 示例已可用。
-- **Demo 场景偏基础**：demo 已有首页入口、crypto 演示、Actuator metrics 和 auth 演示，但还不足以展示真实的聊天室/推送/订阅场景。
-- Starter 层集成测试覆盖面仍偏基础，后续需要补更多装配/兼容场景（特别是自定义 Bean、开关禁用组合）。
+**1.3.1 需修复的生产代码缺陷：**
+
+- `e.printStackTrace()` 在 `ServiceHandlerUtil.java`、`ClassUtil.java`、`DataBindUtil.java` 共 8 处生产代码中使用，绕过 SLF4J 日志框架。 **[HIGH]**
+- `SimpleDateFormat` 在 6 处多线程环境中使用（`ServiceHandlerUtil`、`ServiceHandler`、`JsonViewHandler`、`Cookie`、`DataBindUtil`），存在线程安全隐患。 **[HIGH]**
+- `ServiceHandlerUtil.errorResponseHtml()` 和 `errorResponseJson()` 返回空字符串，HTTP 错误时用户得到空白页面。 **[HIGH]**
+- `JsonViewHandler` 每次请求创建 `new ObjectMapper()` + `new SimpleDateFormat()`，性能浪费。 **[MEDIUM]**
+- `HttpErrorMessage.timestrap` 字段名拼写错误，应为 `timestamp`。 **[LOW]**
+- `ServiceHandlerUtil` 中 POST `text/plain` 请求参数无法解析；`IOException` 被静默吞掉无日志记录。 **[MEDIUM]**
+
+**1.3.1 需补齐的测试覆盖：**
+
+- `netty-spring-webmvc` 模块有 18 个源文件但仅 1 个测试方法（`DataBindUtilTest`），路由匹配、参数绑定、视图处理核心路径完全没有自动化覆盖。 **[HIGH]**
+- 三个 Starter 模块各有 5-6 个测试，缺少自定义 Bean 覆盖、开关组合禁用、多 Starter 混用等边缘装配场景。 **[MEDIUM]**
+
+**1.4.0 产品化方向：**
+
+- Demo 场景偏基础：demo 已有首页入口、crypto 演示、Actuator metrics 和 auth 演示，但还不足以展示真实的聊天室/推送/订阅场景。
+- API 使用指南缺失：面向业务开发者的分场景接入文档尚未建立。
 - 远期需要评估 Spring Boot 3.x / Jakarta namespace 迁移路径。
+
+**可观测性与鉴权（已完成）：**
+
+- `CloseReason` 枚举 + `WebSocketEventRecorder` + Micrometer `MeterBinder` 桥接 + `/netty/status` eventCounters 均已落地。
+- `WebSocketHandshakeInterceptor` 接口 + `auth-demo` profile 示例已可用。
+- 后续可选扩展：handler 线程池指标、广播耗时直方图、Prometheus endpoint 演示。
 
 ## 1.0.0 基线范围
 
@@ -482,27 +576,32 @@ P4.1 首批已完成：
 4. ~~暂停安全门禁后，优先推进 `P5`，补齐真正面向业务的 WebSocket 能力。~~ **已完成（1.2.0/1.2.1）**
 5. ~~`1.2.2` 用户体验增强。~~ **已完成（1.2.2）**
 6. ~~`1.2.3` 生产就绪代码质量审查。~~ **已完成（1.2.3）**
-7. **→ 当前阶段：`P6` 可观测与运维能力 + P5 遗留握手鉴权（目标 1.3.0）**
-8. `P7` demo 和文档体系持续补齐，随 P6 滚动完善。
-9. 远期 `2.0.0`：Spring Boot 3.x 迁移 + 企业安全版本。
+7. ~~`P6` 可观测与运维能力 + P5 遗留握手鉴权。~~ **已完成（1.3.0）**
+8. **→ 当前阶段：`1.3.1` 代码质量深度治理**（生产代码缺陷修复 + webmvc 测试补齐）
+9. `1.4.0` P7 demo 和文档产品化。
+10. 远期 `2.0.0`：Spring Boot 3.x 迁移 + 企业安全版本。
 
 ## 版本节奏建议
 
-- `1.0.0`：已发布基线，对应 `P0/P1/P2` 收口结果。
-- `1.0.1`：`P3.1`，先修 Starter 启动失败传播、补 Starter 最小集成测试和 demo smoke test。
-- `1.0.2`：已发布，完成 `P3.2` 的发布清单、异常 stop/startup failure 清理回归和 `1.0.x` 维护基线。
-- `1.1.0-RC2`：已从 P4/P4.1 稳定线发布，包含 resolver 延迟取 bean、`MessageSenderSupport` 构造注入去 `@Lazy`、`netty-spring-boot-autoconfigure` 共用模块抽取、MVC/WebSocket enable 开关接线、`MessageSender` 接口注入语义固化，以及 `server.netty.http.*` 子命名空间引入并兼容旧顶层配置键。
-- `1.1.0-RC1`：历史候选版本，仅用于承接 P4 已完成内容的预发布验收；定位为受控环境验证，不作为企业生产默认部署版本。
-- `1.1.0-RC2`：建议用于承接 `P4.1` 首批稳定性硬化后的候选验证，重点验证容量、失败路径、轻量管理端点、SBOM、Netty 依赖一致性和 CI 基础链路；暂不要求安全扫描/漏洞 triage 闭环。
-- `1.1.0`：目标功能正式版本，完成 Starter 收敛、配置模型统一和稳定性硬化。这一阶段触及配置入口、自动配置结构、兼容模型和发布门禁，适合进入新的 minor 版本。
-- `1.2.0`：已发布的正式版本，`P5` 首批 WebSocket 产品能力增强已落地，心跳/空闲断线第一刀已完成，应用层消息加密扩展点和 AES-GCM 首版实现已完成。
-- `1.2.1`：目标功能/稳定性正式版，承接 URI/session 粒度 crypto 策略、密钥轮换基础示例、浏览器端 crypto demo、WebSocket runtime stats 与对应配置文档/回归测试；发布条件见本文 `1.2.1 正式版门槛`；不承诺企业安全准入，不混入 Micrometer/Actuator 或大规模 demo 重写。
-- `1.2.2`：用户体验正式版，通过标准见本文 `1.2.2 用户体验版本规划`；不混入企业安全准入和完整 P6 指标体系。
-- `1.2.3`：**已发布**。生产就绪代码质量版本，集中修复 ByteBuf 安全、session 死循环、心跳检测、RejectedExecutionException 泄漏、线程可见性、Spring Boot 自动配置规范化和废弃 API 替换共 10 项。
-- `1.3.0-SNAPSHOT`：建议作为下一条开发线，正式承接 P6 可观测性（Micrometer/Actuator 指标、关闭原因维度、统一事件模型）和 P5 遗留的握手鉴权扩展。
-- `1.3.0`：`P6`，可观测与运维能力建设正式版。
-- `1.3.x`：`P7`，demo 和文档体系持续补齐，跟随能力版本滚动完善，而不是等到最后一次性补文档。
-- `2.0.0`（远期）：企业安全版本 + Spring Boot 3.x 适配，Dependency-Check/Dependabot 闭环、标准鉴权/CORS/TLS 策略、Jakarta namespace 迁移。
+已发布版本：
+
+| 版本 | 定位 | 对应阶段 |
+| --- | --- | --- |
+| `1.0.0` | 基线版本 | P0/P1/P2 |
+| `1.0.1` | Starter 启动失败修复 | P3.1 |
+| `1.0.2` | 工程化治理收口 | P3.2 |
+| `1.1.0-RC2` | Starter 收敛与配置统一候选 | P4/P4.1 |
+| `1.2.0` | WebSocket 产品能力正式版 | P5 |
+| `1.2.1` | 功能/稳定性正式版 | P5.x |
+| `1.2.2` | 用户体验增强版 | 开源接入优化 |
+| `1.2.3` | 生产就绪代码质量版 | 核心缺陷修复 |
+| `1.3.0` | **可观测与运维能力正式版** | **P6（当前推荐版本）** |
+
+后续版本规划：
+
+- **`1.3.1`（下一版本）**：代码质量深度治理。修复 `e.printStackTrace()`（8 处）、`SimpleDateFormat` 线程安全（6 处）、HTTP 空错误响应、`ObjectMapper` 每请求重建、字段拼写错误；补齐 `netty-spring-webmvc` 测试覆盖。
+- **`1.4.0`**：P7 Demo 与文档产品化。聊天室 demo、API 使用指南、Starter 集成测试增强。
+- **`2.0.0`（远期）**：Spring Boot 3.x / Jakarta namespace 迁移 + 企业安全版本（Dependency-Check/Dependabot 闭环、标准鉴权/CORS/TLS 策略）。
 
 ## 近期建议拆成四个小里程碑
 

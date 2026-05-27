@@ -187,14 +187,10 @@ public class TokenHandshakeInterceptor implements WebSocketHandshakeInterceptor 
 
 ## 当前阶段
 
-- `P0` 工程基线：已完成。
-- `P1` WebSocket 正确性修复：已完成。
-- `P2` WebSocket 并发与稳定性：已完成，核心限流、线程池配置化、广播背压、错误链路统一、运行时统计、停机时 active session 优雅关闭、重复 start/stop 收口、广播/停机交叉回归、MessageSenderSupport 重启后缓存刷新与停机联动关闭已落地。
-- 当前稳定版本包括 `1.0.2` 维护线、已发布的 `1.2.3` 生产就绪代码质量版本；`1.3.0` 正在开发中。
-- `P6` 核心已完成：关闭原因维度化（`CloseReason` 枚举 + `WebSocketEventRecorder` 线程安全计数器）、握手鉴权扩展点（`WebSocketHandshakeInterceptor` 接口）已落地，Micrometer 可选指标桥接（`NettyWebSocketMeterBinder` + `NettyHttpMeterBinder`）已完成，管理端点已包含 eventCounters，demo 已增加 Actuator 指标端点和 `auth-demo` token 鉴权示例。
-- `P4` 已完成主要目标：mapping resolver 延迟获取 controller bean，移除业务侧对 `@Lazy MessageSenderSupport` 的依赖；抽出共用 `netty-spring-boot-autoconfigure` 模块，收敛三套 Starter 里重复的 `nettyServer + properties` 自动装配骨架；把 `MessageSenderSupport` 自动配置并回公共 autoconfigure，同时补上 `server.netty.mvc.enable` / `server.netty.websocket.enable` 开关，明确 starter 场景优先按 `MessageSender` 接口注入，并把 HTTP/file/gzip/ssl 配置收敛到 `server.netty.http.*` 且保留旧键兼容。
-- `P4.1` 已继续推进生产准入硬化：静态文件根目录逃逸保护、HTTP 聚合/解码/超时边界配置化、TLS 证书/协议/套件配置、WebSocket Origin 白名单、MVC/静态文件写失败关闭、HTTP 失败路径运行时统计、内置 health/status 管理端点、更保守的 handler 默认线程/permit、handler/sender 线程池配置校验、Netty BOM 版本对齐、`netty-all` 依赖瘦身，以及 SBOM/Dependency-Check 供应链门禁入口。
-- `P5` 首批能力已完成：`MessageSender` 新增会话查询快照 API，并提供 `sendToSession()` / `broadcast()` / `closeSession()` / `closeSessions()` 语义化入口；`MessageSession` 新增 URI、path、query 参数和 header 读取 API；消息 handler 可直接绑定 `String`、JSON 业务对象、`ByteBuf` 或 `byte[]`；发送侧新增 `JsonMessage`；P5.x 已完成 WebSocket 心跳和空闲断线第一刀治理，并接入默认关闭的应用层消息加密扩展点和内置 AES-GCM 首版实现；`1.2.1` 已补 URI/session 粒度 crypto 策略、密钥轮换示例、浏览器端加密 demo，并已开始 P6 轻量可观测第一刀，把 WebSocket mapping 数和活跃 session 数接入 `/netty/status`。
+- **当前推荐版本：`1.3.0`**（P6 可观测与运维能力正式版）。
+- `P0` 至 `P6` 全部阶段已完成，项目进入质量深化与产品化阶段。
+- `P6` 已完成：关闭原因维度化（`CloseReason` 枚举 + `WebSocketEventRecorder`）、握手鉴权扩展点（`WebSocketHandshakeInterceptor`）、Micrometer 指标桥接（`NettyWebSocketMeterBinder` + `NettyHttpMeterBinder`）、生产部署建议文档。
+- 下一步：`1.3.1` 代码质量深度治理（遗留代码缺陷修复 + webmvc 测试补齐），`1.4.0` P7 Demo 与文档产品化。
 
 ## 文档
 
