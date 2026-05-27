@@ -203,6 +203,7 @@ public class TokenHandshakeInterceptor implements WebSocketHandshakeInterceptor 
 - [1.2.1 发布说明](docs/release-notes-1.2.1.md)
 - [1.2.2 发布说明](docs/release-notes-1.2.2.md)
 - [1.2.3 发布说明](docs/release-notes-1.2.3.md)
+- [1.3.0 发布说明](docs/release-notes-1.3.0.md)
 - [依赖治理与供应链门禁](docs/dependency-governance.md)
 - [Netty 配置说明](docs/netty-configuration.md)
 - [WebSocket 配置说明](docs/websocket-configuration.md)
