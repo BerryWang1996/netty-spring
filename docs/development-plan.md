@@ -9,7 +9,7 @@
 - `1.2.3` 集中修复了影响生产稳定性的核心代码缺陷：ByteBuf 生命周期安全、WebSocket session 创建死循环防护、心跳检测逻辑完善、线程可见性保证、Spring Boot 自动配置规范化和废弃 API 替换。
 - `1.1.0-RC2` 发布线已具备框架功能候选基础：P4 配置边界、自动配置兼容性、`@Lazy` 依赖消除、`P4.1` 首批容量、失败路径、运行时统计、内置 health/status、线程池校验、SBOM/Dependency-Check 入口、Netty BOM 版本对齐、`netty-all` 瘦身和 GitHub Actions 门禁均已推进，并已在本地正常 Maven 环境完成全量 reactor `mvn test` 复验。
 - 按当前决策，后续暂时不把安全问题作为主线阻塞项：Dependency-Check、Dependabot、安全扩展、CORS/鉴权/TLS 策略等进入冻结 backlog，后续需要企业生产安全版时再集中处理。
-- **P6 正在开发中**：关闭原因维度化（`CloseReason` 枚举 + `WebSocketEventRecorder` 事件计数器）、握手鉴权扩展点（`WebSocketHandshakeInterceptor` 接口）已完成核心实现并接入 `MessageMappingResolver` 和 `DefaultMessageSender`，所有 close path 均已标注具体 `CloseReason`，管理端点 `/netty/status` 已包含 eventCounters。下一步：Micrometer 可选指标桥接、demo 升级和文档更新。
+- **P6 核心已完成**：关闭原因维度化（`CloseReason` 枚举 + `WebSocketEventRecorder` 事件计数器）、握手鉴权扩展点（`WebSocketHandshakeInterceptor` 接口）已完成核心实现并接入 `MessageMappingResolver` 和 `DefaultMessageSender`，所有 close path 均已标注具体 `CloseReason`，管理端点 `/netty/status` 已包含 eventCounters；Micrometer 可选指标桥接已完成（`NettyWebSocketMeterBinder` + `NettyHttpMeterBinder` + `NettyMicrometerConfigure` 条件装配），demo 已增加 `auth-demo` profile 的 token 鉴权拦截器示例和 Actuator 指标端点。下一步：demo 聊天室升级、README 生产部署建议和 1.3.0 发布准备。
 
 ## 当前发版判断
 
@@ -104,11 +104,21 @@
 
 建议拆成四刀：
 
-1. **第一刀：Micrometer 指标接入**
-   - 新增 `netty-spring-boot-actuator` 可选模块（或在 autoconfigure 中条件装配）。
-   - 暴露核心指标：`netty.websocket.sessions.active`（活跃 session 数）、`netty.websocket.messages.received/sent`（收发计数）、`netty.websocket.handshake.total/rejected`（握手/拒绝计数）、`netty.http.requests.total/errors`（HTTP 请求计数）、`netty.handler.pool.active/queued`（线程池状态）。
-   - 指标注册通过 `MeterRegistry` 条件注入，无 Micrometer 依赖时自动退化为内置 runtime stats。
-   - **进度**：内置事件计数器已完成（`WebSocketEventRecorder`），Micrometer 桥接待开发。
+1. **第一刀：Micrometer 指标接入** ✅ 已完成
+   - 在 `netty-spring-boot-autoconfigure` 中通过 `@ConditionalOnClass(MeterRegistry.class)` 条件装配。
+   - `micrometer-core` 作为 optional 依赖，无 Micrometer 时自动退化为内置 runtime stats。
+   - `NettyWebSocketMeterBinder` 桥接 WebSocket 事件计数器到 Micrometer `MeterRegistry`，暴露指标：
+     - `netty.websocket.handshakes.total/success/rejected`（握手计数）
+     - `netty.websocket.messages.received/sent`（消息收发计数）
+     - `netty.websocket.sessions.closed`（tagged by `reason`，覆盖全部 15 种 `CloseReason`）
+     - `netty.websocket.sessions.active`（活跃 session 数 Gauge）
+     - `netty.websocket.mappings`（注册 mapping 数 Gauge）
+   - `NettyHttpMeterBinder` 桥接 HTTP 运行时计数器，暴露指标：
+     - `netty.http.response.write.failures`、`netty.http.static.rejected`、`netty.http.static.write.failures`
+     - `netty.http.idle.closes`、`netty.http.websocket.handshake.rejected`、`netty.http.websocket.origin.rejected`
+   - `NettyMicrometerConfigure` 自动注册两个 `MeterBinder` Bean，WebSocket 部分额外条件要求 websocket 模块在 classpath。
+   - Demo 已添加 `spring-boot-starter-actuator`，Actuator metrics 端点在 `localhost:8081/actuator/metrics` 可访问。
+   - 已有完整单元测试覆盖。
 
 2. **第二刀：关闭原因维度化** ✅ 已完成
    - 新增 `CloseReason` 枚举（15 个关闭原因，含 `client_close`、`heartbeat_timeout`、`transport_error`、`frame_too_large`、`decrypt_failure`、`write_failure`、`channel_not_writable` 等）。
@@ -118,13 +128,13 @@
    - `/netty/status` 管理端点已包含 `eventCounters`（通过 `WebSocketRuntimeStats` 聚合输出）。
    - 已有完整单元测试覆盖。
 
-3. **第三刀：握手鉴权扩展点（P5 遗留）** ✅ 已完成核心实现
+3. **第三刀：握手鉴权扩展点（P5 遗留）** ✅ 已完成
    - 新增 `WebSocketHandshakeInterceptor` 接口，支持 `beforeHandshake(FullHttpRequest, uri)` 和 `rejectionReason()` 方法。
    - 拦截器在 Origin 校验之后、`ON_HANDSHAKE` 回调之前执行；返回 `false` 返回 HTTP 403。
    - `MessageMappingSupporter` 自动从 ApplicationContext 发现 interceptor Bean 并注入所有 resolver。
    - 拦截器异常自动捕获并返回 HTTP 500，不影响服务端稳定性。
    - 已有 interceptor 拒绝/异常/通过三种场景的单元测试。
-   - **待完成**：demo 增加 token 鉴权示例，autoconfigure 中增加条件装配文档。
+   - Demo 增加 `auth-demo` profile 的 token 鉴权拦截器示例（`WebSocketAuthDemoConfiguration`），支持 query parameter 和 Authorization Bearer header 两种传参方式。
 
 4. **第四刀：运行时诊断与 demo 升级（P7 首批）**
    - 为常见运维场景（连接上限、线程池满、心跳超时、crypto 失败）增加结构化诊断日志。
@@ -252,9 +262,9 @@ P4.1 首批已完成：
 
 ### 代码里已经暴露出的下一阶段问题
 
-- **可观测性核心能力已落地，Micrometer 桥接待开发**：`CloseReason` 枚举 + `WebSocketEventRecorder` + `WebSocketEventStats` 已为所有 close path 提供维度化计数器，`/netty/status` 管理端点已输出 eventCounters；下一步需要将这些内置计数器桥接到 Micrometer `MeterRegistry`，实现标准 Actuator 指标输出。
-- **握手鉴权扩展点已完成核心实现**：`WebSocketHandshakeInterceptor` 接口已可用，业务侧注册 Spring Bean 即可在握手前校验 token/session/IP；下一步需要补 demo token 鉴权示例和文档说明。
-- **Demo 场景偏基础**：demo 已有首页入口和 crypto 演示，但还不足以展示真实的聊天室/推送/订阅场景。
+- **可观测性已完成核心链路**：`CloseReason` 枚举 + `WebSocketEventRecorder` + Micrometer `MeterBinder` 桥接 + `/netty/status` eventCounters 均已落地；后续可选扩展：handler 线程池指标、广播耗时直方图、Prometheus endpoint 演示。
+- **握手鉴权扩展点已完成**：`WebSocketHandshakeInterceptor` 接口 + `auth-demo` profile 示例已可用。
+- **Demo 场景偏基础**：demo 已有首页入口、crypto 演示、Actuator metrics 和 auth 演示，但还不足以展示真实的聊天室/推送/订阅场景。
 - Starter 层集成测试覆盖面仍偏基础，后续需要补更多装配/兼容场景（特别是自定义 Bean、开关禁用组合）。
 - 远期需要评估 Spring Boot 3.x / Jakarta namespace 迁移路径。
 

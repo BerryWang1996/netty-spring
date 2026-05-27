@@ -73,6 +73,26 @@ Windows PowerShell 可使用：
 
 然后访问 `http://localhost:8080/ws/crypto-demo`。
 
+启用握手鉴权 demo：
+
+```bash
+./mvnw -pl demo-netty-web-spring-boot-starter -am spring-boot:run -Dspring-boot.run.profiles=auth-demo
+```
+
+WebSocket 连接时需要携带 `?token=demo-token-2026` 参数或 `Authorization: Bearer demo-token-2026` 头。
+
+### Micrometer / Actuator 指标
+
+Demo 已集成 `spring-boot-starter-actuator`，启动后可在 `http://localhost:8081/actuator/metrics` 查看所有指标。Netty 运行时指标自动注册，包括：
+
+- `netty.websocket.handshakes.total/success/rejected` — 握手计数
+- `netty.websocket.messages.received/sent` — 消息收发计数
+- `netty.websocket.sessions.closed` (tagged by `reason`) — 关闭计数
+- `netty.websocket.sessions.active` — 活跃 session 数
+- `netty.http.response.write.failures` 等 — HTTP 失败路径计数
+
+业务项目只需引入 `micrometer-core`（或 `spring-boot-starter-actuator`），指标桥接自动激活，无需额外配置。
+
 ### 常见排障速查
 
 - `WebSocket message uri "..." is not registered`：检查 `@MessageMapping` 的 URI 是否和发送侧一致，并确认 `server.netty.websocket.enable=true`。
@@ -81,6 +101,8 @@ Windows PowerShell 可使用：
 - `Forbidden by origin`：浏览器 `Origin` 不在白名单里，补充 `server.netty.websocket.allowed-origins`。
 - `Failed to deserialize websocket text payload`：handler 绑定 JSON 对象时入站文本不是目标结构，先改成 `String` 参数或补 `ON_ERROR` 查看坏 payload。
 - `Unencrypted websocket frame rejected by crypto policy`：crypto 已启用但客户端仍发明文，按 AES-GCM envelope 发送，或用 `crypto.include-uris` / `exclude-uris` 做灰度。
+- `Forbidden by handshake interceptor`：注册了 `WebSocketHandshakeInterceptor` Bean 但握手未通过验证，检查 token/header 是否正确传递。
+- `Expected at most one WebSocketHandshakeInterceptor bean`：容器中存在多个 interceptor Bean，合并为一个或移除多余的。
 
 ## 当前阶段
 
@@ -88,7 +110,7 @@ Windows PowerShell 可使用：
 - `P1` WebSocket 正确性修复：已完成。
 - `P2` WebSocket 并发与稳定性：已完成，核心限流、线程池配置化、广播背压、错误链路统一、运行时统计、停机时 active session 优雅关闭、重复 start/stop 收口、广播/停机交叉回归、MessageSenderSupport 重启后缓存刷新与停机联动关闭已落地。
 - 当前稳定版本包括 `1.0.2` 维护线、已发布的 `1.2.3` 生产就绪代码质量版本；`1.3.0` 正在开发中。
-- `P6` 正在开发中：关闭原因维度化（`CloseReason` 枚举 + `WebSocketEventRecorder` 线程安全计数器）、握手鉴权扩展点（`WebSocketHandshakeInterceptor` 接口）已完成核心实现，管理端点已包含 eventCounters；Micrometer 桥接待开发。
+- `P6` 核心已完成：关闭原因维度化（`CloseReason` 枚举 + `WebSocketEventRecorder` 线程安全计数器）、握手鉴权扩展点（`WebSocketHandshakeInterceptor` 接口）已落地，Micrometer 可选指标桥接（`NettyWebSocketMeterBinder` + `NettyHttpMeterBinder`）已完成，管理端点已包含 eventCounters，demo 已增加 Actuator 指标端点和 `auth-demo` token 鉴权示例。
 - `P4` 已完成主要目标：mapping resolver 延迟获取 controller bean，移除业务侧对 `@Lazy MessageSenderSupport` 的依赖；抽出共用 `netty-spring-boot-autoconfigure` 模块，收敛三套 Starter 里重复的 `nettyServer + properties` 自动装配骨架；把 `MessageSenderSupport` 自动配置并回公共 autoconfigure，同时补上 `server.netty.mvc.enable` / `server.netty.websocket.enable` 开关，明确 starter 场景优先按 `MessageSender` 接口注入，并把 HTTP/file/gzip/ssl 配置收敛到 `server.netty.http.*` 且保留旧键兼容。
 - `P4.1` 已继续推进生产准入硬化：静态文件根目录逃逸保护、HTTP 聚合/解码/超时边界配置化、TLS 证书/协议/套件配置、WebSocket Origin 白名单、MVC/静态文件写失败关闭、HTTP 失败路径运行时统计、内置 health/status 管理端点、更保守的 handler 默认线程/permit、handler/sender 线程池配置校验、Netty BOM 版本对齐、`netty-all` 依赖瘦身，以及 SBOM/Dependency-Check 供应链门禁入口。
 - `P5` 首批能力已完成：`MessageSender` 新增会话查询快照 API，并提供 `sendToSession()` / `broadcast()` / `closeSession()` / `closeSessions()` 语义化入口；`MessageSession` 新增 URI、path、query 参数和 header 读取 API；消息 handler 可直接绑定 `String`、JSON 业务对象、`ByteBuf` 或 `byte[]`；发送侧新增 `JsonMessage`；P5.x 已完成 WebSocket 心跳和空闲断线第一刀治理，并接入默认关闭的应用层消息加密扩展点和内置 AES-GCM 首版实现；`1.2.1` 已补 URI/session 粒度 crypto 策略、密钥轮换示例、浏览器端加密 demo，并已开始 P6 轻量可观测第一刀，把 WebSocket mapping 数和活跃 session 数接入 `/netty/status`。

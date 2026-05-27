@@ -143,8 +143,20 @@ public class DemoHomeController {
                     <a class="card" href="/netty/status">
                         <span class="eyebrow">Runtime</span>
                         <h2>Status snapshot</h2>
-                        <p>Read handler, HTTP, and WebSocket runtime counters while debugging locally.</p>
+                        <p>Read handler, HTTP, WebSocket runtime counters and event counters while debugging.</p>
                         <code>GET /netty/status</code>
+                    </a>
+                    <a class="card" href="http://localhost:8081/actuator/metrics">
+                        <span class="eyebrow">Micrometer</span>
+                        <h2>Actuator metrics</h2>
+                        <p>Netty runtime counters are bridged to Micrometer when spring-boot-starter-actuator is present.</p>
+                        <code>:8081/actuator/metrics</code>
+                    </a>
+                    <a class="card" href="#">
+                        <span class="eyebrow">Auth</span>
+                        <h2>Token interceptor</h2>
+                        <p>Run with --spring.profiles.active=auth-demo. Connect with ?token=demo-token-2026.</p>
+                        <code>auth-demo profile</code>
                     </a>
                 </div>
             </main>
