@@ -47,7 +47,7 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <maven.compiler.release>${java.version}</maven.compiler.release>
         <!-- runtime  -->
-        <netty.version>4.1.124.Final</netty.version>
+        <netty.version>4.1.134.Final</netty.version>
         <spring-boot.version>2.7.18</spring-boot.version>
         <!-- activation -->
         <activation.version>1.1.1</activation.version>
