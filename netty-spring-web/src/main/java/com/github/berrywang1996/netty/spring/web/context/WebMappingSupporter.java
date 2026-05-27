@@ -262,10 +262,16 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
             return WebSocketRuntimeStats.empty();
         }
         int activeSessionCount = 0;
+        Map<String, Object> aggregatedEventCounters = null;
         for (AbstractMappingResolver resolver : this.webSocketMappingResolverMap.values()) {
             activeSessionCount += Math.max(0, resolver.getActiveSessionCount());
+            Map<String, Object> resolverCounters = resolver.getEventCounters();
+            if (!resolverCounters.isEmpty()) {
+                aggregatedEventCounters = resolverCounters;
+            }
         }
-        return new WebSocketRuntimeStats(this.webSocketMappingResolverMap.size(), activeSessionCount);
+        return new WebSocketRuntimeStats(this.webSocketMappingResolverMap.size(), activeSessionCount,
+                aggregatedEventCounters);
     }
 
     public void shutdown() {

@@ -4,8 +4,12 @@ import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitter;
 import com.github.berrywang1996.netty.spring.web.context.HttpRuntimeRecorder;
 import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
+import com.github.berrywang1996.netty.spring.web.websocket.consts.CloseReason;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
+import com.github.berrywang1996.netty.spring.web.websocket.context.WebSocketEventRecorder;
+import com.github.berrywang1996.netty.spring.web.websocket.context.WebSocketEventStats;
+import com.github.berrywang1996.netty.spring.web.websocket.context.WebSocketHandshakeInterceptor;
 import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoPolicy;
 import io.netty.buffer.ByteBuf;
@@ -1054,6 +1058,362 @@ class MessageMappingResolverTest {
             frame.release();
             testChannel.finish();
         }
+    }
+
+    // ---- P6 Event Recording Tests ----
+
+    @Test
+    void eventRecorderCountsHandshakeAndCloseOnClientClose() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        WebSocketEventRecorder recorder = new WebSocketEventRecorder();
+        resolver.setEventRecorder(recorder);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        WebSocketEventStats stats = recorder.getStats();
+        assertEquals(1, stats.getHandshakeTotal());
+        assertEquals(1, stats.getHandshakeSuccess());
+
+        CloseWebSocketFrame closeFrame = new CloseWebSocketFrame(1000, "bye");
+        try {
+            resolver.resolve(testChannel.ctx, closeFrame);
+
+            stats = recorder.getStats();
+            assertEquals(1, stats.getCloseCount(CloseReason.CLIENT_CLOSE));
+            assertEquals(1, stats.getTotalCloses());
+        } finally {
+            closeFrame.release();
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void eventRecorderCountsMessagesReceivedOnTextFrame() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.TEXT_MESSAGE, method(endpoint, "onTextPayload", String.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        WebSocketEventRecorder recorder = new WebSocketEventRecorder();
+        resolver.setEventRecorder(recorder);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        TextWebSocketFrame frame1 = new TextWebSocketFrame("hello");
+        TextWebSocketFrame frame2 = new TextWebSocketFrame("world");
+        try {
+            resolver.resolve(testChannel.ctx, frame1);
+            resolver.resolve(testChannel.ctx, frame2);
+
+            WebSocketEventStats stats = recorder.getStats();
+            assertEquals(2, stats.getMessagesReceived());
+        } finally {
+            frame1.release();
+            frame2.release();
+            resolver.onChannelInactive(testChannel.ctx);
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void eventRecorderCountsChannelInactiveClose() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        WebSocketEventRecorder recorder = new WebSocketEventRecorder();
+        resolver.setEventRecorder(recorder);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        resolver.onChannelInactive(testChannel.ctx);
+
+        WebSocketEventStats stats = recorder.getStats();
+        assertEquals(1, stats.getCloseCount(CloseReason.CHANNEL_INACTIVE));
+        assertEquals(1, stats.getTotalCloses());
+        testChannel.finish();
+    }
+
+    @Test
+    void eventRecorderCountsShutdownClose() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        WebSocketEventRecorder recorder = new WebSocketEventRecorder();
+        resolver.setEventRecorder(recorder);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        resolver.shutdown();
+        drainChannel(testChannel.channel);
+
+        WebSocketEventStats stats = recorder.getStats();
+        assertEquals(1, stats.getCloseCount(CloseReason.SERVER_SHUTDOWN));
+        assertEquals(1, stats.getTotalCloses());
+        testChannel.finish();
+    }
+
+    @Test
+    void eventRecorderCountsTransportErrorClose() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        methods.put(MessageType.ON_ERROR, method(endpoint, "onError", HttpRequest.class, MessageSession.class, Exception.class));
+        methods.put(MessageType.ON_CLOSE, method(endpoint, "onClose", CloseWebSocketFrame.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        WebSocketEventRecorder recorder = new WebSocketEventRecorder();
+        resolver.setEventRecorder(recorder);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        resolver.resolveException(testChannel.ctx, new IllegalStateException("transport error"));
+
+        WebSocketEventStats stats = recorder.getStats();
+        assertEquals(1, stats.getCloseCount(CloseReason.TRANSPORT_ERROR));
+        assertEquals(1, stats.getTotalCloses());
+        testChannel.finish();
+    }
+
+    @Test
+    void eventRecorderCountsFrameTooLargeClose() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        methods.put(MessageType.ON_ERROR, method(endpoint, "onError", HttpRequest.class, MessageSession.class, Exception.class));
+        methods.put(MessageType.ON_CLOSE, method(endpoint, "onClose", CloseWebSocketFrame.class, MessageSession.class));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setMaxFramePayloadLength(4);
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint, properties, null);
+        WebSocketEventRecorder recorder = new WebSocketEventRecorder();
+        resolver.setEventRecorder(recorder);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        TextWebSocketFrame frame = new TextWebSocketFrame("hello");
+        resolver.resolve(testChannel.ctx, frame);
+        frame.release();
+
+        WebSocketEventStats stats = recorder.getStats();
+        assertEquals(1, stats.getCloseCount(CloseReason.FRAME_TOO_LARGE));
+        assertEquals(1, stats.getTotalCloses());
+        testChannel.finish();
+    }
+
+    @Test
+    void eventRecorderCountsHandshakeFailure() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setMaxConnections(1);
+        Semaphore connectionSemaphore = new Semaphore(1);
+        MessageMappingResolver resolver =
+                new MessageMappingResolver("/ws/test", methods, endpoint, properties, connectionSemaphore);
+        WebSocketEventRecorder recorder = new WebSocketEventRecorder();
+        resolver.setEventRecorder(recorder);
+        TestChannel testChannel = new TestChannel(new FailingHandshakeWriteHandler());
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        testChannel.channel.runPendingTasks();
+
+        WebSocketEventStats stats = recorder.getStats();
+        assertEquals(1, stats.getHandshakeTotal());
+        assertEquals(0, stats.getHandshakeSuccess());
+        assertEquals(1, stats.getCloseCount(CloseReason.HANDSHAKE_FAILURE));
+
+        request.release();
+        testChannel.finish();
+    }
+
+    @Test
+    void handshakeInterceptorRejectsConnection() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        HttpRuntimeRecorder httpRecorder = new HttpRuntimeRecorder();
+        resolver.setHttpRuntimeRecorder(httpRecorder);
+        WebSocketEventRecorder recorder = new WebSocketEventRecorder();
+        resolver.setEventRecorder(recorder);
+        resolver.setHandshakeInterceptor(new WebSocketHandshakeInterceptor() {
+            @Override
+            public boolean beforeHandshake(FullHttpRequest request, String uri) {
+                return false;
+            }
+
+            @Override
+            public String rejectionReason() {
+                return "Invalid token";
+            }
+        });
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+
+        Object outbound = testChannel.channel.readOutbound();
+        try {
+            assertTrue(outbound instanceof FullHttpResponse);
+            assertEquals(FORBIDDEN, ((FullHttpResponse) outbound).status());
+            String body = ((FullHttpResponse) outbound).content().toString(CharsetUtil.UTF_8);
+            assertTrue(body.contains("Invalid token"));
+            assertTrue(resolver.getSessionMap().isEmpty());
+            assertEquals(0, endpoint.connectedCount);
+        } finally {
+            ReferenceCountUtil.release(outbound);
+            request.release();
+            testChannel.finish();
+        }
+
+        WebSocketEventStats stats = recorder.getStats();
+        assertEquals(1, stats.getHandshakeTotal());
+        assertEquals(0, stats.getHandshakeSuccess());
+        assertEquals(1, stats.getHandshakeRejectedByInterceptor());
+    }
+
+    @Test
+    void handshakeInterceptorExceptionRejectsConnection() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/test", new EnumMap<>(MessageType.class), endpoint);
+        HttpRuntimeRecorder httpRecorder = new HttpRuntimeRecorder();
+        resolver.setHttpRuntimeRecorder(httpRecorder);
+        WebSocketEventRecorder recorder = new WebSocketEventRecorder();
+        resolver.setEventRecorder(recorder);
+        resolver.setHandshakeInterceptor(new WebSocketHandshakeInterceptor() {
+            @Override
+            public boolean beforeHandshake(FullHttpRequest request, String uri) {
+                throw new RuntimeException("interceptor exploded");
+            }
+        });
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+
+        Object outbound = testChannel.channel.readOutbound();
+        try {
+            assertTrue(outbound instanceof FullHttpResponse);
+            assertEquals(INTERNAL_SERVER_ERROR, ((FullHttpResponse) outbound).status());
+        } finally {
+            ReferenceCountUtil.release(outbound);
+            request.release();
+            testChannel.finish();
+        }
+
+        WebSocketEventStats stats = recorder.getStats();
+        assertEquals(1, stats.getHandshakeTotal());
+        assertEquals(1, stats.getHandshakeRejectedByInterceptor());
+    }
+
+    @Test
+    void handshakeInterceptorAllowsConnectionWhenReturnsTrue() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        WebSocketEventRecorder recorder = new WebSocketEventRecorder();
+        resolver.setEventRecorder(recorder);
+        resolver.setHandshakeInterceptor(new WebSocketHandshakeInterceptor() {
+            @Override
+            public boolean beforeHandshake(FullHttpRequest request, String uri) {
+                return true;
+            }
+        });
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        try {
+            resolver.resolve(testChannel.ctx, request);
+            Object handshakeResponse = testChannel.channel.readOutbound();
+            ReferenceCountUtil.release(handshakeResponse);
+            drainChannel(testChannel.channel);
+
+            assertEquals(1, endpoint.connectedCount);
+            assertEquals(1, resolver.getSessionMap().size());
+
+            WebSocketEventStats stats = recorder.getStats();
+            assertEquals(1, stats.getHandshakeTotal());
+            assertEquals(1, stats.getHandshakeSuccess());
+            assertEquals(0, stats.getHandshakeRejectedByInterceptor());
+        } finally {
+            request.release();
+            resolver.onChannelInactive(testChannel.ctx);
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void eventCountersMapIncludesAllMetrics() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        WebSocketEventRecorder recorder = new WebSocketEventRecorder();
+        resolver.setEventRecorder(recorder);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        resolver.onChannelInactive(testChannel.ctx);
+
+        Map<String, Object> counters = resolver.getEventCounters();
+        assertEquals(1L, counters.get("handshakeTotal"));
+        assertEquals(1L, counters.get("handshakeSuccess"));
+        assertEquals(0L, counters.get("handshakeRejectedByInterceptor"));
+        assertEquals(0L, counters.get("messagesReceived"));
+        assertEquals(0L, counters.get("messagesSent"));
+        assertEquals(1L, counters.get("totalCloses"));
+        @SuppressWarnings("unchecked")
+        Map<String, Long> closesByReason = (Map<String, Long>) counters.get("closesByReason");
+        assertNotNull(closesByReason);
+        assertEquals(1L, closesByReason.get("channel_inactive"));
+        testChannel.finish();
     }
 
     private static Method method(Object target, String methodName, Class<?>... parameterTypes) throws Exception {

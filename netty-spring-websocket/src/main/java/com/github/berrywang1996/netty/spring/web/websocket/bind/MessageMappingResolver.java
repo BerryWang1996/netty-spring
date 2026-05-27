@@ -23,8 +23,12 @@ import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitterAware;
 import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
+import com.github.berrywang1996.netty.spring.web.websocket.consts.CloseReason;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
+import com.github.berrywang1996.netty.spring.web.websocket.context.WebSocketEventRecorder;
+import com.github.berrywang1996.netty.spring.web.websocket.context.WebSocketEventStats;
+import com.github.berrywang1996.netty.spring.web.websocket.context.WebSocketHandshakeInterceptor;
 import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.crypto.MessageCryptoPolicy;
 import io.netty.buffer.ByteBuf;
@@ -47,6 +51,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -104,6 +109,10 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     private final MessageCryptoPolicy messageCryptoPolicy;
 
     private volatile HandlerSubmitter handlerSubmitter;
+
+    private volatile WebSocketEventRecorder eventRecorder = WebSocketEventRecorder.noop();
+
+    private volatile WebSocketHandshakeInterceptor handshakeInterceptor;
 
     public MessageMappingResolver(String url, Map<MessageType, Method> methods, Object invokeRef) {
         this(url, methods, invokeRef, null, null);
@@ -197,11 +206,16 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (msg instanceof FullHttpRequest) {
 
             FullHttpRequest request = (FullHttpRequest) msg;
+            eventRecorder.recordHandshakeAttempt();
             // check message request
             if (!isMessageRequestLegal(ctx, request)) {
                 return;
             }
             if (!isOriginAllowed(ctx, request)) {
+                return;
+            }
+            // check handshake interceptor
+            if (!checkHandshakeInterceptor(ctx, request)) {
                 return;
             }
             // on handshake
@@ -226,6 +240,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                         handleHandshakeFailure(pendingSession, future.cause());
                         return;
                     }
+                    eventRecorder.recordHandshakeSuccess();
                     registerSession(pendingSession);
                     startHeartbeat(pendingSession);
                     dispatchConnectedLifecycle(pendingSession);
@@ -250,6 +265,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                 return;
             }
             session.recordInboundActivity();
+            eventRecorder.recordMessageReceived();
 
             handleInboundFrame(frame, session);
         }
@@ -289,13 +305,19 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (!session.startClosing()) {
             return;
         }
+        eventRecorder.recordClose(CloseReason.CHANNEL_INACTIVE);
         dispatchInactiveCloseLifecycle(session);
     }
 
     public void closeSessionOnTransportError(MessageSession session, Throwable throwable) {
+        closeSessionOnTransportError(session, throwable, CloseReason.TRANSPORT_ERROR);
+    }
+
+    public void closeSessionOnTransportError(MessageSession session, Throwable throwable, CloseReason reason) {
         if (session == null || !session.startClosing()) {
             return;
         }
+        eventRecorder.recordClose(reason);
         removeSession(session);
         dispatchLifecycleTask("transportError", session, new Runnable() {
             @Override
@@ -405,6 +427,28 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         return false;
     }
 
+    private boolean checkHandshakeInterceptor(ChannelHandlerContext ctx, FullHttpRequest request) {
+        WebSocketHandshakeInterceptor interceptor = this.handshakeInterceptor;
+        if (interceptor == null) {
+            return true;
+        }
+        try {
+            if (!interceptor.beforeHandshake(request, getUrl())) {
+                eventRecorder.recordHandshakeRejectedByInterceptor();
+                String reason = interceptor.rejectionReason();
+                rejectWithHttp(ctx, request, HttpResponseStatus.FORBIDDEN,
+                        reason != null ? reason : "Forbidden by handshake interceptor");
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            eventRecorder.recordHandshakeRejectedByInterceptor();
+            log.warn("Handshake interceptor threw exception. uri={}", getUrl(), e);
+            rejectWithHttp(ctx, request, HttpResponseStatus.INTERNAL_SERVER_ERROR,
+                    "Handshake interceptor error");
+            return false;
+        }
+    }
 
     private static final int MAX_SESSION_ID_RETRIES = 5;
 
@@ -715,6 +759,26 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         return sessionMap.size();
     }
 
+    @Override
+    public Map<String, Object> getEventCounters() {
+        WebSocketEventStats stats = eventRecorder.getStats();
+        Map<String, Object> counters = new java.util.LinkedHashMap<>();
+        counters.put("handshakeTotal", stats.getHandshakeTotal());
+        counters.put("handshakeSuccess", stats.getHandshakeSuccess());
+        counters.put("handshakeRejectedByInterceptor", stats.getHandshakeRejectedByInterceptor());
+        counters.put("messagesReceived", stats.getMessagesReceived());
+        counters.put("messagesSent", stats.getMessagesSent());
+        counters.put("totalCloses", stats.getTotalCloses());
+        Map<String, Long> closesByReason = new java.util.LinkedHashMap<>();
+        for (Map.Entry<CloseReason, Long> entry : stats.getClosesByReason().entrySet()) {
+            if (entry.getValue() > 0) {
+                closesByReason.put(entry.getKey().getTag(), entry.getValue());
+            }
+        }
+        counters.put("closesByReason", closesByReason);
+        return Collections.unmodifiableMap(counters);
+    }
+
     public WebSocketFrame encryptOutboundFrame(MessageSession session, WebSocketFrame frame) throws Exception {
         if (!shouldEncryptFrame(session, frame)) {
             return frame;
@@ -743,7 +807,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         }
         CloseWebSocketFrame closeFrame = new CloseWebSocketFrame(statusCode, reasonText == null ? "" : reasonText);
         try {
-            return closeSession(session, closeFrame, true);
+            return closeSession(session, closeFrame, true, CloseReason.API_CLOSE);
         } finally {
             ReferenceCountUtil.release(closeFrame);
         }
@@ -810,7 +874,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
 
     private void handleInboundDecodeFailure(WebSocketFrame frame, MessageSession session, Exception exception) {
         if (isCryptoEnabledForSession(session) && shouldCloseOnDecryptFailure()) {
-            closeSessionOnTransportError(session, exception);
+            closeSessionOnTransportError(session, exception, CloseReason.DECRYPT_FAILURE);
             return;
         }
         handleLifecycleException(frame, session, exception);
@@ -818,7 +882,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
 
     private void dispatchInboundFrame(WebSocketFrame frame, MessageSession session) {
         if (frame instanceof CloseWebSocketFrame) {
-            closeSession(session, (CloseWebSocketFrame) frame, true);
+            closeSession(session, (CloseWebSocketFrame) frame, true, CloseReason.CLIENT_CLOSE);
         } else if (frame instanceof PingWebSocketFrame) {
             try {
                 onPing((PingWebSocketFrame) frame, session);
@@ -954,7 +1018,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                 session.getSessionId(),
                 frameLength,
                 maxFramePayloadLength);
-        closeSessionOnTransportErrorInline(session, exception);
+        closeSessionOnTransportErrorInline(session, exception, CloseReason.FRAME_TOO_LARGE);
     }
 
     private int resolveMaxFramePayloadLength() {
@@ -1086,10 +1150,24 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         this.handlerSubmitter = handlerSubmitter;
     }
 
-    private boolean closeSession(MessageSession session, CloseWebSocketFrame closeFrame, boolean notifyClose) {
+    public void setEventRecorder(WebSocketEventRecorder eventRecorder) {
+        this.eventRecorder = eventRecorder != null ? eventRecorder : WebSocketEventRecorder.noop();
+    }
+
+    public WebSocketEventRecorder getEventRecorder() {
+        return eventRecorder;
+    }
+
+    public void setHandshakeInterceptor(WebSocketHandshakeInterceptor interceptor) {
+        this.handshakeInterceptor = interceptor;
+    }
+
+    private boolean closeSession(MessageSession session, CloseWebSocketFrame closeFrame, boolean notifyClose,
+                                  CloseReason reason) {
         if (session == null || !session.startClosing()) {
             return false;
         }
+        eventRecorder.recordClose(reason);
         try {
             if (notifyClose) {
                 notifyCloseLifecycle(closeFrame, session);
@@ -1109,6 +1187,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     }
 
     private void handleHandshakeFailure(MessageSession pendingSession, Throwable throwable) {
+        eventRecorder.recordClose(CloseReason.HANDSHAKE_FAILURE);
         dispatchLifecycleTask("handshakeFailure", pendingSession, new Runnable() {
             @Override
             public void run() {
@@ -1175,7 +1254,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                     onConnected(session.getFirstRequest(), session);
                 } catch (Exception e) {
                     handleLifecycleException(session.getFirstRequest(), session, e);
-                    closeSession(session, null, true);
+                    closeSession(session, null, true, CloseReason.CONNECTED_HANDLER_ERROR);
                 }
             }
         }, new Runnable() {
@@ -1209,6 +1288,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (session == null || !session.startClosing()) {
             return;
         }
+        eventRecorder.recordClose(CloseReason.SERVER_SHUTDOWN);
         dispatchLifecycleTask("shutdownClose", session, new Runnable() {
             @Override
             public void run() {
@@ -1235,10 +1315,12 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         }
     }
 
-    private void closeSessionOnTransportErrorInline(MessageSession session, Throwable throwable) {
+    private void closeSessionOnTransportErrorInline(MessageSession session, Throwable throwable,
+                                                     CloseReason reason) {
         if (session == null || !session.startClosing()) {
             return;
         }
+        eventRecorder.recordClose(reason);
         removeSession(session);
         doCloseSessionOnTransportError(session, throwable);
     }
@@ -1256,6 +1338,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (session == null || !session.startClosing()) {
             return;
         }
+        eventRecorder.recordClose(CloseReason.HEARTBEAT_TIMEOUT);
         removeSession(session);
         final IllegalStateException exception =
                 new IllegalStateException("WebSocket heartbeat timeout after " + idleMillis + " ms.");

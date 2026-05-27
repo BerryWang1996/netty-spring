@@ -54,6 +54,10 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
 
     private MessageCryptoPolicy messageCryptoPolicy;
 
+    private WebSocketEventRecorder eventRecorder;
+
+    private WebSocketHandshakeInterceptor handshakeInterceptor;
+
     @Override
     public Map<String, MessageMappingResolver> initMappingResolverMap(NettyServerStartupProperties startupProperties,
                                                                       ApplicationContext applicationContext) {
@@ -63,6 +67,8 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         this.connectionSemaphore = initConnectionSemaphore(startupProperties);
         this.messageCryptoCodec = initMessageCryptoCodec(startupProperties, applicationContext);
         this.messageCryptoPolicy = initMessageCryptoPolicy(startupProperties, applicationContext);
+        this.eventRecorder = new WebSocketEventRecorder();
+        this.handshakeInterceptor = initHandshakeInterceptor(applicationContext);
 
         String[] beanNames = applicationContext.getBeanNamesForAnnotation(Component.class);
         log.debug("Find method had annotation \"MessageMapping\"");
@@ -137,7 +143,38 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
             }
         }
 
+        configureEventRecorderAndInterceptor(resolverMap);
         return resolverMap;
+    }
+
+    private void configureEventRecorderAndInterceptor(Map<String, MessageMappingResolver> resolverMap) {
+        for (MessageMappingResolver resolver : resolverMap.values()) {
+            resolver.setEventRecorder(this.eventRecorder);
+            if (this.handshakeInterceptor != null) {
+                resolver.setHandshakeInterceptor(this.handshakeInterceptor);
+            }
+        }
+    }
+
+    private WebSocketHandshakeInterceptor initHandshakeInterceptor(ApplicationContext applicationContext) {
+        Map<String, WebSocketHandshakeInterceptor> interceptors =
+                applicationContext.getBeansOfType(WebSocketHandshakeInterceptor.class);
+        if (interceptors.isEmpty()) {
+            return null;
+        }
+        if (interceptors.size() > 1) {
+            throw new IllegalStateException(
+                    "Expected at most one WebSocketHandshakeInterceptor bean, but found "
+                            + interceptors.size() + ": " + interceptors.keySet()
+                            + ". Action: keep one interceptor bean, or compose them into a single bean.");
+        }
+        WebSocketHandshakeInterceptor interceptor = interceptors.values().iterator().next();
+        log.info("Registered WebSocket handshake interceptor: {}", interceptor.getClass().getName());
+        return interceptor;
+    }
+
+    public WebSocketEventRecorder getEventRecorder() {
+        return eventRecorder;
     }
 
     private List<String> getMappingUrls(Method method) {

@@ -136,6 +136,18 @@ public abstract class AbstractMappingResolver<T, K> {
         return 0;
     }
 
+    /**
+     * Returns event counters for observability. Subclasses override to provide
+     * module-specific metrics. The returned map is consumed by the management
+     * endpoint and {@link WebSocketRuntimeStats}.
+     *
+     * @return an unmodifiable map of counter names to values, or an empty map
+     * @since V1.3.0
+     */
+    public Map<String, Object> getEventCounters() {
+        return Collections.emptyMap();
+    }
+
     private static final DefaultParameterNameDiscoverer PARAMETER_NAME_DISCOVERER =
             new DefaultParameterNameDiscoverer();
 

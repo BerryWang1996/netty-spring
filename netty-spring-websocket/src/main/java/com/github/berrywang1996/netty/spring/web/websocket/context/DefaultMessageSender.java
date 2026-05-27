@@ -4,6 +4,7 @@ import com.github.berrywang1996.netty.spring.web.context.ExecutorRuntimeInfo;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import com.github.berrywang1996.netty.spring.web.util.DaemonThreadFactory;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
+import com.github.berrywang1996.netty.spring.web.websocket.consts.CloseReason;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSessionClosedException;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageUriNotDefinedException;
 import io.netty.channel.ChannelFuture;
@@ -319,7 +320,9 @@ public class DefaultMessageSender implements MessageSender {
         future.addListener(new ChannelFutureListener() {
             @Override
             public void operationComplete(ChannelFuture future) {
-                if (!future.isSuccess()) {
+                if (future.isSuccess()) {
+                    resolver.getEventRecorder().recordMessageSent();
+                } else {
                     handleWriteFailure(resolver, session, future.cause());
                 }
             }
@@ -332,7 +335,7 @@ public class DefaultMessageSender implements MessageSender {
                 session.getSessionId(),
                 getRuntimeStats(),
                 cause);
-        resolver.closeSessionOnTransportError(session, cause);
+        resolver.closeSessionOnTransportError(session, cause, CloseReason.WRITE_FAILURE);
     }
 
     private boolean isSessionActive(MessageMappingResolver resolver, String sessionId) {
@@ -368,7 +371,8 @@ public class DefaultMessageSender implements MessageSender {
             log.warn("Close websocket session because channel is not writable during broadcast. sessionId={}, stats={}",
                     session.getSessionId(),
                     getRuntimeStats());
-            resolver.closeSessionOnTransportError(session, new IllegalStateException("Channel is not writable."));
+            resolver.closeSessionOnTransportError(session,
+                    new IllegalStateException("Channel is not writable."), CloseReason.CHANNEL_NOT_WRITABLE);
             return;
         }
         this.nonWritableSkipCount.incrementAndGet();
