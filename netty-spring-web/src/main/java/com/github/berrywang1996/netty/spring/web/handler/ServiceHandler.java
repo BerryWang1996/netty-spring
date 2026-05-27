@@ -42,7 +42,9 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.text.SimpleDateFormat;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Date;
 import java.util.Locale;
@@ -422,12 +424,13 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         // Cache Validation
         String ifModifiedSince = msg.headers().get(HttpHeaderNames.IF_MODIFIED_SINCE);
         if (ifModifiedSince != null && !ifModifiedSince.isEmpty()) {
-            SimpleDateFormat dateFormatter = new SimpleDateFormat(ServiceHandlerUtil.HTTP_DATE_FORMAT, Locale.US);
-            Date ifModifiedSinceDate = dateFormatter.parse(ifModifiedSince);
+            DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern(ServiceHandlerUtil.HTTP_DATE_FORMAT, Locale.US)
+                    .withZone(ZoneId.of(ServiceHandlerUtil.HTTP_DATE_GMT_TIMEZONE));
+            ZonedDateTime ifModifiedSinceDate = ZonedDateTime.parse(ifModifiedSince, dateFormatter);
 
             // Only compare up to the second because the datetime format we send to the client
             // does not have milliseconds
-            long ifModifiedSinceDateSeconds = ifModifiedSinceDate.getTime() / 1000;
+            long ifModifiedSinceDateSeconds = ifModifiedSinceDate.toEpochSecond();
             long fileLastModifiedSeconds = file.lastModified() / 1000;
             if (ifModifiedSinceDateSeconds == fileLastModifiedSeconds) {
                 ServiceHandlerUtil.sendNotModified(ctx, msg.uri());

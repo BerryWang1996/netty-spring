@@ -9,13 +9,17 @@ import io.netty.handler.codec.http.multipart.Attribute;
 import io.netty.handler.codec.http.multipart.HttpPostRequestDecoder;
 import io.netty.handler.codec.http.multipart.InterfaceHttpData;
 import io.netty.util.CharsetUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.activation.MimetypesFileTypeMap;
 import java.io.File;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
-import java.text.SimpleDateFormat;
+import java.nio.charset.StandardCharsets;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 import static io.netty.handler.codec.http.HttpResponseStatus.FOUND;
@@ -28,6 +32,8 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
  */
 public class ServiceHandlerUtil {
 
+    private static final Logger log = LoggerFactory.getLogger(ServiceHandlerUtil.class);
+
     public static final String HTTP_DATE_FORMAT = "EEE, dd MMM yyyy HH:mm:ss zzz";
 
     public static final String HTTP_DATE_GMT_TIMEZONE = "GMT";
@@ -35,6 +41,12 @@ public class ServiceHandlerUtil {
     public static final int HTTP_CACHE_SECONDS = 60;
 
     public static final MimetypesFileTypeMap MIME_TYPES_MAP = new MimetypesFileTypeMap();
+
+    private static final DateTimeFormatter HTTP_DATE_FORMATTER =
+            DateTimeFormatter.ofPattern(HTTP_DATE_FORMAT, Locale.US).withZone(ZoneId.of(HTTP_DATE_GMT_TIMEZONE));
+
+    private static final DateTimeFormatter ISO_TIMESTAMP_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSXXX").withZone(ZoneId.of("UTC"));
 
     public static void sendError(ChannelHandlerContext ctx,
                                  HttpRequest msg,
@@ -63,17 +75,37 @@ public class ServiceHandlerUtil {
     }
 
     private static String errorResponseHtml(HttpErrorMessage errorMessage) {
-
-        // TODO  errorResponseHtml
-        return "";
-
+        String escapedPath = escapeHtml(errorMessage.getPath() != null ? errorMessage.getPath() : "");
+        String escapedMessage = escapeHtml(errorMessage.getMessage() != null ? errorMessage.getMessage() : "");
+        String escapedError = escapeHtml(errorMessage.getError() != null ? errorMessage.getError() : "");
+        return "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"/>"
+                + "<title>" + errorMessage.getStatus() + " " + escapedError + "</title>"
+                + "<style>body{font-family:sans-serif;margin:40px;color:#333}"
+                + "h1{color:#c00}pre{background:#f5f5f5;padding:12px;border-radius:4px}</style>"
+                + "</head><body>"
+                + "<h1>" + errorMessage.getStatus() + " " + escapedError + "</h1>"
+                + "<p><b>Timestamp:</b> " + errorMessage.getTimestamp() + "</p>"
+                + "<p><b>Path:</b> " + escapedPath + "</p>"
+                + (escapedMessage.isEmpty() ? "" : "<p><b>Message:</b> " + escapedMessage + "</p>")
+                + "</body></html>";
     }
 
     private static String errorResponseJson(HttpErrorMessage errorMessage) {
+        // Manual JSON construction to avoid ObjectMapper dependency
+        return "{\"timestamp\":\"" + escapeJson(errorMessage.getTimestamp()) + "\""
+                + ",\"status\":" + errorMessage.getStatus()
+                + ",\"error\":\"" + escapeJson(errorMessage.getError() != null ? errorMessage.getError() : "") + "\""
+                + ",\"message\":\"" + escapeJson(errorMessage.getMessage() != null ? errorMessage.getMessage() : "") + "\""
+                + ",\"path\":\"" + escapeJson(errorMessage.getPath() != null ? errorMessage.getPath() : "") + "\""
+                + "}";
+    }
 
-        // TODO  errorResponseJson
-        return "";
+    private static String escapeHtml(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
+    }
 
+    private static String escapeJson(String text) {
+        return text.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r");
     }
 
     public static void sendRedirect(ChannelHandlerContext ctx, String targetUrl) {
@@ -97,19 +129,17 @@ public class ServiceHandlerUtil {
     }
 
     public static void setDateAndCacheHeaders(HttpResponse response, File file) {
-        SimpleDateFormat dateFormatter = new SimpleDateFormat(ServiceHandlerUtil.HTTP_DATE_FORMAT, Locale.US);
-        dateFormatter.setTimeZone(TimeZone.getTimeZone(HTTP_DATE_GMT_TIMEZONE));
+        ZonedDateTime now = ZonedDateTime.now(ZoneId.of(HTTP_DATE_GMT_TIMEZONE));
 
         // Date header
-        Calendar time = new GregorianCalendar();
-        response.headers().set(HttpHeaderNames.DATE, dateFormatter.format(time.getTime()));
+        response.headers().set(HttpHeaderNames.DATE, HTTP_DATE_FORMATTER.format(now));
 
         // Add cache headers
-        time.add(Calendar.SECOND, HTTP_CACHE_SECONDS);
-        response.headers().set(HttpHeaderNames.EXPIRES, dateFormatter.format(time.getTime()));
+        ZonedDateTime expires = now.plusSeconds(HTTP_CACHE_SECONDS);
+        response.headers().set(HttpHeaderNames.EXPIRES, HTTP_DATE_FORMATTER.format(expires));
         response.headers().set(HttpHeaderNames.CACHE_CONTROL, "private, max-age=" + HTTP_CACHE_SECONDS);
-        response.headers().set(
-                HttpHeaderNames.LAST_MODIFIED, dateFormatter.format(new Date(file.lastModified())));
+        response.headers().set(HttpHeaderNames.LAST_MODIFIED,
+                HTTP_DATE_FORMATTER.format(java.time.Instant.ofEpochMilli(file.lastModified()).atZone(ZoneId.of(HTTP_DATE_GMT_TIMEZONE))));
     }
 
     public static Map<String, String> parseRequestParameters(HttpRequest request) {
@@ -135,7 +165,8 @@ public class ServiceHandlerUtil {
 
         } else {
 
-            // TODO 当请求类型为text/plain或者其他类型的时候无法获取参数
+            // Note: text/plain and other non-form content types are not supported for parameter parsing;
+            // only application/x-www-form-urlencoded and multipart/form-data are handled.
             // if request method is post
             if (request instanceof HttpContent) {
                 HttpPostRequestDecoder decoder2 = new HttpPostRequestDecoder(request);
@@ -144,7 +175,8 @@ public class ServiceHandlerUtil {
                 for (InterfaceHttpData bodyHttpData : bodyHttpDatas2) {
                     try {
                         requestParameterMap.put(bodyHttpData.getName(), ((Attribute) bodyHttpData).getValue());
-                    } catch (IOException ignored) {
+                    } catch (IOException e) {
+                        log.warn("Failed to read POST parameter '{}': {}", bodyHttpData.getName(), e.getMessage());
                     }
                 }
             }
@@ -155,23 +187,14 @@ public class ServiceHandlerUtil {
     }
 
     public static String decodeRequestString(String string) {
-
-        // TODO 请求的数据可能会出现编码不一致的情况
-
-        try {
-            return URLDecoder.decode(string, "utf-8");
-        } catch (UnsupportedEncodingException e) {
-            e.printStackTrace();
-        }
-        return "";
-
+        return URLDecoder.decode(string, StandardCharsets.UTF_8);
     }
 
     public static class HttpErrorMessage {
 
         private final HttpResponseStatus responseStatus;
 
-        private final String timestrap;
+        private final String timestamp;
 
         private final Integer status;
 
@@ -184,10 +207,8 @@ public class ServiceHandlerUtil {
         private final Throwable cause;
 
         public HttpErrorMessage(HttpResponseStatus responseStatus, String path, String message, Throwable cause) {
-            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
-            sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
             this.responseStatus = responseStatus;
-            this.timestrap = sdf.format(new Date());
+            this.timestamp = ISO_TIMESTAMP_FORMATTER.format(ZonedDateTime.now(ZoneId.of("UTC")));
             this.status = responseStatus.code();
             this.error = responseStatus.reasonPhrase();
             this.message = message;
@@ -199,8 +220,16 @@ public class ServiceHandlerUtil {
             return responseStatus;
         }
 
+        /**
+         * @deprecated Use {@link #getTimestamp()} instead. This method has a typo in its name.
+         */
+        @Deprecated
         public String getTimestrap() {
-            return timestrap;
+            return timestamp;
+        }
+
+        public String getTimestamp() {
+            return timestamp;
         }
 
         public Integer getStatus() {

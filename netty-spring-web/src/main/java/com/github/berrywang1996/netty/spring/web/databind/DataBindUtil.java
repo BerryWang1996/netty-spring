@@ -2,6 +2,8 @@ package com.github.berrywang1996.netty.spring.web.databind;
 
 import com.github.berrywang1996.netty.spring.web.util.ClassUtil;
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.beans.BeanInfo;
 import java.beans.IntrospectionException;
@@ -11,6 +13,9 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.LinkedList;
@@ -23,9 +28,11 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class DataBindUtil {
 
+    private static final Logger log = LoggerFactory.getLogger(DataBindUtil.class);
+
     private static final Class<DateFormat> DATE_FORMAT_ANNOTATION = DateFormat.class;
 
-    private static final String DEFAULT_DATEFORMAT_PATTERN = new SimpleDateFormat().toPattern();
+    private static final String DEFAULT_DATEFORMAT_PATTERN = "yy-M-d ah:mm";
 
     private static final Map<Class, BeanInfo> beanInfoMap = new ConcurrentHashMap<>();
 
@@ -93,7 +100,7 @@ public class DataBindUtil {
             }
 
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Failed to parse '{}' to type {}", data, targetTypeClz.getSimpleName(), e);
         }
         return null;
 
@@ -105,11 +112,17 @@ public class DataBindUtil {
             return null;
         }
 
-        SimpleDateFormat dateFormat = new SimpleDateFormat(pattern);
         try {
-            return dateFormat.parse(data);
-        } catch (ParseException e) {
-            e.printStackTrace();
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern(pattern);
+            LocalDate localDate = LocalDate.parse(data, formatter);
+            return Date.from(localDate.atStartOfDay(ZoneId.systemDefault()).toInstant());
+        } catch (Exception e) {
+            // Fallback to SimpleDateFormat for time-inclusive patterns
+            try {
+                return new SimpleDateFormat(pattern).parse(data);
+            } catch (ParseException ex) {
+                log.error("Failed to parse date '{}' with pattern '{}': {}", data, pattern, ex.getMessage());
+            }
         }
 
         return null;
@@ -162,7 +175,7 @@ public class DataBindUtil {
                             }
 
                         } catch (IllegalAccessException | InvocationTargetException e) {
-                            e.printStackTrace();
+                            log.error("Failed to set property '{}' on {}", key, target.getClass().getSimpleName(), e);
                         }
                     } else {
                         // create new instance
@@ -182,7 +195,7 @@ public class DataBindUtil {
                             newKeys.poll();
                             setObjectProperties(childTarget, newKeys, value);
                         } catch (IllegalAccessException | InvocationTargetException e) {
-                            e.printStackTrace();
+                            log.error("Failed to set nested property '{}' on {}", key, target.getClass().getSimpleName(), e);
                         }
                     }
                 }
@@ -201,7 +214,7 @@ public class DataBindUtil {
                 beanInfoMap.put(clz, beanInfo);
             }
         } catch (IntrospectionException e) {
-            e.printStackTrace();
+            log.error("Failed to introspect bean class: {}", clz.getName(), e);
         }
         return beanInfo;
 

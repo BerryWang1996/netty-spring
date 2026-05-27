@@ -2,7 +2,8 @@ package com.github.berrywang1996.netty.spring.web.mvc.context;
 
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 
-import java.text.SimpleDateFormat;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 /**
@@ -18,6 +19,9 @@ public class Cookie {
     public static final String COOKIE_DATE_FORMAT_PATTERN = "EEE, dd MMM yyyy HH:mm:ss zzz";
 
     public static final String COOKIE_DATE_GMT_TIMEZONE = "GMT";
+
+    private static final DateTimeFormatter COOKIE_DATE_FORMATTER =
+            DateTimeFormatter.ofPattern(COOKIE_DATE_FORMAT_PATTERN, Locale.US).withZone(ZoneId.of(COOKIE_DATE_GMT_TIMEZONE));
 
     public Cookie() {
     }
@@ -132,9 +136,7 @@ public class Cookie {
         if (cookie.getExpires() != null) {
             sb.append("expires");
             sb.append(COOKIE_EQUAL_MARK);
-            SimpleDateFormat dateFormatter = new SimpleDateFormat(COOKIE_DATE_FORMAT_PATTERN, Locale.US);
-            dateFormatter.setTimeZone(TimeZone.getTimeZone(COOKIE_DATE_GMT_TIMEZONE));
-            sb.append(dateFormatter.format(cookie.getExpires()));
+            sb.append(COOKIE_DATE_FORMATTER.format(cookie.getExpires().toInstant()));
             sb.append(COOKIE_SEPARATOR);
         }
         if (cookie.getMaxAge() != null) {

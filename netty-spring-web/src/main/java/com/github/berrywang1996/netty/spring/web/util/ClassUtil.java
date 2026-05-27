@@ -16,11 +16,16 @@
 
 package com.github.berrywang1996.netty.spring.web.util;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * @author berrywang1996
  * @since V1.0.0
  */
 public class ClassUtil {
+
+    private static final Logger log = LoggerFactory.getLogger(ClassUtil.class);
 
     public static boolean isPresent(String className) {
         try {
@@ -35,7 +40,7 @@ public class ClassUtil {
         try {
             return Class.forName(className).newInstance();
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Failed to create instance for class: {}", className, e);
             return null;
         }
     }
@@ -44,7 +49,7 @@ public class ClassUtil {
         try {
             return clz.newInstance();
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Failed to create instance for class: {}", clz.getName(), e);
             return null;
         }
     }
