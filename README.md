@@ -187,10 +187,10 @@ public class TokenHandshakeInterceptor implements WebSocketHandshakeInterceptor 
 
 ## 当前阶段
 
-- **当前推荐版本：`1.3.0`**（P6 可观测与运维能力正式版）。
+- **当前推荐版本：`1.3.1`**（代码质量深度治理版本）。
 - `P0` 至 `P6` 全部阶段已完成，项目进入质量深化与产品化阶段。
-- `P6` 已完成：关闭原因维度化（`CloseReason` 枚举 + `WebSocketEventRecorder`）、握手鉴权扩展点（`WebSocketHandshakeInterceptor`）、Micrometer 指标桥接（`NettyWebSocketMeterBinder` + `NettyHttpMeterBinder`）、生产部署建议文档。
-- 下一步：`1.3.1` 代码质量深度治理（遗留代码缺陷修复 + webmvc 测试补齐），`1.4.0` P7 Demo 与文档产品化。
+- `1.3.1` 已完成：消除 `e.printStackTrace()`（8 处）、`SimpleDateFormat` 线程安全修复（6 处）、HTTP 错误响应实现、`ObjectMapper` 静态单例化、webmvc 测试从 1 增长到 21。
+- 下一步：`1.4.0` P7 Demo 与文档产品化。
 
 ## 文档
 
@@ -199,6 +199,7 @@ public class TokenHandshakeInterceptor implements WebSocketHandshakeInterceptor 
 - [1.2.1 发布说明](docs/release-notes-1.2.1.md)
 - [1.2.2 发布说明](docs/release-notes-1.2.2.md)
 - [1.2.3 发布说明](docs/release-notes-1.2.3.md)
+- [1.3.1 发布说明](docs/release-notes-1.3.1.md)
 - [1.3.0 发布说明](docs/release-notes-1.3.0.md)
 - [依赖治理与供应链门禁](docs/dependency-governance.md)
 - [Netty 配置说明](docs/netty-configuration.md)
