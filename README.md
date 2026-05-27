@@ -104,6 +104,87 @@ Demo 已集成 `spring-boot-starter-actuator`，启动后可在 `http://localhos
 - `Forbidden by handshake interceptor`：注册了 `WebSocketHandshakeInterceptor` Bean 但握手未通过验证，检查 token/header 是否正确传递。
 - `Expected at most one WebSocketHandshakeInterceptor bean`：容器中存在多个 interceptor Bean，合并为一个或移除多余的。
 
+## 生产部署建议
+
+### 推荐配置参考
+
+```properties
+server.netty.port=8080
+
+# --- HTTP 边界 ---
+server.netty.http.max-content-length=1048576
+server.netty.http.max-header-size=8192
+server.netty.http.read-timeout-seconds=30
+server.netty.http.write-timeout-seconds=30
+server.netty.http.idle-timeout-seconds=60
+
+# --- TLS（生产环境强烈建议启用） ---
+server.netty.http.ssl.enable=true
+server.netty.http.ssl.certificate=/path/to/server.crt
+server.netty.http.ssl.certificate-key=/path/to/server.key
+server.netty.http.ssl.protocols=TLSv1.2,TLSv1.3
+
+# --- WebSocket ---
+server.netty.websocket.enable=true
+server.netty.websocket.max-connections=10000
+server.netty.websocket.heartbeat-interval-seconds=30
+server.netty.websocket.heartbeat-timeout-seconds=90
+server.netty.websocket.allowed-origins=https://yourdomain.com
+
+# --- 线程池（根据 CPU 核数和业务负载调整） ---
+server.netty.websocket.handler-core-pool-size=8
+server.netty.websocket.handler-max-pool-size=32
+server.netty.websocket.handler-queue-capacity=256
+server.netty.websocket.handler-permit-limit=64
+
+# --- 可观测 ---
+server.netty.management.enable=true
+```
+
+### 线程池调优
+
+| 配置项 | 默认值 | 建议 |
+| --- | --- | --- |
+| `handler-core-pool-size` | `max(2, CPU)` | IO 密集型业务可适当调高 |
+| `handler-max-pool-size` | `max(core, CPU*2)` | 突发流量缓冲，不宜设过大 |
+| `handler-queue-capacity` | `0`（同步移交） | 有队列可平滑突发，但增加延迟 |
+| `handler-permit-limit` | `max*2` | 控制同时在途请求数，防止 OOM |
+
+当线程池满时，handler 会抛出 `RejectedExecutionException` 并关闭对应 channel。如果频繁出现拒绝，优先检查 handler 中是否有阻塞 IO 或长耗时操作。
+
+### 可观测接入
+
+**内置管理端点**（无需额外依赖）：
+
+- `GET /netty/health` — 健康检查
+- `GET /netty/status` — 运行时快照（handler 线程池、HTTP 失败路径、WebSocket 事件计数器）
+
+**Micrometer / Actuator**（推荐）：
+
+引入 `spring-boot-starter-actuator`，Netty 运行时指标自动注册到 `MeterRegistry`，可直接对接 Prometheus、Grafana、Datadog 等监控系统。核心指标前缀：`netty.websocket.*`、`netty.http.*`。
+
+### 握手鉴权
+
+实现 `WebSocketHandshakeInterceptor` 接口并注册为 Spring Bean：
+
+```java
+@Component
+public class TokenHandshakeInterceptor implements WebSocketHandshakeInterceptor {
+    @Override
+    public boolean beforeHandshake(FullHttpRequest request, String uri) {
+        String token = request.headers().get("Authorization");
+        return tokenService.isValid(token);
+    }
+
+    @Override
+    public String rejectionReason() {
+        return "Invalid or missing token";
+    }
+}
+```
+
+拦截器在 Origin 校验之后、`ON_HANDSHAKE` 回调之前执行。返回 `false` 会以 HTTP 403 拒绝连接。
+
 ## 当前阶段
 
 - `P0` 工程基线：已完成。
