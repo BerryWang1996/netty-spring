@@ -158,6 +158,12 @@ public class DemoHomeController {
                         <p>Run with --spring.profiles.active=auth-demo. Connect with ?token=demo-token-2026.</p>
                         <code>auth-demo profile</code>
                     </a>
+                    <a class="card" href="/chat">
+                        <span class="eyebrow">Chat Room</span>
+                        <h2>Multi-user chat</h2>
+                        <p>Join with a nickname, broadcast messages, and send private messages via /pm command.</p>
+                        <code>/ws/chat</code>
+                    </a>
                 </div>
             </main>
             </body>

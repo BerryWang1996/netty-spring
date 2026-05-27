@@ -187,10 +187,10 @@ public class TokenHandshakeInterceptor implements WebSocketHandshakeInterceptor 
 
 ## 当前阶段
 
-- **当前推荐版本：`1.3.1`**（代码质量深度治理版本）。
-- `P0` 至 `P6` 全部阶段已完成，项目进入质量深化与产品化阶段。
-- `1.3.1` 已完成：消除 `e.printStackTrace()`（8 处）、`SimpleDateFormat` 线程安全修复（6 处）、HTTP 错误响应实现、`ObjectMapper` 静态单例化、webmvc 测试从 1 增长到 21。
-- 下一步：`1.4.0` P7 Demo 与文档产品化。
+- **当前推荐版本：`1.4.0`**（P7 Demo 与文档产品化版本）。
+- `P0` 至 `P7` 全部阶段已完成，项目完成质量深化与产品化阶段。
+- `1.4.0` 已完成：聊天室 demo（加入/离开/广播/私聊）、API 使用指南（12 章节全场景覆盖）、Starter 集成测试增强（12 个测试覆盖自定义 Bean 覆盖、开关组合、多 URI 注册等）。
+- 下一步：`2.0.0` Spring Boot 3.x / Jakarta namespace 迁移 + 企业安全版本。
 
 ## 文档
 
@@ -199,6 +199,8 @@ public class TokenHandshakeInterceptor implements WebSocketHandshakeInterceptor 
 - [1.2.1 发布说明](docs/release-notes-1.2.1.md)
 - [1.2.2 发布说明](docs/release-notes-1.2.2.md)
 - [1.2.3 发布说明](docs/release-notes-1.2.3.md)
+- [1.4.0 发布说明](docs/release-notes-1.4.0.md)
+- [API 使用指南](docs/api-guide.md)
 - [1.3.1 发布说明](docs/release-notes-1.3.1.md)
 - [1.3.0 发布说明](docs/release-notes-1.3.0.md)
 - [依赖治理与供应链门禁](docs/dependency-governance.md)
