@@ -576,7 +576,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
             long ifModifiedSinceDateSeconds = ifModifiedSinceDate.toEpochSecond();
             long fileLastModifiedSeconds = file.lastModified() / 1000;
             if (ifModifiedSinceDateSeconds == fileLastModifiedSeconds) {
-                ServiceHandlerUtil.sendNotModified(ctx, msg.uri());
+                ServiceHandlerUtil.sendNotModified(ctx, msg.uri(), msg);
                 return;
             }
         }

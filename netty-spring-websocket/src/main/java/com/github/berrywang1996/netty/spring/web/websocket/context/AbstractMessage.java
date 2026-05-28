@@ -60,15 +60,23 @@ public abstract class AbstractMessage<T> {
      */
     public ByteBuf serializeSharedPayload(ByteBufAllocator allocator) {
         T frame = responseMsg();
-        if (frame instanceof WebSocketFrame) {
-            ByteBuf content = ((WebSocketFrame) frame).content();
-            ByteBuf shared = allocator.buffer(content.readableBytes());
-            shared.writeBytes(content);
+        try {
+            if (frame instanceof WebSocketFrame) {
+                ByteBuf content = ((WebSocketFrame) frame).content();
+                ByteBuf shared = allocator.buffer(content.readableBytes());
+                try {
+                    shared.writeBytes(content);
+                } catch (Exception e) {
+                    shared.release();
+                    throw e;
+                }
+                return shared;
+            }
+            throw new UnsupportedOperationException(
+                    "Cannot serialize " + getClass().getSimpleName() + " for shared broadcast");
+        } finally {
             ReferenceCountUtil.release(frame);
-            return shared;
         }
-        throw new UnsupportedOperationException(
-                "Cannot serialize " + getClass().getSimpleName() + " for shared broadcast");
     }
 
     /**

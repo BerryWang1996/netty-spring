@@ -124,7 +124,12 @@ public class JsonMessage extends AbstractMessage<TextWebSocketFrame> {
         try {
             byte[] jsonBytes = objectMapper.writeValueAsBytes(content);
             ByteBuf buf = allocator.buffer(jsonBytes.length);
-            buf.writeBytes(jsonBytes);
+            try {
+                buf.writeBytes(jsonBytes);
+            } catch (Exception e) {
+                buf.release();
+                throw e;
+            }
             return buf;
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Serialize websocket JSON message failed.", e);

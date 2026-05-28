@@ -83,7 +83,12 @@ public class BinaryMessage extends AbstractMessage<BinaryWebSocketFrame> {
     @Override
     public ByteBuf serializeSharedPayload(ByteBufAllocator allocator) {
         ByteBuf buf = allocator.buffer(binaryData.length);
-        buf.writeBytes(binaryData);
+        try {
+            buf.writeBytes(binaryData);
+        } catch (Exception e) {
+            buf.release();
+            throw e;
+        }
         return buf;
     }
 

@@ -153,18 +153,26 @@ public class ServiceHandlerUtil {
     }
 
     /**
-     * Sends an HTTP 304 Not Modified response and closes the connection.
-     * Used for cache validation when the resource has not changed.
+     * Sends an HTTP 304 Not Modified response. Respects the client's keep-alive
+     * preference: if the request is keep-alive, the connection is left open for
+     * subsequent requests; otherwise the connection is closed after the response.
      *
-     * @param ctx the Netty channel handler context
-     * @param url the resource URL (set in the Location header)
+     * @param ctx     the Netty channel handler context
+     * @param url     the resource URL (set in the Location header)
+     * @param request the original HTTP request (used to determine keep-alive)
      */
-    public static void sendNotModified(ChannelHandlerContext ctx, String url) {
+    public static void sendNotModified(ChannelHandlerContext ctx, String url, HttpRequest request) {
         FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, NOT_MODIFIED);
         response.headers().set(HttpHeaderNames.LOCATION, url);
 
-        // Close the connection as soon as the error message is sent.
-        ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+        boolean keepAlive = HttpUtil.isKeepAlive(request);
+        if (keepAlive) {
+            response.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE);
+            response.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, 0);
+            ctx.writeAndFlush(response);
+        } else {
+            ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+        }
     }
 
     /**
@@ -213,28 +221,27 @@ public class ServiceHandlerUtil {
 
         Map<String, String> requestParameterMap = new HashMap<>();
 
-        if (request.method() == HttpMethod.GET) {
-
-            // if request method is get
-            QueryStringDecoder queryStringDecoder = new QueryStringDecoder(request.uri());
-            Map<String, List<String>> parameters = queryStringDecoder.parameters();
-            for (Map.Entry<String, List<String>> parameterEntry : parameters.entrySet()) {
-                if (parameterEntry.getValue().size() > 1) {
-                    for (int i = 0; i < parameterEntry.getValue().size(); i++) {
-                        requestParameterMap.put(parameterEntry.getKey() + "[" + i + "]",
-                                decodeRequestString(parameterEntry.getValue().get(i)));
-                    }
-                } else {
-                    requestParameterMap.put(parameterEntry.getKey(),
-                            decodeRequestString(parameterEntry.getValue().get(0)));
+        // Always parse query string parameters from the URI, regardless of HTTP method.
+        // Standard HTTP semantics allow query parameters on any method (POST /api?version=2).
+        QueryStringDecoder queryStringDecoder = new QueryStringDecoder(request.uri());
+        Map<String, List<String>> parameters = queryStringDecoder.parameters();
+        for (Map.Entry<String, List<String>> parameterEntry : parameters.entrySet()) {
+            if (parameterEntry.getValue().size() > 1) {
+                for (int i = 0; i < parameterEntry.getValue().size(); i++) {
+                    requestParameterMap.put(parameterEntry.getKey() + "[" + i + "]",
+                            decodeRequestString(parameterEntry.getValue().get(i)));
                 }
+            } else {
+                requestParameterMap.put(parameterEntry.getKey(),
+                        decodeRequestString(parameterEntry.getValue().get(0)));
             }
+        }
 
-        } else {
-
+        // For non-GET requests, also parse form-encoded body parameters.
+        // Body parameters take precedence over query string parameters for duplicate keys.
+        if (request.method() != HttpMethod.GET) {
             // Note: text/plain and other non-form content types are not supported for parameter parsing;
             // only application/x-www-form-urlencoded and multipart/form-data are handled.
-            // if request method is post
             if (request instanceof HttpContent) {
                 HttpPostRequestDecoder decoder2 = null;
                 try {
@@ -257,7 +264,6 @@ public class ServiceHandlerUtil {
                     }
                 }
             }
-
         }
 
         return requestParameterMap;

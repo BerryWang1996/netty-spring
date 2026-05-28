@@ -362,18 +362,26 @@ public class DefaultMessageSender implements MessageSender {
                 // Each EventLoop task gets its own retained duplicate of the shared payload
                 final ByteBuf elPayload = sharedPayload.retainedDuplicate();
 
-                eventLoop.execute(new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            broadcastOnEventLoop(resolver, sessions, elPayload, isText);
-                        } catch (Exception e) {
-                            log.error("Unexpected error in EventLoop broadcast task.", e);
-                        } finally {
-                            elPayload.release();
+                try {
+                    eventLoop.execute(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                broadcastOnEventLoop(resolver, sessions, elPayload, isText);
+                            } catch (Exception e) {
+                                log.error("Unexpected error in EventLoop broadcast task.", e);
+                            } finally {
+                                elPayload.release();
+                            }
                         }
-                    }
-                });
+                    });
+                } catch (Exception e) {
+                    // EventLoop rejected the task (e.g. shutting down) — release the payload
+                    // to prevent a direct memory leak
+                    elPayload.release();
+                    log.warn("EventLoop rejected broadcast task, released payload. sessions={}",
+                            sessions.size(), e);
+                }
             }
         } finally {
             // Release the original shared payload (EventLoop tasks hold retained duplicates)
@@ -393,7 +401,7 @@ public class DefaultMessageSender implements MessageSender {
         Map<EventLoop, List<SessionContext>> groups = new LinkedHashMap<>();
 
         for (MessageSession session : sessionMap.values()) {
-            if (!isSessionActive(resolver, session.getSessionId())) {
+            if (!isSessionActiveWithCleanup(resolver, session.getSessionId())) {
                 continue;
             }
             if (!isSessionWritable(session)) {
@@ -430,7 +438,7 @@ public class DefaultMessageSender implements MessageSender {
         for (SessionContext sc : sessions) {
             MessageSession session = sc.session;
             // Re-check session state (may have changed since grouping)
-            if (!isSessionActive(resolver, session.getSessionId())) {
+            if (!isSessionActiveWithCleanup(resolver, session.getSessionId())) {
                 continue;
             }
             if (!session.getChannelHandlerContext().channel().isWritable()) {
@@ -543,7 +551,7 @@ public class DefaultMessageSender implements MessageSender {
                                   final MessageSession session,
                                   final AbstractMessage message,
                                   boolean dropIfChannelNotWritable) {
-        if (!isSessionActive(resolver, session.getSessionId())) {
+        if (!isSessionActiveWithCleanup(resolver, session.getSessionId())) {
             return;
         }
         if (dropIfChannelNotWritable && !prepareSessionForBroadcast(resolver, session)) {
@@ -664,8 +672,27 @@ public class DefaultMessageSender implements MessageSender {
         resolver.closeSessionOnTransportError(session, cause, CloseReason.WRITE_FAILURE);
     }
 
-    /** Checks whether a session exists, is not closing, and its channel is still active. */
+    /**
+     * Checks whether a session exists, is not closing, and its channel is still active.
+     * This is a pure predicate with no side effects — safe for query methods like
+     * {@link #getSessionIds(String)} and {@link #getSessions(String)}.
+     */
     private boolean isSessionActive(MessageMappingResolver resolver, String sessionId) {
+        MessageSession session = resolver.getSessionMap().get(sessionId);
+        if (session == null) {
+            return false;
+        }
+        if (session.isClosing()) {
+            return false;
+        }
+        return session.getChannelHandlerContext().channel().isActive();
+    }
+
+    /**
+     * Same as {@link #isSessionActive} but also cleans up stale sessions that are no longer
+     * active. Used in write paths (send/broadcast) where cleanup is appropriate.
+     */
+    private boolean isSessionActiveWithCleanup(MessageMappingResolver resolver, String sessionId) {
         MessageSession session = resolver.getSessionMap().get(sessionId);
         if (session == null) {
             return false;
@@ -682,7 +709,7 @@ public class DefaultMessageSender implements MessageSender {
 
     /** Pre-flight check for broadcast: verifies the session is active and the channel is writable. */
     private boolean prepareSessionForBroadcast(MessageMappingResolver resolver, MessageSession session) {
-        if (!isSessionActive(resolver, session.getSessionId())) {
+        if (!isSessionActiveWithCleanup(resolver, session.getSessionId())) {
             return false;
         }
         if (isSessionWritable(session)) {

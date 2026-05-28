@@ -342,7 +342,16 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             if (connectionReleaseAction == null && connectionSemaphore != null) {
                 return;
             }
-            MessageSession pendingSession = createMessageSession(ctx, request, connectionReleaseAction);
+            MessageSession pendingSession;
+            try {
+                pendingSession = createMessageSession(ctx, request, connectionReleaseAction);
+            } catch (Exception e) {
+                // Release the semaphore permit to avoid a permanent permit leak
+                if (connectionReleaseAction != null) {
+                    connectionReleaseAction.run();
+                }
+                throw e;
+            }
             // do handshake
             ChannelFuture handshakeFuture = doHandshake(ctx, request);
             if (handshakeFuture == null) {

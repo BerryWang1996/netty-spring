@@ -197,6 +197,10 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
         int high = wsProperties.getWriteBufferHighWaterMark();
         if (low > 0 && high > 0 && high > low) {
             ch.config().setWriteBufferWaterMark(new WriteBufferWaterMark(low, high));
+        } else if (low != 0 || high != 0) {
+            // Non-default values were provided but fail validation — warn the user
+            log.warn("Invalid WriteBufferWaterMark configuration (low={}, high={}). "
+                    + "Requires: low > 0, high > 0, high > low. Using Netty defaults.", low, high);
         }
     }
 

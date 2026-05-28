@@ -71,7 +71,12 @@ public class TextMessage extends AbstractMessage<TextWebSocketFrame> {
     public ByteBuf serializeSharedPayload(ByteBufAllocator allocator) {
         byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
         ByteBuf buf = allocator.buffer(bytes.length);
-        buf.writeBytes(bytes);
+        try {
+            buf.writeBytes(bytes);
+        } catch (Exception e) {
+            buf.release();
+            throw e;
+        }
         return buf;
     }
 }

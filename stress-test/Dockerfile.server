@@ -4,15 +4,14 @@ LABEL maintainer="netty-spring stress test"
 
 WORKDIR /app
 
-COPY demo-netty-web-spring-boot-starter-1.5.1.jar app.jar
+COPY demo-netty-web-spring-boot-starter-1.6.1.jar app.jar
 
 # Tune JVM for 4GB container
 # -XX:MaxRAMPercentage=75 uses up to 75% of container memory for heap
 # -XX:+UseG1GC for predictable latency
 # -XX:+AlwaysPreTouch pre-touches memory pages at startup to avoid runtime faults
 ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:+AlwaysPreTouch \
-    -Dio.netty.leakDetection.level=disabled \
-    -Dio.netty.recycler.maxCapacityPerThread=0"
+    -Dio.netty.leakDetection.level=disabled"
 
 EXPOSE 8080
 

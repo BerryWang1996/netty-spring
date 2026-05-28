@@ -368,6 +368,7 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
      *
      * @return the current {@link WebSocketRuntimeStats}, or an empty instance if no WebSocket resolvers exist
      */
+    @SuppressWarnings("unchecked")
     public WebSocketRuntimeStats getWebSocketRuntimeStats() {
         if (this.webSocketMappingResolverMap == null || this.webSocketMappingResolverMap.isEmpty()) {
             return WebSocketRuntimeStats.empty();
@@ -379,7 +380,29 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
             activeSessionCount += Math.max(0, resolver.getActiveSessionCount());
             Map<String, Object> resolverCounters = resolver.getEventCounters();
             if (!resolverCounters.isEmpty()) {
-                aggregatedEventCounters = resolverCounters;
+                if (aggregatedEventCounters == null) {
+                    // First resolver — use its counters as the base (shallow copy to avoid mutation)
+                    aggregatedEventCounters = new java.util.LinkedHashMap<>(resolverCounters);
+                } else {
+                    // Merge subsequent resolver counters by summing numeric values
+                    for (Map.Entry<String, Object> entry : resolverCounters.entrySet()) {
+                        String key = entry.getKey();
+                        Object existing = aggregatedEventCounters.get(key);
+                        Object incoming = entry.getValue();
+                        if (existing instanceof Long && incoming instanceof Long) {
+                            aggregatedEventCounters.put(key, (Long) existing + (Long) incoming);
+                        } else if (existing instanceof Map && incoming instanceof Map) {
+                            // Merge nested maps (e.g. closesByReason) additively
+                            Map<String, Long> mergedMap = new java.util.LinkedHashMap<>((Map<String, Long>) existing);
+                            for (Map.Entry<String, Long> nestedEntry : ((Map<String, Long>) incoming).entrySet()) {
+                                mergedMap.merge(nestedEntry.getKey(), nestedEntry.getValue(), Long::sum);
+                            }
+                            aggregatedEventCounters.put(key, mergedMap);
+                        } else if (existing == null) {
+                            aggregatedEventCounters.put(key, incoming);
+                        }
+                    }
+                }
             }
         }
         return new WebSocketRuntimeStats(this.webSocketMappingResolverMap.size(), activeSessionCount,
