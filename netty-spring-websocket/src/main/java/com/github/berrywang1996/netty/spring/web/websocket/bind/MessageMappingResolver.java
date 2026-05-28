@@ -908,6 +908,10 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             buf.release();
             HttpUtil.setContentLength(res, res.content().readableBytes());
         }
+        // Ensure Content-Type is set for responses with body content
+        if (!res.headers().contains(HttpHeaderNames.CONTENT_TYPE) && res.content().readableBytes() > 0) {
+            res.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=UTF-8");
+        }
 
         // Send the response and close the connection if necessary.
         ChannelFuture f = ctx.channel().writeAndFlush(res);
@@ -1236,6 +1240,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         getHttpRuntimeRecorder().recordWebSocketHandshakeRejected();
         DefaultFullHttpResponse res = new DefaultFullHttpResponse(HTTP_1_1, status,
                 Unpooled.copiedBuffer(msg, CharsetUtil.UTF_8));
+        res.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=UTF-8");
         HttpUtil.setContentLength(res, res.content().readableBytes());
         ctx.writeAndFlush(res).addListener(ChannelFutureListener.CLOSE);
         return false;
@@ -1442,24 +1447,38 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
 
     private void cleanupClosedSession(MessageSession session, CloseWebSocketFrame closeFrame) {
         removeSession(session);
-        releaseSession(session);
         if (closeFrame == null) {
+            releaseSession(session);
             session.getChannelHandlerContext().close();
         } else {
+            // Write the close frame before releasing session resources to avoid use-after-free
             session.getChannelHandlerContext()
                     .writeAndFlush(closeFrame.retain())
-                    .addListener(ChannelFutureListener.CLOSE);
+                    .addListener(new ChannelFutureListener() {
+                        @Override
+                        public void operationComplete(ChannelFuture future) {
+                            releaseSession(session);
+                            future.channel().close();
+                        }
+                    });
         }
     }
 
     private void finishDetachedSession(MessageSession session, CloseWebSocketFrame closeFrame) {
-        releaseSession(session);
         if (closeFrame == null) {
+            releaseSession(session);
             session.getChannelHandlerContext().close();
         } else {
+            // Write the close frame before releasing session resources to avoid use-after-free
             session.getChannelHandlerContext()
                     .writeAndFlush(closeFrame.retain())
-                    .addListener(ChannelFutureListener.CLOSE);
+                    .addListener(new ChannelFutureListener() {
+                        @Override
+                        public void operationComplete(ChannelFuture future) {
+                            releaseSession(session);
+                            future.channel().close();
+                        }
+                    });
         }
     }
 

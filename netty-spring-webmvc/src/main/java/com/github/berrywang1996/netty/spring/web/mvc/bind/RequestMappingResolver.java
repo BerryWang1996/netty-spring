@@ -64,7 +64,6 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
-import java.text.SimpleDateFormat;
 import java.util.*;
 
 /**
@@ -108,7 +107,8 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
 
     static {
         OBJECT_MAPPER = new ObjectMapper();
-        OBJECT_MAPPER.setDateFormat(new SimpleDateFormat("yyyy-MM-dd"));
+        // Use Jackson's thread-safe StdDateFormat instead of SimpleDateFormat
+        OBJECT_MAPPER.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         OBJECT_MAPPER.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
     }
 
@@ -419,10 +419,15 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         Method resolvedMethod = invokeMethod;
         HttpRequestMethod resolvedRequestMethod = requestMethod;
 
+        // Track which interceptors passed preHandle for afterCompletion cleanup
+        int interceptorIndex = -1;
+
         try {
             // Execute interceptor preHandle chain
-            for (HandlerInterceptor interceptor : interceptors) {
-                if (!interceptor.preHandle(requestContext, handlerBean, resolvedMethod)) {
+            boolean preHandlePassed = true;
+            for (int i = 0; i < interceptors.size(); i++) {
+                if (!interceptors.get(i).preHandle(requestContext, handlerBean, resolvedMethod)) {
+                    preHandlePassed = false;
                     // Interceptor rejected the request — send 403 Forbidden if no response was sent
                     if (ctx.channel().isActive()) {
                         ServiceHandlerUtil.HttpErrorMessage errorMsg =
@@ -433,8 +438,11 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
                                         null);
                         ServiceHandlerUtil.sendError(ctx, msg, errorMsg);
                     }
+                    // Call afterCompletion for interceptors that already passed preHandle
+                    triggerAfterCompletion(requestContext, handlerBean, resolvedMethod, null, interceptorIndex);
                     return;
                 }
+                interceptorIndex = i;
             }
 
             // Bind request data to handler method parameters
@@ -489,13 +497,27 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
             writeResponse(ctx, msg, result, resolvedMethod, requestContext);
 
         } finally {
-            // Always execute interceptor afterCompletion chain
-            for (HandlerInterceptor interceptor : interceptors) {
-                try {
-                    interceptor.afterCompletion(requestContext, handlerBean, resolvedMethod, handlerException);
-                } catch (Exception ex) {
-                    log.warn("Interceptor afterCompletion threw exception", ex);
-                }
+            // Always execute interceptor afterCompletion chain (only for interceptors that passed preHandle)
+            triggerAfterCompletion(requestContext, handlerBean, resolvedMethod, handlerException, interceptorIndex);
+        }
+    }
+
+    /**
+     * Triggers afterCompletion callbacks in reverse order for interceptors that passed preHandle.
+     *
+     * @param requestContext   the request context
+     * @param handlerBean      the handler bean
+     * @param resolvedMethod   the handler method
+     * @param exception        the exception thrown during handling (may be null)
+     * @param interceptorIndex the index of the last interceptor that passed preHandle (-1 for none)
+     */
+    private void triggerAfterCompletion(HttpRequestContext requestContext, Object handlerBean,
+                                        Method resolvedMethod, Exception exception, int interceptorIndex) {
+        for (int i = interceptorIndex; i >= 0; i--) {
+            try {
+                interceptors.get(i).afterCompletion(requestContext, handlerBean, resolvedMethod, exception);
+            } catch (Exception ex) {
+                log.warn("Interceptor afterCompletion threw exception", ex);
             }
         }
     }
@@ -1063,11 +1085,18 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
 
     /**
      * Sets the Content-Disposition header for file download.
+     * Sanitizes the filename to prevent HTTP response header injection.
      */
     private void setContentDisposition(HttpResponse response, FileDownload fileDownload) {
         String disposition = fileDownload.isInline() ? "inline" : "attachment";
         if (fileDownload.getFilename() != null && !fileDownload.getFilename().isEmpty()) {
-            disposition += "; filename=\"" + fileDownload.getFilename() + "\"";
+            // Sanitize filename: remove characters that could enable header injection
+            String sanitized = fileDownload.getFilename()
+                    .replace("\"", "")
+                    .replace("\\", "")
+                    .replace("\r", "")
+                    .replace("\n", "");
+            disposition += "; filename=\"" + sanitized + "\"";
         }
         response.headers().set("Content-Disposition", disposition);
     }
@@ -1097,7 +1126,10 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         List<Cookie> responseCookies = requestContext.getResponseCookies();
         if (responseCookies != null) {
             for (Cookie responseCookie : responseCookies) {
-                response.headers().add("Set-Cookie", Cookie.toHeaderStrings(responseCookie));
+                String cookieHeader = Cookie.toHeaderStrings(responseCookie);
+                if (cookieHeader != null) {
+                    response.headers().add("Set-Cookie", cookieHeader);
+                }
             }
         }
 
@@ -1143,22 +1175,17 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
             for (InterfaceHttpData data : bodyData) {
                 if (data.getHttpDataType() == InterfaceHttpData.HttpDataType.FileUpload) {
                     FileUpload fileUpload = (FileUpload) data;
-                    try {
-                        if (fileUpload.isCompleted()) {
-                            // Copy file content to a byte array so the FileUpload can be released
-                            byte[] content = fileUpload.get();
-                            MultipartFile multipartFile = new MultipartFile(
-                                    fileUpload.getName(),
-                                    fileUpload.getFilename(),
-                                    fileUpload.getContentType(),
-                                    content);
-                            requestContext.addMultipartFile(multipartFile);
-                            log.debug("Parsed multipart file: name={}, filename={}, size={}",
-                                    fileUpload.getName(), fileUpload.getFilename(), content.length);
-                        }
-                    } finally {
-                        // Release temporary file resources held by this FileUpload
-                        fileUpload.release();
+                    if (fileUpload.isCompleted()) {
+                        // Copy file content to a byte array; decoder.destroy() will release the FileUpload
+                        byte[] content = fileUpload.get();
+                        MultipartFile multipartFile = new MultipartFile(
+                                fileUpload.getName(),
+                                fileUpload.getFilename(),
+                                fileUpload.getContentType(),
+                                content);
+                        requestContext.addMultipartFile(multipartFile);
+                        log.debug("Parsed multipart file: name={}, filename={}, size={}",
+                                fileUpload.getName(), fileUpload.getFilename(), content.length);
                     }
                 }
             }
@@ -1196,7 +1223,14 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         String[] origins = crossOrigin.origins();
         String requestOrigin = msg.headers().get("Origin");
         if (origins.length == 1 && "*".equals(origins[0])) {
-            response.headers().set("Access-Control-Allow-Origin", "*");
+            // When allowCredentials is true, wildcard "*" is invalid per CORS spec;
+            // echo back the request Origin instead and add Vary: Origin
+            if (crossOrigin.allowCredentials() && requestOrigin != null) {
+                response.headers().set("Access-Control-Allow-Origin", requestOrigin);
+                response.headers().set("Vary", "Origin");
+            } else {
+                response.headers().set("Access-Control-Allow-Origin", "*");
+            }
         } else if (requestOrigin != null) {
             for (String origin : origins) {
                 if (origin.equals(requestOrigin)) {

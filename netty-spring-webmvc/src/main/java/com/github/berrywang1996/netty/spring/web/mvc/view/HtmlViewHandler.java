@@ -41,13 +41,17 @@ public class HtmlViewHandler extends AbstractViewHandler<String> {
     @Override
     public FullHttpResponse handleView(String data) {
 
+        // Guard against null data (e.g. controller returning null)
+        if (data == null) {
+            data = "";
+        }
+
         // Encode the HTML string into a ByteBuf using the configured charset
         ByteBuf content = Unpooled.copiedBuffer(data, Charset.forName(getCharset()));
         FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK, content);
         // Set standard response headers
         response.headers().set(HttpHeaderNames.CONTENT_TYPE, getContentType());
-        response.headers().set(HttpHeaderNames.TRANSFER_ENCODING, "chunked");
-        response.headers().get(HttpHeaderNames.COOKIE, "");
+        response.headers().set(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes());
         return response;
 
     }

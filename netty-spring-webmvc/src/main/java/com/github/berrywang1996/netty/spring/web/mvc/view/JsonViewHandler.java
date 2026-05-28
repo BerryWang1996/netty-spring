@@ -9,7 +9,6 @@ import io.netty.handler.codec.http.*;
 import lombok.extern.slf4j.Slf4j;
 
 import java.nio.charset.Charset;
-import java.text.SimpleDateFormat;
 
 /**
  * View handler that renders JSON responses by serializing Java objects with Jackson's {@link ObjectMapper}.
@@ -32,7 +31,8 @@ public class JsonViewHandler extends AbstractViewHandler<Object> {
     static {
         // Initialize ObjectMapper with date format and lenient empty-bean handling
         OBJECT_MAPPER = new ObjectMapper();
-        OBJECT_MAPPER.setDateFormat(new SimpleDateFormat("yyyy-MM-dd"));
+        // Use Jackson's thread-safe StdDateFormat instead of SimpleDateFormat
+        OBJECT_MAPPER.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         OBJECT_MAPPER.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
     }
 
@@ -69,7 +69,7 @@ public class JsonViewHandler extends AbstractViewHandler<Object> {
         ByteBuf content = Unpooled.copiedBuffer(jsonString, Charset.forName(getCharset()));
         FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK, content);
         response.headers().set(HttpHeaderNames.CONTENT_TYPE, getContentType());
-        response.headers().set(HttpHeaderNames.TRANSFER_ENCODING, "chunked");
+        response.headers().set(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes());
         return response;
 
     }

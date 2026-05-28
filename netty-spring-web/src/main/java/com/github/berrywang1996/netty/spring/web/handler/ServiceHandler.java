@@ -594,28 +594,31 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
             ServiceHandlerUtil.sendError(ctx, msg, errorMsg);
             return;
         }
-        long fileLength = raf.length();
 
-        // Build the HTTP response with content type, cache headers, and keep-alive
-        HttpResponse response = new DefaultHttpResponse(HTTP_1_1, OK);
-        HttpUtil.setContentLength(response, fileLength);
-        ServiceHandlerUtil.setContentTypeHeader(response, file);
-        ServiceHandlerUtil.setDateAndCacheHeaders(response, file);
-        response.headers().set(HttpHeaderNames.CONTENT_BASE, HttpHeaderValues.KEEP_ALIVE);
-        if (HttpUtil.isKeepAlive(msg)) {
-            response.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE);
-        }
+        try {
+            long fileLength = raf.length();
 
-        // Write the initial line and the header
-        ctx.write(response);
+            // Build the HTTP response with content type, cache headers, and keep-alive
+            HttpResponse response = new DefaultHttpResponse(HTTP_1_1, OK);
+            HttpUtil.setContentLength(response, fileLength);
+            ServiceHandlerUtil.setContentTypeHeader(response, file);
+            ServiceHandlerUtil.setDateAndCacheHeaders(response, file);
+            if (HttpUtil.isKeepAlive(msg)) {
+                response.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE);
+            }
 
-        // Write the file content using chunked transfer (8KB chunks)
-        ChannelFuture sendFileFuture =
-                ctx.write(new HttpChunkedInput(new ChunkedFile(raf, 0, fileLength, 8192)),
-                        ctx.newProgressivePromise());
+            // Write the initial line and the header
+            ctx.write(response);
 
-        // Write the end marker to signal response completion
-        ChannelFuture lastContentFuture = ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
+            // Write the file content using chunked transfer (8KB chunks)
+            // ChunkedFile takes ownership of the RandomAccessFile and closes it when done
+            ChannelFuture sendFileFuture =
+                    ctx.write(new HttpChunkedInput(new ChunkedFile(raf, 0, fileLength, 8192)),
+                            ctx.newProgressivePromise());
+            raf = null; // Ownership transferred to ChunkedFile — do not close manually
+
+            // Write the end marker to signal response completion
+            ChannelFuture lastContentFuture = ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
 
         // Monitor file transfer progress for debugging
         sendFileFuture.addListener(new ChannelProgressiveFutureListener() {
@@ -642,6 +645,12 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         // Close the connection after transfer if the client does not support keep-alive
         if (!HttpUtil.isKeepAlive(msg)) {
             lastContentFuture.addListener(ChannelFutureListener.CLOSE);
+        }
+        } finally {
+            // Close RAF only if ownership was NOT transferred to ChunkedFile
+            if (raf != null) {
+                raf.close();
+            }
         }
     }
 

@@ -40,21 +40,24 @@ public class BinaryMessage extends AbstractMessage<BinaryWebSocketFrame> {
     }
 
     /**
-     * Returns the internal binary data array.
+     * Returns a defensive copy of the binary data array.
      *
-     * @return the byte array backing this message
+     * @return a copy of the byte array backing this message
      */
     public byte[] getBinaryData() {
-        return binaryData;
+        return binaryData.clone();
     }
 
     /**
-     * Replaces the internal binary data.
+     * Replaces the internal binary data with a defensive copy.
      *
      * @param binaryData the new byte array
      */
     public void setBinaryData(byte[] binaryData) {
-        this.binaryData = binaryData;
+        if (binaryData == null) {
+            throw new IllegalArgumentException("binaryData must not be null");
+        }
+        this.binaryData = binaryData.clone();
     }
 
     /**

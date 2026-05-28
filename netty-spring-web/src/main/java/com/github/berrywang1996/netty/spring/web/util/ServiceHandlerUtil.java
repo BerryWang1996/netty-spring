@@ -82,9 +82,9 @@ public class ServiceHandlerUtil {
         String contentType;
 
         // return html when request method is get and request header accept not include application/json
-        if (msg == null || "GET".equals(msg.method().name())
+        if (msg == null || ("GET".equals(msg.method().name())
                 && msg.headers().get("Accept") != null
-                && !msg.headers().get("Accept").contains("application/json")) {
+                && !msg.headers().get("Accept").contains("application/json"))) {
             byteData = Unpooled.copiedBuffer(errorResponseHtml(errorMessage), CharsetUtil.UTF_8);
             contentType = "text/html; charset=UTF-8";
         } else {
@@ -236,14 +236,24 @@ public class ServiceHandlerUtil {
             // only application/x-www-form-urlencoded and multipart/form-data are handled.
             // if request method is post
             if (request instanceof HttpContent) {
-                HttpPostRequestDecoder decoder2 = new HttpPostRequestDecoder(request);
-                decoder2.offer((HttpContent) request);
-                List<InterfaceHttpData> bodyHttpDatas2 = decoder2.getBodyHttpDatas();
-                for (InterfaceHttpData bodyHttpData : bodyHttpDatas2) {
-                    try {
-                        requestParameterMap.put(bodyHttpData.getName(), ((Attribute) bodyHttpData).getValue());
-                    } catch (IOException e) {
-                        log.warn("Failed to read POST parameter '{}': {}", bodyHttpData.getName(), e.getMessage());
+                HttpPostRequestDecoder decoder2 = null;
+                try {
+                    decoder2 = new HttpPostRequestDecoder(request);
+                    decoder2.offer((HttpContent) request);
+                    List<InterfaceHttpData> bodyHttpDatas2 = decoder2.getBodyHttpDatas();
+                    for (InterfaceHttpData bodyHttpData : bodyHttpDatas2) {
+                        // Only process Attribute data (form fields); skip FileUpload etc.
+                        if (bodyHttpData.getHttpDataType() == InterfaceHttpData.HttpDataType.Attribute) {
+                            try {
+                                requestParameterMap.put(bodyHttpData.getName(), ((Attribute) bodyHttpData).getValue());
+                            } catch (IOException e) {
+                                log.warn("Failed to read POST parameter '{}': {}", bodyHttpData.getName(), e.getMessage());
+                            }
+                        }
+                    }
+                } finally {
+                    if (decoder2 != null) {
+                        decoder2.destroy();
                     }
                 }
             }

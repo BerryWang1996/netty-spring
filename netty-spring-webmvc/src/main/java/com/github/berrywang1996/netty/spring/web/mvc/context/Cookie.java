@@ -271,7 +271,7 @@ public class Cookie {
             sb.append(COOKIE_SEPARATOR);
         }
         // Remove the trailing separator
-        sb.delete(sb.length() - 2, sb.length());
+        sb.delete(sb.length() - COOKIE_SEPARATOR.length(), sb.length());
         return sb.toString();
     }
 
@@ -298,10 +298,10 @@ public class Cookie {
         Map<String, String> cookies = new HashMap<>(cookieKVs.length);
         for (String cookieKV : cookieKVs) {
             cookieKV = cookieKV.trim();
-            String[] split = cookieKV.split("=");
-            // Only accept well-formed "name=value" pairs
+            // Split on first "=" only — values may contain "=" (e.g. base64 tokens)
+            String[] split = cookieKV.split("=", 2);
             if (split.length == 2) {
-                cookies.put(split[0], split[1]);
+                cookies.put(split[0].trim(), split[1]);
             }
         }
         return cookies;

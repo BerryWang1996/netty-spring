@@ -233,15 +233,15 @@ public class DataBindUtil {
                             log.error("Failed to set property '{}' on {}", key, target.getClass().getSimpleName(), e);
                         }
                     } else {
-                        // Nested property: create child object and recurse
-                        Object childTarget = ClassUtil.newInstance(parameterTypes[0]);
-                        if (childTarget == null) {
-                            continue;
-                        }
+                        // Nested property: reuse existing child or create a new one
                         try {
-                            // Only set a new child instance if the getter returns null
                             Method readMethod = propertyDescriptor.getReadMethod();
-                            if (readMethod.invoke(target) == null) {
+                            Object childTarget = readMethod != null ? readMethod.invoke(target) : null;
+                            if (childTarget == null) {
+                                childTarget = ClassUtil.newInstance(parameterTypes[0]);
+                                if (childTarget == null) {
+                                    continue;
+                                }
                                 writeMethod.invoke(target, childTarget);
                             }
                             // Remove the first key and recurse into the child object
