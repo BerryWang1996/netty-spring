@@ -67,7 +67,7 @@ public class JsonViewHandler extends AbstractViewHandler<Object> {
         }
         // Encode JSON string into a ByteBuf and build the HTTP response
         ByteBuf content = Unpooled.copiedBuffer(jsonString, Charset.forName(getCharset()));
-        FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK, content);
+        FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, getStatus(), content);
         response.headers().set(HttpHeaderNames.CONTENT_TYPE, getContentType());
         response.headers().set(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes());
         return response;

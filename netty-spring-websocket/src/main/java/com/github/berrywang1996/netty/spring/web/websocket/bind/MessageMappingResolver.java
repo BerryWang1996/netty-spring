@@ -1136,6 +1136,12 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             } catch (Exception e) {
                 handleLifecycleException(frame, session, e);
             }
+        } else if (frame instanceof ContinuationWebSocketFrame) {
+            // Fragmented WebSocket messages (ContinuationWebSocketFrame) are not supported.
+            // Log a warning so operators know data is being dropped rather than failing silently.
+            log.warn("Received ContinuationWebSocketFrame on session {} — fragmented messages are not supported "
+                    + "and will be discarded. Consider enabling WebSocket frame aggregation on the client side.",
+                    session.getSessionId());
         } else {
             try {
                 onOtherMessage(frame, session);

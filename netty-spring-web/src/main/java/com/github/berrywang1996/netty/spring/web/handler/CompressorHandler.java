@@ -79,20 +79,19 @@ public class CompressorHandler extends HttpContentCompressor {
     @Override
     protected Result beginEncode(HttpResponse headers, String acceptEncoding) throws Exception {
 
-        boolean shouldEncode = false;
-
         // Check if the response content type matches any of the configured compressible types
         String contentType = headers.headers().get(HttpHeaderNames.CONTENT_TYPE);
+        if (contentType == null) {
+            // No Content-Type header (e.g. 204 No Content, 304 Not Modified) — skip compression
+            return null;
+        }
+
         for (String gzipType : gzipTypes) {
             if (contentType.startsWith(gzipType)) {
-                shouldEncode = true;
-                break;
+                return super.beginEncode(headers, acceptEncoding);
             }
         }
 
-        if (shouldEncode) {
-            return super.beginEncode(headers, acceptEncoding);
-        }
         // Return null to indicate that compression should not be applied
         return null;
 

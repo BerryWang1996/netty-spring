@@ -48,7 +48,7 @@ public class HtmlViewHandler extends AbstractViewHandler<String> {
 
         // Encode the HTML string into a ByteBuf using the configured charset
         ByteBuf content = Unpooled.copiedBuffer(data, Charset.forName(getCharset()));
-        FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK, content);
+        FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, getStatus(), content);
         // Set standard response headers
         response.headers().set(HttpHeaderNames.CONTENT_TYPE, getContentType());
         response.headers().set(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes());

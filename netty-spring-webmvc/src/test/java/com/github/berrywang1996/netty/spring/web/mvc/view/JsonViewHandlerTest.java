@@ -63,4 +63,16 @@ class JsonViewHandlerTest {
         assertEquals("utf-8", handler.getCharset());
         assertEquals(HttpResponseStatus.OK, handler.getStatus());
     }
+
+    @Test
+    void handleViewUsesOverriddenStatus() {
+        JsonViewHandler handler = new JsonViewHandler();
+        handler.setStatus(HttpResponseStatus.CREATED);
+        FullHttpResponse response = handler.handleView("created");
+        try {
+            assertEquals(HttpResponseStatus.CREATED, response.status());
+        } finally {
+            response.release();
+        }
+    }
 }

@@ -947,6 +947,11 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
                 }
             }
         });
+        // Close the connection after the response for non-keep-alive clients (HTTP/1.0
+        // or clients sending "Connection: close") per HTTP specification.
+        if (!HttpUtil.isKeepAlive(msg)) {
+            writeFuture.addListener(ChannelFutureListener.CLOSE);
+        }
     }
 
     /**
@@ -1210,7 +1215,11 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         FullHttpResponse response = new DefaultFullHttpResponse(
                 HttpVersion.HTTP_1_1, HttpResponseStatus.NO_CONTENT, Unpooled.EMPTY_BUFFER);
         applyCorsHeaders(response, msg);
-        ctx.writeAndFlush(response);
+        ChannelFuture writeFuture = ctx.writeAndFlush(response);
+        // Close the connection after the preflight response for non-keep-alive clients
+        if (!HttpUtil.isKeepAlive(msg)) {
+            writeFuture.addListener(ChannelFutureListener.CLOSE);
+        }
     }
 
     /**

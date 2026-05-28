@@ -44,4 +44,28 @@ class HtmlViewHandlerTest {
             response.release();
         }
     }
+
+    @Test
+    void handleViewWithNullReturnsEmptyBody() {
+        HtmlViewHandler handler = new HtmlViewHandler();
+        FullHttpResponse response = handler.handleView(null);
+        try {
+            String body = response.content().toString(StandardCharsets.UTF_8);
+            assertEquals("", body);
+        } finally {
+            response.release();
+        }
+    }
+
+    @Test
+    void handleViewUsesOverriddenStatus() {
+        HtmlViewHandler handler = new HtmlViewHandler();
+        handler.setStatus(HttpResponseStatus.CREATED);
+        FullHttpResponse response = handler.handleView("<p>created</p>");
+        try {
+            assertEquals(HttpResponseStatus.CREATED, response.status());
+        } finally {
+            response.release();
+        }
+    }
 }
