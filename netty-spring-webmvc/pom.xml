@@ -9,7 +9,7 @@
     <parent>
         <groupId>com.github.berrywang1996</groupId>
         <artifactId>netty-spring-parent</artifactId>
-        <version>1.5.0</version>
+        <version>1.5.1</version>
     </parent>
 
     <artifactId>netty-spring-webmvc</artifactId>
