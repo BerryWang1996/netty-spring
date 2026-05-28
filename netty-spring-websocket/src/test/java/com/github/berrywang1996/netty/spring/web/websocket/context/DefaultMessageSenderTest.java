@@ -312,7 +312,9 @@ class DefaultMessageSenderTest {
                 "/ws/foo",
                 "failing",
                 new SignalingWriteHandler(failedWriteLatch, true));
-        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setBroadcastMode(NettyServerStartupProperties.WebSocket.BroadcastMode.THREAD_POOL_LEGACY);
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver), properties);
 
         try {
             sender.topicMessage("/ws/foo", new TextMessage("hello"));
@@ -343,7 +345,9 @@ class DefaultMessageSenderTest {
                 "writable",
                 new SignalingWriteHandler(writableWriteLatch, false));
         SessionFixture nonWritableSession = addSession(resolver, "/ws/foo", "non-writable", false);
-        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setBroadcastMode(NettyServerStartupProperties.WebSocket.BroadcastMode.THREAD_POOL_LEGACY);
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver), properties);
 
         try {
             sender.topicMessage("/ws/foo", new TextMessage("hello"));
@@ -377,6 +381,7 @@ class DefaultMessageSenderTest {
                 new SignalingWriteHandler(writableWriteLatch, false));
         SessionFixture nonWritableSession = addSession(resolver, "/ws/foo", "non-writable", false);
         NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setBroadcastMode(NettyServerStartupProperties.WebSocket.BroadcastMode.THREAD_POOL_LEGACY);
         properties.setBroadcastNonWritableChannelPolicy(
                 NettyServerStartupProperties.WebSocket.BroadcastNonWritableChannelPolicy.CLOSE);
         DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver), properties);
@@ -419,6 +424,7 @@ class DefaultMessageSenderTest {
                 "s3",
                 new BlockingWriteHandler(null, releaseWrites, writeCount));
         NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setBroadcastMode(NettyServerStartupProperties.WebSocket.BroadcastMode.THREAD_POOL_LEGACY);
         properties.setCorePoolSize(1);
         properties.setMaxPoolSize(1);
         properties.setQueueCapacity(1);
@@ -462,6 +468,7 @@ class DefaultMessageSenderTest {
                 "s2",
                 new BlockingWriteHandler(startedWrites, releaseWrites, writeCount));
         NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setBroadcastMode(NettyServerStartupProperties.WebSocket.BroadcastMode.THREAD_POOL_LEGACY);
         properties.setCorePoolSize(1);
         properties.setMaxPoolSize(1);
         properties.setQueueCapacity(0);
@@ -506,6 +513,7 @@ class DefaultMessageSenderTest {
         SessionFixture session1 = addSession(resolver, "/ws/foo", "s1");
         SessionFixture session2 = addSession(resolver, "/ws/foo", "s2");
         NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setBroadcastMode(NettyServerStartupProperties.WebSocket.BroadcastMode.THREAD_POOL_LEGACY);
         properties.setCorePoolSize(1);
         properties.setMaxPoolSize(1);
         properties.setQueueCapacity(1);
@@ -613,6 +621,7 @@ class DefaultMessageSenderTest {
     @Test
     void usesConfiguredExecutorProperties() throws Exception {
         NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setBroadcastMode(NettyServerStartupProperties.WebSocket.BroadcastMode.THREAD_POOL_LEGACY);
         properties.setCorePoolSize(1);
         properties.setMaxPoolSize(3);
         properties.setKeepAliveTime(7L);
@@ -638,6 +647,7 @@ class DefaultMessageSenderTest {
     @Test
     void usesSynchronousQueueWhenQueueCapacityIsZero() throws Exception {
         NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setBroadcastMode(NettyServerStartupProperties.WebSocket.BroadcastMode.THREAD_POOL_LEGACY);
         properties.setQueueCapacity(0);
         DefaultMessageSender sender = new DefaultMessageSender(Collections.<String, MessageMappingResolver>emptyMap(), properties);
 

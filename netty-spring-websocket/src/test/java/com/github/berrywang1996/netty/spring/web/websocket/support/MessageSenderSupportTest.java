@@ -2,6 +2,7 @@ package com.github.berrywang1996.netty.spring.web.websocket.support;
 
 import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
+import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
 import com.github.berrywang1996.netty.spring.web.websocket.context.DefaultMessageSender;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
@@ -39,8 +40,10 @@ class MessageSenderSupportTest {
     @Test
     void shutdownStopsCachedSender() throws Exception {
         MessageSenderSupport support = new MessageSenderSupport(new NettyServerBootstrap(null));
+        NettyServerStartupProperties.WebSocket wsProps = new NettyServerStartupProperties.WebSocket();
+        wsProps.setBroadcastMode(NettyServerStartupProperties.WebSocket.BroadcastMode.THREAD_POOL_LEGACY);
         DefaultMessageSender sender =
-                new DefaultMessageSender(Collections.<String, MessageMappingResolver>emptyMap());
+                new DefaultMessageSender(Collections.<String, MessageMappingResolver>emptyMap(), wsProps);
         setField(MessageSenderSupport.class, support, "messageSender", sender);
 
         ThreadPoolExecutor executor = extractExecutor(sender);
@@ -85,6 +88,10 @@ class MessageSenderSupportTest {
     @Test
     void rebuildsCachedSenderWhenBootstrapResolverChangesAcrossRestart() throws Exception {
         NettyServerBootstrap bootstrap = new NettyServerBootstrap(null);
+        NettyServerStartupProperties startupProps = new NettyServerStartupProperties();
+        startupProps.getWebSocket().setBroadcastMode(
+                NettyServerStartupProperties.WebSocket.BroadcastMode.THREAD_POOL_LEGACY);
+        setField(NettyServerBootstrap.class, bootstrap, "startupProperties", startupProps);
         MessageSenderSupport support = new MessageSenderSupport(bootstrap);
         MessageMappingResolver firstResolver = new MessageMappingResolver(
                 "/ws/test",
@@ -185,6 +192,10 @@ class MessageSenderSupportTest {
     @Test
     void bootstrapStopShutsDownCachedSender() throws Exception {
         NettyServerBootstrap bootstrap = new NettyServerBootstrap(null);
+        NettyServerStartupProperties startupProps = new NettyServerStartupProperties();
+        startupProps.getWebSocket().setBroadcastMode(
+                NettyServerStartupProperties.WebSocket.BroadcastMode.THREAD_POOL_LEGACY);
+        setField(NettyServerBootstrap.class, bootstrap, "startupProperties", startupProps);
         MessageSenderSupport support = new MessageSenderSupport(bootstrap);
         MessageMappingResolver resolver = new MessageMappingResolver(
                 "/ws/test",
