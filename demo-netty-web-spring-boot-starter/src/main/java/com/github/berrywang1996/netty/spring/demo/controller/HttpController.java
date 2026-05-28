@@ -27,7 +27,7 @@ import java.util.UUID;
 public class HttpController {
 
     /**
-     * Handles any HTTP method on {@code /http/user/{id}/{name}} and returns a
+     * Handles GET requests on {@code /http/user/{id}/{name}} and returns a
      * plain-text response that echoes the path variables.
      *
      * @param id   the user ID extracted from the URI path
@@ -35,7 +35,7 @@ public class HttpController {
      * @return a string in the form {@code "get<id>-<name>"}
      * @throws InterruptedException if the thread is interrupted (declared for demo purposes)
      */
-    @RequestMapping("/user/{id}/{name}")
+    @GetMapping("/user/{id}/{name}")
     @ResponseBody
     public String get(@PathVariable("id") Long id, @PathVariable String name) throws InterruptedException {
         return "get" + id + "-" + name;

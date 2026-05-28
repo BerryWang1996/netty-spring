@@ -1,0 +1,12 @@
+{
+  "name": "netty-spring-stress-test",
+  "version": "1.0.0",
+  "description": "WebSocket stress test for netty-spring framework",
+  "scripts": {
+    "test:connections": "node ws-connection-test.js",
+    "test:chat": "node ws-chat-test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

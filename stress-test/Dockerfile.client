@@ -1,0 +1,12 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package.json ./
+RUN npm install --production
+
+COPY ws-connection-test.js ws-chat-test.js ./
+
+# Default: run connection test
+ENTRYPOINT ["node"]
+CMD ["ws-connection-test.js", "--host=server", "--port=8080"]

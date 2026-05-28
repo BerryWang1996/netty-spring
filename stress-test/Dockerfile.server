@@ -1,0 +1,29 @@
+FROM eclipse-temurin:17-jre-alpine
+
+LABEL maintainer="netty-spring stress test"
+
+WORKDIR /app
+
+COPY demo-netty-web-spring-boot-starter-1.5.1.jar app.jar
+
+# Tune JVM for 4GB container
+# -XX:MaxRAMPercentage=75 uses up to 75% of container memory for heap
+# -XX:+UseG1GC for predictable latency
+# -XX:+AlwaysPreTouch pre-touches memory pages at startup to avoid runtime faults
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:+AlwaysPreTouch \
+    -Dio.netty.leakDetection.level=disabled \
+    -Dio.netty.recycler.maxCapacityPerThread=0"
+
+EXPOSE 8080
+
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar \
+    --logging.level.root=warn \
+    --server.netty.websocket.core-pool-size=8 \
+    --server.netty.websocket.max-pool-size=32 \
+    --server.netty.websocket.queue-capacity=1024 \
+    --server.netty.websocket.handler-core-pool-size=8 \
+    --server.netty.websocket.handler-max-pool-size=32 \
+    --server.netty.websocket.handler-queue-capacity=512 \
+    --server.netty.websocket.handler-permit-limit=1024 \
+    --server.netty.websocket.broadcast-rejected-execution-policy=CALLER_RUNS \
+    --server.netty.websocket.broadcast-non-writable-channel-policy=SKIP"]
