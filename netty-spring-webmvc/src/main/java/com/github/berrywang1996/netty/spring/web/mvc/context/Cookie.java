@@ -67,6 +67,8 @@ public class Cookie {
 
     private Boolean httpOnly;
 
+    private String sameSite;
+
     /**
      * Sets the cookie name.
      *
@@ -212,6 +214,25 @@ public class Cookie {
     }
 
     /**
+     * Returns the SameSite attribute value of the cookie.
+     *
+     * @return the SameSite value ("Strict", "Lax", or "None"), or {@code null} if not set
+     */
+    public String getSameSite() {
+        return sameSite;
+    }
+
+    /**
+     * Sets the SameSite attribute for the cookie. Accepted values are "Strict", "Lax",
+     * or "None". When set to "None", the Secure flag should also be set to {@code true}.
+     *
+     * @param sameSite the SameSite value ("Strict", "Lax", or "None")
+     */
+    public void setSameSite(String sameSite) {
+        this.sameSite = sameSite;
+    }
+
+    /**
      * Serializes a {@link Cookie} object into a {@code Set-Cookie} header string.
      * <p>
      * Appends each non-null attribute (domain, path, expires, max-age, Secure, HTTPOnly)
@@ -226,24 +247,24 @@ public class Cookie {
         }
         // Build "name=value" followed by optional attributes
         StringBuilder sb = new StringBuilder(100);
-        sb.append(cookie.getName());
+        sb.append(sanitizeHeaderValue(cookie.getName()));
         sb.append(COOKIE_EQUAL_MARK);
         if (cookie.getValue() != null) {
-            sb.append(cookie.getValue());
+            sb.append(sanitizeHeaderValue(cookie.getValue()));
         }
         sb.append(COOKIE_SEPARATOR);
         // Append domain attribute if present
         if (cookie.getDomain() != null) {
             sb.append("domain");
             sb.append(COOKIE_EQUAL_MARK);
-            sb.append(cookie.getDomain());
+            sb.append(sanitizeHeaderValue(cookie.getDomain()));
             sb.append(COOKIE_SEPARATOR);
         }
         // Append path attribute if present
         if (cookie.getPath() != null) {
             sb.append("path");
             sb.append(COOKIE_EQUAL_MARK);
-            sb.append(cookie.getPath());
+            sb.append(sanitizeHeaderValue(cookie.getPath()));
             sb.append(COOKIE_SEPARATOR);
         }
         // Append expires attribute formatted in GMT
@@ -270,9 +291,30 @@ public class Cookie {
             sb.append("HTTPOnly");
             sb.append(COOKIE_SEPARATOR);
         }
+        // Append SameSite attribute if present
+        if (cookie.getSameSite() != null) {
+            sb.append("SameSite");
+            sb.append(COOKIE_EQUAL_MARK);
+            sb.append(cookie.getSameSite());
+            sb.append(COOKIE_SEPARATOR);
+        }
         // Remove the trailing separator
         sb.delete(sb.length() - COOKIE_SEPARATOR.length(), sb.length());
         return sb.toString();
+    }
+
+    /**
+     * Strips CR, LF, and NUL characters from a string value to prevent HTTP header
+     * injection (CRLF injection) attacks in Set-Cookie headers.
+     *
+     * @param value the raw string to sanitize
+     * @return the sanitized string with control characters removed
+     */
+    private static String sanitizeHeaderValue(String value) {
+        if (value == null) {
+            return null;
+        }
+        return value.replace("\r", "").replace("\n", "").replace("\0", "");
     }
 
     /**

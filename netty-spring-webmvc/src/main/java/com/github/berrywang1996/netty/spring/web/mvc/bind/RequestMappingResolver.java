@@ -1036,6 +1036,10 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
                             }
                         }
                     });
+                    // Close the connection for non-keep-alive clients
+                    if (!HttpUtil.isKeepAlive(msg)) {
+                        writeFuture.addListener(ChannelFutureListener.CLOSE);
+                    }
                 } finally {
                     // Close RAF only if ownership was NOT transferred to ChunkedFile
                     if (raf != null) {
@@ -1074,6 +1078,10 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
                         }
                     }
                 });
+                // Close the connection for non-keep-alive clients
+                if (!HttpUtil.isKeepAlive(msg)) {
+                    writeFuture.addListener(ChannelFutureListener.CLOSE);
+                }
             }
 
         } catch (Exception e) {

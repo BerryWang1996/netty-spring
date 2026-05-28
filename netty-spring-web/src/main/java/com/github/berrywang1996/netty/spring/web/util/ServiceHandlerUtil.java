@@ -163,7 +163,10 @@ public class ServiceHandlerUtil {
      */
     public static void sendNotModified(ChannelHandlerContext ctx, String url, HttpRequest request) {
         FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, NOT_MODIFIED);
-        response.headers().set(HttpHeaderNames.LOCATION, url);
+        // RFC 7232 §4.1: A 304 MUST include a Date header (unless the server lacks a clock).
+        // The Location header is not appropriate for 304 (it is for 3xx redirects per RFC 7231 §7.1.2).
+        response.headers().set(HttpHeaderNames.DATE,
+                HTTP_DATE_FORMATTER.format(ZonedDateTime.now(ZoneId.of(HTTP_DATE_GMT_TIMEZONE))));
 
         boolean keepAlive = HttpUtil.isKeepAlive(request);
         if (keepAlive) {

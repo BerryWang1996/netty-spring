@@ -356,6 +356,11 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
         List<String> protocols = resolveDelimitedConfig(sslProperties.getProtocols());
         if (!protocols.isEmpty()) {
             sslContextBuilder.protocols(protocols.toArray(new String[0]));
+        } else {
+            // Default to TLS 1.2+ when no protocols are explicitly configured.
+            // TLS 1.0 and 1.1 have known vulnerabilities (BEAST, POODLE) and are
+            // deprecated by RFC 8996.
+            sslContextBuilder.protocols("TLSv1.2", "TLSv1.3");
         }
         List<String> ciphers = resolveDelimitedConfig(sslProperties.getCiphers());
         if (!ciphers.isEmpty()) {
