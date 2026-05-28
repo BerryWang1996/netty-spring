@@ -25,26 +25,66 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Shared bootstrap auto-configuration used by the concrete starters.
+ * Spring Boot auto-configuration for the Netty server bootstrap.
+ *
+ * <p>Creates and configures the {@link NettyServerBootstrap} bean using properties
+ * bound from {@code server.netty.*} configuration keys. The bootstrap is registered
+ * as a singleton bean with a destroy method that gracefully shuts down the server
+ * when the application context is closed.
+ *
+ * <p>This is the foundational auto-configuration class that other Netty-related
+ * configurations (such as {@link MessageSenderSupportConfigure} and
+ * {@link NettyMicrometerConfigure}) depend on via {@code @AutoConfigureAfter}.
+ *
+ * <p>Configuration properties are bound through
+ * {@link NettyServerStartupPropertiesWrapper}, which maps the {@code server.netty.*}
+ * namespace to the internal {@code NettyServerStartupProperties} model.
  *
  * @author berrywang1996
  * @since V1.1.0
+ * @see NettyServerStartupPropertiesWrapper
+ * @see NettyServerBootstrap
  */
 @Slf4j
 @Configuration
 @EnableConfigurationProperties(NettyServerStartupPropertiesWrapper.class)
 public class NettyServerBootstrapConfigure {
 
+    /** Bound configuration properties from the {@code server.netty.*} namespace. */
     private final NettyServerStartupPropertiesWrapper startupProperties;
 
+    /** The Spring application context, passed to the bootstrap for bean resolution. */
     private final ApplicationContext applicationContext;
 
+    /**
+     * Constructs this auto-configuration with the required dependencies injected
+     * by the Spring container.
+     *
+     * @param startupProperties the Netty server startup properties bound from
+     *                          {@code server.netty.*} configuration keys
+     * @param applicationContext the Spring application context used by the bootstrap
+     *                           to discover annotated handler beans
+     */
     public NettyServerBootstrapConfigure(NettyServerStartupPropertiesWrapper startupProperties,
                                          ApplicationContext applicationContext) {
         this.startupProperties = startupProperties;
         this.applicationContext = applicationContext;
     }
 
+    /**
+     * Creates and starts the {@link NettyServerBootstrap} singleton bean.
+     *
+     * <p>The bootstrap is initialized with the current {@link ApplicationContext}
+     * and then started with the bound configuration properties. If startup fails,
+     * an {@link IllegalStateException} is thrown to prevent the application from
+     * starting in a partially broken state.
+     *
+     * <p>The bean's {@code stop} method is registered as the destroy callback,
+     * ensuring the Netty event loops and channels are shut down gracefully.
+     *
+     * @return a fully started {@link NettyServerBootstrap}
+     * @throws IllegalStateException if the Netty server fails to start
+     */
     @Bean(destroyMethod = "stop")
     @ConditionalOnMissingBean
     public NettyServerBootstrap nettyServer() {

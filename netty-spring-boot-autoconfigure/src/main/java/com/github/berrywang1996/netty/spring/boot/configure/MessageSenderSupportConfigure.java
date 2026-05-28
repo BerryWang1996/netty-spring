@@ -28,13 +28,33 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Shared websocket sender auto-configuration used by starters that bring websocket support.
- * The same bean is exposed as both {@code messageSenderSupport} and {@code messageSender}
- * so business code can prefer the {@code MessageSender} interface while keeping the
- * legacy concrete type available.
+ * Spring Boot auto-configuration for WebSocket message sending support.
+ *
+ * <p>Registers a {@link MessageSenderSupport} bean that implements the
+ * {@link MessageSender} interface, enabling application code to broadcast
+ * or send targeted WebSocket messages. The bean is exposed under two names
+ * ({@code messageSenderSupport} and {@code messageSender}) so that both
+ * the concrete type and the preferred {@link MessageSender} interface can
+ * be injected.
+ *
+ * <p>This configuration is activated only when:
+ * <ul>
+ *   <li>{@code MessageSenderSupport} is on the classpath (i.e. the WebSocket
+ *       module is included)</li>
+ *   <li>the property {@code server.netty.websocket.enable} is {@code true}
+ *       (which is the default)</li>
+ *   <li>no other {@link MessageSender} bean has already been defined</li>
+ *   <li>the {@link NettyServerBootstrap} bean exists</li>
+ * </ul>
+ *
+ * <p>The bean's {@code shutdown} method is called on application context
+ * close, ensuring a graceful cleanup of WebSocket resources.
  *
  * @author berrywang1996
  * @since V1.1.0
+ * @see MessageSender
+ * @see MessageSenderSupport
+ * @see NettyServerBootstrapConfigure
  */
 @Configuration
 @AutoConfigureAfter(NettyServerBootstrapConfigure.class)
@@ -42,6 +62,18 @@ import org.springframework.context.annotation.Configuration;
 @ConditionalOnProperty(prefix = "server.netty.websocket", name = "enable", havingValue = "true", matchIfMissing = true)
 public class MessageSenderSupportConfigure {
 
+    /**
+     * Creates a {@link MessageSenderSupport} singleton that wraps the running
+     * {@link NettyServerBootstrap} and exposes WebSocket send/broadcast operations.
+     *
+     * <p>The bean is registered with a {@code destroyMethod} of {@code "shutdown"}
+     * so that pending messages are flushed and channels are closed when the
+     * application context shuts down.
+     *
+     * @param nettyServerBootstrap the bootstrapped Netty server instance that
+     *                             holds the WebSocket channel mappings
+     * @return a new {@link MessageSenderSupport} backed by the given bootstrap
+     */
     @Bean(name = {"messageSenderSupport", "messageSender"}, destroyMethod = "shutdown")
     @ConditionalOnMissingBean(MessageSender.class)
     @ConditionalOnBean(NettyServerBootstrap.class)

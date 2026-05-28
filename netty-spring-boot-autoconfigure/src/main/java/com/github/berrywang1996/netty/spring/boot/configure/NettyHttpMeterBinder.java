@@ -41,39 +41,59 @@ import io.micrometer.core.instrument.binder.MeterBinder;
  */
 public class NettyHttpMeterBinder implements MeterBinder {
 
+    /** The server bootstrap whose HTTP runtime stats are exposed as meters. */
     private final NettyServerBootstrap bootstrap;
 
+    /**
+     * Constructs a new binder that reads HTTP runtime counters from the given bootstrap.
+     *
+     * @param bootstrap the Netty server bootstrap instance; must not be {@code null}
+     */
     public NettyHttpMeterBinder(NettyServerBootstrap bootstrap) {
         this.bootstrap = bootstrap;
     }
 
+    /**
+     * Registers all HTTP-related {@link FunctionCounter} meters with the provided
+     * {@link MeterRegistry}. Each counter is backed by a lambda that reads the
+     * current value from the bootstrap's HTTP runtime statistics, so the counters
+     * always reflect the live server state.
+     *
+     * @param registry the Micrometer meter registry to bind counters to
+     */
     @Override
     public void bindTo(MeterRegistry registry) {
+        // Counter: HTTP responses that failed to write to the channel
         FunctionCounter.builder("netty.http.response.write.failures", bootstrap,
                         b -> b.getHttpRuntimeStats().getHttpResponseWriteFailureCount())
                 .description("HTTP response write failures")
                 .register(registry);
 
+        // Counter: static file requests rejected due to path traversal or validation
         FunctionCounter.builder("netty.http.static.rejected", bootstrap,
                         b -> b.getHttpRuntimeStats().getStaticFileRejectedCount())
                 .description("Static file requests rejected (path traversal, etc.)")
                 .register(registry);
 
+        // Counter: static file responses that failed to write to the channel
         FunctionCounter.builder("netty.http.static.write.failures", bootstrap,
                         b -> b.getHttpRuntimeStats().getStaticFileWriteFailureCount())
                 .description("Static file write failures")
                 .register(registry);
 
+        // Counter: connections closed due to idle timeout
         FunctionCounter.builder("netty.http.idle.closes", bootstrap,
                         b -> b.getHttpRuntimeStats().getIdleCloseCount())
                 .description("Idle connection closes")
                 .register(registry);
 
+        // Counter: WebSocket upgrade requests rejected at the HTTP handler level
         FunctionCounter.builder("netty.http.websocket.handshake.rejected", bootstrap,
                         b -> b.getHttpRuntimeStats().getWebSocketHandshakeRejectedCount())
                 .description("WebSocket handshake rejections at HTTP level")
                 .register(registry);
 
+        // Counter: WebSocket requests rejected because the Origin header was not allowed
         FunctionCounter.builder("netty.http.websocket.origin.rejected", bootstrap,
                         b -> b.getHttpRuntimeStats().getWebSocketOriginRejectedCount())
                 .description("WebSocket origin check rejections")

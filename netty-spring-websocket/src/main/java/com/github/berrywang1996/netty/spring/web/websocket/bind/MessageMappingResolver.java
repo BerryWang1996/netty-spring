@@ -64,6 +64,25 @@ import static io.netty.handler.codec.http.HttpMethod.GET;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
 /**
+ * Core resolver that handles the full lifecycle of a WebSocket mapping endpoint.
+ *
+ * <p>Extends {@link AbstractMappingResolver} to manage WebSocket sessions bound to a
+ * specific URI. Responsibilities include:
+ * <ul>
+ *   <li>Performing the HTTP-to-WebSocket upgrade handshake (origin validation,
+ *       interceptor checks, connection-limit enforcement)</li>
+ *   <li>Dispatching inbound {@code WebSocketFrame}s to the appropriate
+ *       {@code @MessageMapping}-annotated handler methods based on {@link MessageType}</li>
+ *   <li>Managing session lifecycle events: connected, close, heartbeat timeout,
+ *       transport errors, and graceful server shutdown</li>
+ *   <li>Optionally encrypting/decrypting frames via a pluggable
+ *       {@link MessageCryptoCodec}</li>
+ *   <li>Recording runtime event metrics through {@link WebSocketEventRecorder}</li>
+ * </ul>
+ *
+ * <p>Thread safety: session state is stored in a {@link ConcurrentHashMap} and lifecycle
+ * transitions use atomic compare-and-set operations on each {@link MessageSession}.
+ *
  * @author berrywang1996
  * @since V1.0.0
  */
@@ -71,16 +90,22 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 public class MessageMappingResolver extends AbstractMappingResolver<Object, MessageType>
         implements HandlerSubmitterAware {
 
+    /** Default maximum WebSocket frame payload size in bytes (64 KB). */
     private static final int DEFAULT_MAX_FRAME_PAYLOAD_LENGTH = 65536;
 
+    /** WebSocket close status code used during graceful server shutdown (Going Away). */
     private static final int SHUTDOWN_CLOSE_STATUS_CODE = 1001;
 
+    /** Close reason text sent to clients during server shutdown. */
     private static final String SHUTDOWN_CLOSE_REASON = "Server shutting down";
 
+    /** WebSocket close status code used when heartbeat timeout is detected. */
     private static final int HEARTBEAT_CLOSE_STATUS_CODE = 1001;
 
+    /** Close reason text sent to clients when heartbeat timeout occurs. */
     private static final String HEARTBEAT_CLOSE_REASON = "Heartbeat timeout";
 
+    /** Shared ObjectMapper for JSON text payload deserialization in handler parameter binding. */
     private static final ObjectMapper DEFAULT_OBJECT_MAPPER = new ObjectMapper();
 
     private static final String ORIGIN_REJECT_ACTION =
@@ -98,26 +123,50 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
      */
     public static final AttributeKey<String> SESSION_ID_IN_CHANNEL = ServiceHandler.SESSION_ID_IN_CHANNEL;
 
+    /** WebSocket configuration properties (max frame size, heartbeat, crypto, etc.). */
     private final NettyServerStartupProperties.WebSocket webSocketProperties;
 
+    /** Semaphore enforcing the global maximum number of concurrent WebSocket connections. */
     private final Semaphore connectionSemaphore;
 
+    /** Thread-safe map of active sessions keyed by session ID. */
     private final Map<String, MessageSession> sessionMap;
 
+    /** Optional codec for application-level frame encryption/decryption. */
     private final MessageCryptoCodec messageCryptoCodec;
 
+    /** Optional per-session policy that decides whether crypto should be applied. */
     private final MessageCryptoPolicy messageCryptoPolicy;
 
+    /** Submitter for dispatching lifecycle tasks to the handler thread pool. */
     private volatile HandlerSubmitter handlerSubmitter;
 
+    /** Recorder for WebSocket event metrics; defaults to a no-op implementation. */
     private volatile WebSocketEventRecorder eventRecorder = WebSocketEventRecorder.noop();
 
+    /** Optional interceptor invoked before the WebSocket handshake completes. */
     private volatile WebSocketHandshakeInterceptor handshakeInterceptor;
 
+    /**
+     * Creates a resolver with a direct object reference and no WebSocket properties.
+     *
+     * @param url       the WebSocket mapping URI
+     * @param methods   map of message types to their handler methods
+     * @param invokeRef the handler bean instance to invoke methods on
+     */
     public MessageMappingResolver(String url, Map<MessageType, Method> methods, Object invokeRef) {
         this(url, methods, invokeRef, null, null);
     }
 
+    /**
+     * Creates a resolver with a direct object reference, WebSocket properties, and connection limiter.
+     *
+     * @param url                  the WebSocket mapping URI
+     * @param methods              map of message types to their handler methods
+     * @param invokeRef            the handler bean instance to invoke methods on
+     * @param webSocketProperties  WebSocket configuration (heartbeat, max frame size, etc.), may be {@code null}
+     * @param connectionSemaphore  semaphore for connection limit enforcement, may be {@code null}
+     */
     public MessageMappingResolver(String url,
                                   Map<MessageType, Method> methods,
                                   Object invokeRef,
@@ -132,6 +181,16 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         this.sessionMap = new ConcurrentHashMap<>();
     }
 
+    /**
+     * Creates a resolver with a direct object reference and a crypto codec (no policy).
+     *
+     * @param url                  the WebSocket mapping URI
+     * @param methods              map of message types to their handler methods
+     * @param invokeRef            the handler bean instance
+     * @param webSocketProperties  WebSocket configuration, may be {@code null}
+     * @param connectionSemaphore  semaphore for connection limit, may be {@code null}
+     * @param messageCryptoCodec   codec for frame encryption/decryption, may be {@code null}
+     */
     public MessageMappingResolver(String url,
                                   Map<MessageType, Method> methods,
                                   Object invokeRef,
@@ -141,6 +200,17 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         this(url, methods, invokeRef, webSocketProperties, connectionSemaphore, messageCryptoCodec, null);
     }
 
+    /**
+     * Full constructor with all options using a direct object reference.
+     *
+     * @param url                  the WebSocket mapping URI
+     * @param methods              map of message types to their handler methods
+     * @param invokeRef            the handler bean instance
+     * @param webSocketProperties  WebSocket configuration, may be {@code null}
+     * @param connectionSemaphore  semaphore for connection limit, may be {@code null}
+     * @param messageCryptoCodec   codec for frame encryption/decryption, may be {@code null}
+     * @param messageCryptoPolicy  per-session crypto policy, may be {@code null}
+     */
     public MessageMappingResolver(String url,
                                   Map<MessageType, Method> methods,
                                   Object invokeRef,
@@ -157,6 +227,16 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         this.sessionMap = new ConcurrentHashMap<>();
     }
 
+    /**
+     * Creates a resolver that lazily resolves the handler bean from the Spring context.
+     *
+     * @param url                  the WebSocket mapping URI
+     * @param methods              map of message types to their handler methods
+     * @param applicationContext   the Spring application context
+     * @param invokeBeanName       the Spring bean name for the handler
+     * @param webSocketProperties  WebSocket configuration, may be {@code null}
+     * @param connectionSemaphore  semaphore for connection limit, may be {@code null}
+     */
     public MessageMappingResolver(String url,
                                   Map<MessageType, Method> methods,
                                   ApplicationContext applicationContext,
@@ -172,6 +252,17 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         this.sessionMap = new ConcurrentHashMap<>();
     }
 
+    /**
+     * Creates a resolver from the Spring context with a crypto codec (no policy).
+     *
+     * @param url                  the WebSocket mapping URI
+     * @param methods              map of message types to their handler methods
+     * @param applicationContext   the Spring application context
+     * @param invokeBeanName       the Spring bean name for the handler
+     * @param webSocketProperties  WebSocket configuration, may be {@code null}
+     * @param connectionSemaphore  semaphore for connection limit, may be {@code null}
+     * @param messageCryptoCodec   codec for frame encryption/decryption, may be {@code null}
+     */
     public MessageMappingResolver(String url,
                                   Map<MessageType, Method> methods,
                                   ApplicationContext applicationContext,
@@ -183,6 +274,18 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                 messageCryptoCodec, null);
     }
 
+    /**
+     * Full constructor with all options, resolving the handler bean from the Spring context.
+     *
+     * @param url                  the WebSocket mapping URI
+     * @param methods              map of message types to their handler methods
+     * @param applicationContext   the Spring application context
+     * @param invokeBeanName       the Spring bean name for the handler
+     * @param webSocketProperties  WebSocket configuration, may be {@code null}
+     * @param connectionSemaphore  semaphore for connection limit, may be {@code null}
+     * @param messageCryptoCodec   codec for frame encryption/decryption, may be {@code null}
+     * @param messageCryptoPolicy  per-session crypto policy, may be {@code null}
+     */
     public MessageMappingResolver(String url,
                                   Map<MessageType, Method> methods,
                                   ApplicationContext applicationContext,
@@ -200,6 +303,19 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         this.sessionMap = new ConcurrentHashMap<>();
     }
 
+    /**
+     * Main entry point for resolving an inbound message on this WebSocket endpoint.
+     *
+     * <p>Handles two message types:
+     * <ul>
+     *   <li>{@link FullHttpRequest} -- performs the WebSocket upgrade handshake</li>
+     *   <li>{@link WebSocketFrame} -- dispatches to the appropriate handler method</li>
+     * </ul>
+     *
+     * @param ctx the Netty channel handler context
+     * @param msg the inbound message (HTTP request or WebSocket frame)
+     * @throws Exception if handler invocation or frame processing fails
+     */
     @Override
     public void resolve(ChannelHandlerContext ctx, Object msg) throws Exception {
 
@@ -271,6 +387,17 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         }
     }
 
+    /**
+     * Handles an exception that occurred during frame processing or channel operations.
+     *
+     * <p>Looks up the associated session from the channel and closes it via the
+     * transport-error lifecycle. If the session is already gone, the channel is
+     * closed directly.
+     *
+     * @param ctx the Netty channel handler context
+     * @param e   the exception to handle
+     * @throws Exception if the error handler itself fails
+     */
     @Override
     public void resolveException(ChannelHandlerContext ctx, Exception e) throws Exception {
         // if message session not exists, close connection
@@ -286,6 +413,11 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         closeSessionOnTransportError(session, e);
     }
 
+    /**
+     * Removes a session by its ID, clears channel attributes, and releases resources.
+     *
+     * @param sessionId the session ID to remove
+     */
     @Override
     public void removeSession(String sessionId) {
         MessageSession session = sessionMap.remove(sessionId);
@@ -296,6 +428,14 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         releaseSession(session);
     }
 
+    /**
+     * Called when the underlying Netty channel becomes inactive (e.g. TCP reset).
+     *
+     * <p>Removes the session from the map and dispatches the close lifecycle
+     * with {@link CloseReason#CHANNEL_INACTIVE}.
+     *
+     * @param ctx the Netty channel handler context that became inactive
+     */
     @Override
     public void onChannelInactive(ChannelHandlerContext ctx) {
         MessageSession session = removeSession(ctx);
@@ -309,10 +449,24 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         dispatchInactiveCloseLifecycle(session);
     }
 
+    /**
+     * Closes a session due to a transport-level error with the default
+     * {@link CloseReason#TRANSPORT_ERROR} reason.
+     *
+     * @param session   the session to close
+     * @param throwable the transport error that triggered the close
+     */
     public void closeSessionOnTransportError(MessageSession session, Throwable throwable) {
         closeSessionOnTransportError(session, throwable, CloseReason.TRANSPORT_ERROR);
     }
 
+    /**
+     * Closes a session due to a transport-level error with a specific close reason.
+     *
+     * @param session   the session to close
+     * @param throwable the transport error that triggered the close
+     * @param reason    the categorized close reason for metrics
+     */
     public void closeSessionOnTransportError(MessageSession session, Throwable throwable, CloseReason reason) {
         if (session == null || !session.startClosing()) {
             return;
@@ -332,6 +486,10 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         });
     }
 
+    /**
+     * Gracefully shuts down this resolver by closing all active sessions with a
+     * {@link CloseReason#SERVER_SHUTDOWN} close frame.
+     */
     @Override
     public void shutdown() {
         if (sessionMap.isEmpty()) {
@@ -596,6 +754,14 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         }
     }
 
+    /**
+     * Delegates an exception to the user-defined {@code ON_ERROR} handler method, if present.
+     *
+     * @param msg            the original inbound message (may be {@code null})
+     * @param messageSession the session where the error occurred (may be {@code null})
+     * @param e              the exception to handle
+     * @throws Exception if no {@code ON_ERROR} handler is defined, the original exception is re-thrown
+     */
     public void onException(Object msg, MessageSession messageSession, Exception e) throws Exception {
         ChannelHandlerContext ctx = messageSession != null ? messageSession.getChannelHandlerContext() : null;
         onException(msg, ctx, messageSession, e);
@@ -750,15 +916,33 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         }
     }
 
+    /**
+     * Returns the live map of active sessions keyed by session ID.
+     *
+     * @return an unmodifiable view is not enforced; callers should treat it as read-only
+     */
     public Map<String, MessageSession> getSessionMap() {
         return sessionMap;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * @return the current number of active WebSocket sessions on this endpoint
+     */
     @Override
     public int getActiveSessionCount() {
         return sessionMap.size();
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Returns a snapshot of WebSocket event counters including handshake totals,
+     * message counts, and close-reason breakdowns.
+     *
+     * @return an unmodifiable map of counter names to their current values
+     */
     @Override
     public Map<String, Object> getEventCounters() {
         WebSocketEventStats stats = eventRecorder.getStats();
@@ -779,6 +963,17 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         return Collections.unmodifiableMap(counters);
     }
 
+    /**
+     * Encrypts an outbound WebSocket frame if crypto is enabled for the given session.
+     *
+     * <p>If encryption is not applicable (crypto disabled, frame type excluded, or
+     * session-level policy opts out), the original frame is returned unchanged.
+     *
+     * @param session the target session
+     * @param frame   the plain-text outbound frame
+     * @return the encrypted frame, or the original frame if encryption does not apply
+     * @throws Exception if encryption fails
+     */
     public WebSocketFrame encryptOutboundFrame(MessageSession session, WebSocketFrame frame) throws Exception {
         if (!shouldEncryptFrame(session, frame)) {
             return frame;
@@ -793,6 +988,15 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         return encryptedFrame;
     }
 
+    /**
+     * Programmatically closes a session with a custom WebSocket close status code and reason.
+     *
+     * @param sessionId  the ID of the session to close
+     * @param statusCode the WebSocket close status code (e.g. 1000 for normal)
+     * @param reasonText human-readable close reason text
+     * @return {@code true} if the close lifecycle was successfully initiated,
+     *         {@code false} if the session was not found or already closing
+     */
     public boolean closeSession(String sessionId, int statusCode, String reasonText) {
         if (StringUtil.isBlank(sessionId)) {
             return false;
@@ -1145,19 +1349,35 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         }
     }
 
+    /** {@inheritDoc} */
     @Override
     public void setHandlerSubmitter(HandlerSubmitter handlerSubmitter) {
         this.handlerSubmitter = handlerSubmitter;
     }
 
+    /**
+     * Sets the event recorder for collecting WebSocket runtime metrics.
+     *
+     * @param eventRecorder the recorder instance, or {@code null} to use a no-op recorder
+     */
     public void setEventRecorder(WebSocketEventRecorder eventRecorder) {
         this.eventRecorder = eventRecorder != null ? eventRecorder : WebSocketEventRecorder.noop();
     }
 
+    /**
+     * Returns the current event recorder.
+     *
+     * @return the active event recorder (never {@code null})
+     */
     public WebSocketEventRecorder getEventRecorder() {
         return eventRecorder;
     }
 
+    /**
+     * Sets the handshake interceptor to be invoked before the WebSocket upgrade.
+     *
+     * @param interceptor the interceptor, or {@code null} to disable interception
+     */
     public void setHandshakeInterceptor(WebSocketHandshakeInterceptor interceptor) {
         this.handshakeInterceptor = interceptor;
     }

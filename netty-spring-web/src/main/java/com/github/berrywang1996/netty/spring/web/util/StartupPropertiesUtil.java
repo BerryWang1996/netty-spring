@@ -22,12 +22,28 @@ import lombok.extern.slf4j.Slf4j;
 import java.io.File;
 
 /**
+ * Validation utility for {@link NettyServerStartupProperties}.
+ *
+ * <p>Performs startup-time validation of all server configuration properties,
+ * including port, file locations, SSL certificates, HTTP timeouts, WebSocket
+ * executor settings, heartbeat intervals, crypto configuration, and management
+ * endpoint paths. Also creates required directories if they do not exist.
+ *
  * @author berrywang1996
  * @since V1.0.0
  */
 @Slf4j
 public class StartupPropertiesUtil {
 
+    /**
+     * Validates and normalizes the given startup properties, throwing descriptive
+     * exceptions for any invalid configuration. Creates required directories if needed.
+     *
+     * @param properties the startup properties to validate
+     * @throws NullPointerException     if properties are {@code null}
+     * @throws IllegalArgumentException if any property value is invalid
+     * @throws Exception                if directory creation or other I/O operations fail
+     */
     public static void checkAndImproveProperties(NettyServerStartupProperties properties) throws Exception {
         NettyServerStartupProperties.Http httpProperties = properties == null ? null : properties.getHttp();
 
@@ -64,6 +80,7 @@ public class StartupPropertiesUtil {
 
     }
 
+    /** Validates SSL certificate and key paths when SSL is enabled. */
     private static void validateSslProperties(NettyServerStartupProperties.Ssl sslProperties) {
         if (sslProperties == null || !sslProperties.isEnable()) {
             return;
@@ -78,6 +95,7 @@ public class StartupPropertiesUtil {
         validateFileExists("SSL certificate key", sslProperties.getCertificateKey());
     }
 
+    /** Verifies that a file exists, is a regular file, and is readable. */
     private static void validateFileExists(String name, String path) {
         File file = new File(path);
         if (!file.exists() || !file.isFile() || !file.canRead()) {
@@ -85,6 +103,7 @@ public class StartupPropertiesUtil {
         }
     }
 
+    /** Validates that HTTP read, write, and idle timeout values are non-negative. */
     private static void validateHttpTimeoutProperties(NettyServerStartupProperties.Http httpProperties) {
         if (httpProperties == null) {
             return;
@@ -100,6 +119,7 @@ public class StartupPropertiesUtil {
         }
     }
 
+    /** Validates WebSocket thread pool, permit, heartbeat, and crypto configuration. */
     private static void validateWebSocketExecutorProperties(NettyServerStartupProperties.WebSocket webSocketProperties) {
         if (webSocketProperties == null) {
             return;
@@ -147,6 +167,7 @@ public class StartupPropertiesUtil {
         }
     }
 
+    /** Validates management endpoint paths are non-blank, start with '/', and are distinct. */
     private static void validateManagementProperties(NettyServerStartupProperties.Management managementProperties) {
         if (managementProperties == null || !managementProperties.isEnable()) {
             return;
@@ -158,6 +179,7 @@ public class StartupPropertiesUtil {
         }
     }
 
+    /** Validates that a management endpoint path is non-blank and starts with '/'. */
     private static void validateManagementPath(String name, String path) {
         if (StringUtil.isBlank(path)) {
             throw new IllegalArgumentException(name + " should not be blank when management is enabled.");
@@ -167,6 +189,7 @@ public class StartupPropertiesUtil {
         }
     }
 
+    /** Validates that thread pool executor properties have consistent non-negative values. */
     private static void validateExecutorProperties(String name,
                                                    int corePoolSize,
                                                    int maxPoolSize,
@@ -189,6 +212,11 @@ public class StartupPropertiesUtil {
         }
     }
 
+    /**
+     * Creates the directory at the given path (including parents) if it does not already exist.
+     *
+     * @param path the directory path to create
+     */
     private static void createDirectory(String path) {
 
         File root = new File(path);

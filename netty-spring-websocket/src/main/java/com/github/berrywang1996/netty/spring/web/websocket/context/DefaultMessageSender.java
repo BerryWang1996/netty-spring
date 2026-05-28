@@ -29,8 +29,33 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
+ * Default implementation of the {@link MessageSender} interface.
+ *
+ * <p>This class provides the core logic for sending targeted messages, broadcasting
+ * to all sessions on a URI, querying session state, and closing sessions. It manages
+ * its own {@link ThreadPoolExecutor} for asynchronous broadcast delivery and tracks
+ * runtime statistics (rejected broadcasts, write failures, non-writable channels, etc.)
+ * via atomic counters.
+ *
+ * <h3>Threading model</h3>
+ * <ul>
+ *   <li>Targeted sends ({@link #sendMessage}) run synchronously on the caller thread.</li>
+ *   <li>Broadcasts ({@link #topicMessage}) submit per-session tasks to the internal thread pool.
+ *       When the pool is saturated, the configurable rejection policy determines whether
+ *       the task falls back to the caller thread or is dropped.</li>
+ *   <li>Non-writable channels during broadcast are either skipped or force-closed,
+ *       depending on the configured {@code BroadcastNonWritableChannelPolicy}.</li>
+ * </ul>
+ *
+ * <h3>Lifecycle</h3>
+ * The sender must be shut down via {@link #shutdown()} when no longer needed.
+ * {@link com.github.berrywang1996.netty.spring.web.websocket.support.MessageSenderSupport}
+ * handles this automatically via its server stop listener.
+ *
  * @author berrywang1996
  * @version V1.0.0
+ * @since V1.0.0
+ * @see MessageSender
  */
 @Slf4j
 public class DefaultMessageSender implements MessageSender {
@@ -46,26 +71,35 @@ public class DefaultMessageSender implements MessageSender {
 
     private final NettyServerStartupProperties.WebSocket webSocketProperties;
 
+    /** Thread pool used for asynchronous broadcast delivery. */
     private final ThreadPoolExecutor executorService;
 
+    /** URI-to-resolver mapping; each resolver owns a session map for one WebSocket URI. */
     private final Map<String, MessageMappingResolver> resolverMap;
 
+    // ---- Runtime statistics counters (all atomic for lock-free thread safety) ----
     private final AtomicLong rejectedBroadcastCount = new AtomicLong();
-
     private final AtomicLong callerRunsFallbackCount = new AtomicLong();
-
     private final AtomicLong droppedBroadcastCount = new AtomicLong();
-
     private final AtomicLong nonWritableSkipCount = new AtomicLong();
-
     private final AtomicLong nonWritableCloseCount = new AtomicLong();
-
     private final AtomicLong writeFailureCount = new AtomicLong();
 
+    /**
+     * Creates a sender with default WebSocket properties.
+     *
+     * @param resolverMap URI-to-resolver mapping
+     */
     public DefaultMessageSender(Map<String, MessageMappingResolver> resolverMap) {
         this(resolverMap, null);
     }
 
+    /**
+     * Creates a sender with explicit WebSocket properties for thread pool and policy tuning.
+     *
+     * @param resolverMap        URI-to-resolver mapping
+     * @param webSocketProperties configuration properties (may be {@code null} for defaults)
+     */
     public DefaultMessageSender(Map<String, MessageMappingResolver> resolverMap,
                                 NettyServerStartupProperties.WebSocket webSocketProperties) {
         this.resolverMap = resolverMap;
@@ -73,6 +107,10 @@ public class DefaultMessageSender implements MessageSender {
         this.executorService = initHandlerExecutorThreadPool(webSocketProperties);
     }
 
+    /**
+     * Initializes the broadcast thread pool with configurable sizes and an AbortPolicy
+     * so that rejected tasks can be caught and handled by the broadcast rejection policy.
+     */
     private ThreadPoolExecutor initHandlerExecutorThreadPool(NettyServerStartupProperties.WebSocket webSocketProperties) {
         int corePoolSize = resolveCorePoolSize(webSocketProperties);
         int maxPoolSize = Math.max(corePoolSize, resolveMaxPoolSize(webSocketProperties));
@@ -88,6 +126,7 @@ public class DefaultMessageSender implements MessageSender {
                 new ThreadPoolExecutor.AbortPolicy());
     }
 
+    /** {@inheritDoc} */
     @Override
     public int getSessionNums() {
         int total = 0;
@@ -97,6 +136,7 @@ public class DefaultMessageSender implements MessageSender {
         return total;
     }
 
+    /** {@inheritDoc} */
     @Override
     public int getSessionNums(String uri) {
         MessageMappingResolver resolver = resolverMap.get(uri);
@@ -106,6 +146,7 @@ public class DefaultMessageSender implements MessageSender {
         return resolver.getSessionMap().size();
     }
 
+    /** {@inheritDoc} */
     @Override
     public Set<String> getSessionIds(String uri) {
         MessageMappingResolver resolver = resolverMap.get(uri);
@@ -121,6 +162,7 @@ public class DefaultMessageSender implements MessageSender {
         return Collections.unmodifiableSet(sessionIds);
     }
 
+    /** {@inheritDoc} */
     @Override
     public MessageSession getSession(String uri, String sessionId) {
         MessageMappingResolver resolver = resolverMap.get(uri);
@@ -130,6 +172,7 @@ public class DefaultMessageSender implements MessageSender {
         return resolver.getSessionMap().get(sessionId);
     }
 
+    /** {@inheritDoc} */
     @Override
     public Map<String, MessageSession> getSessions(String uri) {
         MessageMappingResolver resolver = resolverMap.get(uri);
@@ -145,11 +188,13 @@ public class DefaultMessageSender implements MessageSender {
         return Collections.unmodifiableMap(sessions);
     }
 
+    /** {@inheritDoc} */
     @Override
     public Set<String> getRegisteredUri() {
         return resolverMap.keySet();
     }
 
+    /** {@inheritDoc} */
     @Override
     public boolean isSessionAlive(String uri, String... sessionIds) {
         if (sessionIds == null || sessionIds.length == 0) {
@@ -167,6 +212,14 @@ public class DefaultMessageSender implements MessageSender {
         return true;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Sends the message synchronously on the caller thread to each specified session.
+     * Sessions that are closed or whose channel is no longer active are collected, and a
+     * {@link MessageSessionClosedException} is thrown after all remaining sessions have
+     * been sent to.
+     */
     @Override
     public void sendMessage(String uri, AbstractMessage message, String... sessionIds)
             throws MessageUriNotDefinedException, MessageSessionClosedException {
@@ -175,10 +228,12 @@ public class DefaultMessageSender implements MessageSender {
             throw new MessageUriNotDefinedException(uri, resolverMap.keySet());
         }
         Map<String, MessageSession> sessionMap = resolver.getSessionMap();
+        // Collect closed session IDs lazily to avoid allocation on the happy path
         List<String> closedSessionIds = null;
         for (String sessionId : sessionIds) {
             MessageSession session = sessionMap.get(sessionId);
             if (session == null || !session.getChannelHandlerContext().channel().isActive()) {
+                // Clean up stale session from the map if the channel is dead
                 if (session != null) {
                     resolver.removeSession(sessionId);
                 }
@@ -190,11 +245,20 @@ public class DefaultMessageSender implements MessageSender {
                 sendMessageFrame(resolver, session, message);
             }
         }
+        // Throw after attempting all sends so partial delivery still occurs
         if (closedSessionIds != null && closedSessionIds.size() > 0) {
             throw new MessageSessionClosedException(uri, closedSessionIds);
         }
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Broadcasts the message to all active sessions on the given URI.
+     * Each session's send is submitted as an asynchronous task to the internal thread
+     * pool. Sessions that are closing, inactive, or whose channel is not writable are
+     * filtered out according to the configured policies.
+     */
     @Override
     public void topicMessage(String uri, final AbstractMessage message) throws MessageUriNotDefinedException {
         MessageMappingResolver resolver = resolverMap.get(uri);
@@ -203,6 +267,7 @@ public class DefaultMessageSender implements MessageSender {
         }
         Map<String, MessageSession> sessionMap = resolver.getSessionMap();
         for (final MessageSession session : sessionMap.values()) {
+            // Skip sessions that are closing, inactive, or not writable
             if (!prepareSessionForBroadcast(resolver, session)) {
                 continue;
             }
@@ -210,6 +275,7 @@ public class DefaultMessageSender implements MessageSender {
         }
     }
 
+    /** {@inheritDoc} */
     @Override
     public boolean closeSession(String uri, String sessionId, int statusCode, String reasonText)
             throws MessageUriNotDefinedException {
@@ -220,6 +286,7 @@ public class DefaultMessageSender implements MessageSender {
         return resolver.closeSession(sessionId, statusCode, reasonText);
     }
 
+    /** {@inheritDoc} */
     @Override
     public int closeSessions(String uri, int statusCode, String reasonText) throws MessageUriNotDefinedException {
         MessageMappingResolver resolver = resolverMap.get(uri);
@@ -235,6 +302,7 @@ public class DefaultMessageSender implements MessageSender {
         return closed;
     }
 
+    /** {@inheritDoc} */
     @Override
     public MessageSenderRuntimeStats getRuntimeStats() {
         return new MessageSenderRuntimeStats(
@@ -247,6 +315,13 @@ public class DefaultMessageSender implements MessageSender {
                 this.writeFailureCount.get());
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Initiates a graceful shutdown of the broadcast thread pool, waiting up to
+     * 5 seconds for in-flight tasks before forcing termination. Re-interrupts the
+     * calling thread if the wait is interrupted.
+     */
     @Override
     public void shutdown() {
         if (executorService.isShutdown()) {
@@ -254,15 +329,21 @@ public class DefaultMessageSender implements MessageSender {
         }
         executorService.shutdown();
         try {
+            // Wait briefly for in-flight broadcast tasks to complete
             if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
                 executorService.shutdownNow();
             }
         } catch (InterruptedException e) {
             executorService.shutdownNow();
+            // Preserve interrupt status for upstream callers
             Thread.currentThread().interrupt();
         }
     }
 
+    /**
+     * Submits a broadcast send task to the thread pool for one session.
+     * If the pool rejects the task (saturated), delegates to the rejection policy handler.
+     */
     private void submitBroadcastTask(final MessageMappingResolver resolver,
                                      final MessageSession session,
                                      final AbstractMessage message) {
@@ -288,6 +369,16 @@ public class DefaultMessageSender implements MessageSender {
         sendMessageFrame(resolver, session, message, false);
     }
 
+    /**
+     * Core frame-level send logic: converts the message to a frame, optionally encrypts it,
+     * writes it to the channel, and handles write failures.
+     *
+     * @param resolver                 the resolver owning the session
+     * @param session                  the target session
+     * @param message                  the application-level message
+     * @param dropIfChannelNotWritable if {@code true}, skip the send when the channel is not writable
+     *                                 (used during broadcast to avoid backpressure buildup)
+     */
     private void sendMessageFrame(final MessageMappingResolver resolver,
                                   final MessageSession session,
                                   final AbstractMessage message,
@@ -298,6 +389,7 @@ public class DefaultMessageSender implements MessageSender {
         if (dropIfChannelNotWritable && !prepareSessionForBroadcast(resolver, session)) {
             return;
         }
+        // Convert application message to a Netty frame and encrypt if needed
         Object outboundMessage = null;
         try {
             outboundMessage = message.responseMsg();
@@ -305,10 +397,12 @@ public class DefaultMessageSender implements MessageSender {
                 outboundMessage = resolver.encryptOutboundFrame(session, (WebSocketFrame) outboundMessage);
             }
         } catch (Exception e) {
+            // Release the partially-built frame to prevent ByteBuf leaks
             ReferenceCountUtil.release(outboundMessage);
             handleWriteFailure(resolver, session, e);
             return;
         }
+        // Write and flush the frame to the channel
         ChannelFuture future;
         try {
             future = session.getChannelHandlerContext().writeAndFlush(outboundMessage);
@@ -317,6 +411,7 @@ public class DefaultMessageSender implements MessageSender {
             handleWriteFailure(resolver, session, e);
             return;
         }
+        // Track success/failure asynchronously via the channel future listener
         future.addListener(new ChannelFutureListener() {
             @Override
             public void operationComplete(ChannelFuture future) {
@@ -329,6 +424,7 @@ public class DefaultMessageSender implements MessageSender {
         });
     }
 
+    /** Increments the write failure counter and closes the session via the transport error lifecycle. */
     private void handleWriteFailure(MessageMappingResolver resolver, MessageSession session, Throwable cause) {
         this.writeFailureCount.incrementAndGet();
         log.warn("Send websocket message failed, close session {} through websocket lifecycle. stats={}",
@@ -338,6 +434,7 @@ public class DefaultMessageSender implements MessageSender {
         resolver.closeSessionOnTransportError(session, cause, CloseReason.WRITE_FAILURE);
     }
 
+    /** Checks whether a session exists, is not closing, and its channel is still active. */
     private boolean isSessionActive(MessageMappingResolver resolver, String sessionId) {
         MessageSession session = resolver.getSessionMap().get(sessionId);
         if (session == null) {
@@ -353,6 +450,7 @@ public class DefaultMessageSender implements MessageSender {
         return true;
     }
 
+    /** Pre-flight check for broadcast: verifies the session is active and the channel is writable. */
     private boolean prepareSessionForBroadcast(MessageMappingResolver resolver, MessageSession session) {
         if (!isSessionActive(resolver, session.getSessionId())) {
             return false;
@@ -364,6 +462,10 @@ public class DefaultMessageSender implements MessageSender {
         return false;
     }
 
+    /**
+     * Handles a non-writable channel during broadcast according to the configured policy:
+     * either CLOSE (force-close the session) or SKIP (drop the message for this session).
+     */
     private void handleNonWritableBroadcastSession(MessageMappingResolver resolver, MessageSession session) {
         if (resolveBroadcastNonWritableChannelPolicy()
                 == NettyServerStartupProperties.WebSocket.BroadcastNonWritableChannelPolicy.CLOSE) {
@@ -381,6 +483,11 @@ public class DefaultMessageSender implements MessageSender {
                 getRuntimeStats());
     }
 
+    /**
+     * Handles a rejected broadcast task when the thread pool is saturated.
+     * Depending on the configured policy: CALLER_RUNS sends on the caller thread,
+     * DROP silently discards the message for this session.
+     */
     private void handleRejectedBroadcastTask(MessageMappingResolver resolver,
                                              MessageSession session,
                                              AbstractMessage message,
@@ -449,6 +556,10 @@ public class DefaultMessageSender implements MessageSender {
         return webSocketProperties.getQueueCapacity();
     }
 
+    /**
+     * Creates the work queue for the broadcast executor. A capacity of 0 uses a
+     * {@link SynchronousQueue} (direct handoff), otherwise an {@link ArrayBlockingQueue}.
+     */
     private BlockingQueue<Runnable> initExecutorQueue(int queueCapacity) {
         if (queueCapacity == 0) {
             return new SynchronousQueue<Runnable>();

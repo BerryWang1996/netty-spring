@@ -3,10 +3,22 @@ package com.github.berrywang1996.netty.spring.demo.controller;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestMapping;
 import org.springframework.stereotype.Controller;
 
+/**
+ * Controller that serves the WebSocket AES-GCM crypto demo page.
+ * <p>
+ * The page at {@code /ws/crypto-demo} provides a browser-based UI for encrypting
+ * and decrypting WebSocket messages using the Web Crypto API. It demonstrates
+ * the client-side of the AES-GCM envelope format expected by the server's
+ * {@code MessageCryptoKeyProvider} infrastructure.
+ *
+ * @author berrywang1996
+ * @since V1.3.0
+ */
 @Controller
 @RequestMapping("/ws")
 public class WebSocketCryptoDemoController {
 
+    /** Inline HTML/JS template for the crypto demo page. */
     private static final String CRYPTO_DEMO_HTML = """
             <!doctype html>
             <html lang="en">
@@ -296,6 +308,11 @@ public class WebSocketCryptoDemoController {
             </html>
             """;
 
+    /**
+     * Serves the WebSocket AES-GCM crypto demo HTML page.
+     *
+     * @return the inline HTML string containing the crypto demo UI and JavaScript
+     */
     @RequestMapping("/crypto-demo")
     public String cryptoDemo() {
         return CRYPTO_DEMO_HTML;

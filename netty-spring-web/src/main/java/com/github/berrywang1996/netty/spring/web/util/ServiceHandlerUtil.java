@@ -27,6 +27,16 @@ import static io.netty.handler.codec.http.HttpResponseStatus.NOT_MODIFIED;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
 /**
+ * Utility class for common HTTP response operations used by the service handler layer.
+ *
+ * <p>Provides helper methods for:
+ * <ul>
+ *   <li>Sending error responses (HTML for browsers, JSON for API clients)</li>
+ *   <li>Sending redirect and 304 Not Modified responses</li>
+ *   <li>Setting content-type, date, and cache headers for static file responses</li>
+ *   <li>Parsing HTTP request parameters from GET query strings and POST form bodies</li>
+ * </ul>
+ *
  * @author berrywang1996
  * @version V1.0.0
  */
@@ -34,20 +44,36 @@ public class ServiceHandlerUtil {
 
     private static final Logger log = LoggerFactory.getLogger(ServiceHandlerUtil.class);
 
+    /** Standard HTTP date format pattern (RFC 1123). */
     public static final String HTTP_DATE_FORMAT = "EEE, dd MMM yyyy HH:mm:ss zzz";
 
+    /** GMT timezone identifier used for HTTP date headers. */
     public static final String HTTP_DATE_GMT_TIMEZONE = "GMT";
 
+    /** Default cache duration in seconds for static file responses. */
     public static final int HTTP_CACHE_SECONDS = 60;
 
+    /** Shared MIME type map for determining content types from file extensions. */
     public static final MimetypesFileTypeMap MIME_TYPES_MAP = new MimetypesFileTypeMap();
 
+    /** Pre-built formatter for HTTP date headers in RFC 1123 format. */
     private static final DateTimeFormatter HTTP_DATE_FORMATTER =
             DateTimeFormatter.ofPattern(HTTP_DATE_FORMAT, Locale.US).withZone(ZoneId.of(HTTP_DATE_GMT_TIMEZONE));
 
+    /** Pre-built ISO 8601 formatter for error response timestamps. */
     private static final DateTimeFormatter ISO_TIMESTAMP_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSXXX").withZone(ZoneId.of("UTC"));
 
+    /**
+     * Sends an HTTP error response and closes the connection.
+     *
+     * <p>Returns HTML for browser GET requests (based on the Accept header), or JSON for
+     * API clients and non-GET requests. The connection is always closed after sending.
+     *
+     * @param ctx          the Netty channel handler context
+     * @param msg          the original HTTP request (may be {@code null} for uncaught exceptions)
+     * @param errorMessage the error details including status code, path, and message
+     */
     public static void sendError(ChannelHandlerContext ctx,
                                  HttpRequest msg,
                                  HttpErrorMessage errorMessage) {
@@ -74,6 +100,7 @@ public class ServiceHandlerUtil {
         ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
     }
 
+    /** Builds an HTML error page with properly escaped values to prevent XSS. */
     private static String errorResponseHtml(HttpErrorMessage errorMessage) {
         String escapedPath = escapeHtml(errorMessage.getPath() != null ? errorMessage.getPath() : "");
         String escapedMessage = escapeHtml(errorMessage.getMessage() != null ? errorMessage.getMessage() : "");
@@ -90,6 +117,7 @@ public class ServiceHandlerUtil {
                 + "</body></html>";
     }
 
+    /** Builds a JSON error response body with properly escaped string values. */
     private static String errorResponseJson(HttpErrorMessage errorMessage) {
         // Manual JSON construction to avoid ObjectMapper dependency
         return "{\"timestamp\":\"" + escapeJson(errorMessage.getTimestamp()) + "\""
@@ -100,14 +128,22 @@ public class ServiceHandlerUtil {
                 + "}";
     }
 
+    /** Escapes HTML special characters to prevent cross-site scripting (XSS). */
     private static String escapeHtml(String text) {
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
     }
 
+    /** Escapes JSON special characters (backslash, double-quote, newlines). */
     private static String escapeJson(String text) {
         return text.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r");
     }
 
+    /**
+     * Sends an HTTP 302 Found redirect response and closes the connection.
+     *
+     * @param ctx       the Netty channel handler context
+     * @param targetUrl the URL to redirect the client to
+     */
     public static void sendRedirect(ChannelHandlerContext ctx, String targetUrl) {
         FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, FOUND);
         response.headers().set(HttpHeaderNames.LOCATION, targetUrl);
@@ -116,6 +152,13 @@ public class ServiceHandlerUtil {
         ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
     }
 
+    /**
+     * Sends an HTTP 304 Not Modified response and closes the connection.
+     * Used for cache validation when the resource has not changed.
+     *
+     * @param ctx the Netty channel handler context
+     * @param url the resource URL (set in the Location header)
+     */
     public static void sendNotModified(ChannelHandlerContext ctx, String url) {
         FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, NOT_MODIFIED);
         response.headers().set(HttpHeaderNames.LOCATION, url);
@@ -124,10 +167,23 @@ public class ServiceHandlerUtil {
         ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
     }
 
+    /**
+     * Sets the Content-Type header on the response based on the file's extension.
+     *
+     * @param response the HTTP response to set the header on
+     * @param file     the file whose MIME type should be determined
+     */
     public static void setContentTypeHeader(HttpResponse response, File file) {
         response.headers().set(HttpHeaderNames.CONTENT_TYPE, MIME_TYPES_MAP.getContentType(file));
     }
 
+    /**
+     * Sets the Date, Expires, Cache-Control, and Last-Modified headers on the response
+     * for static file caching.
+     *
+     * @param response the HTTP response to set headers on
+     * @param file     the file whose last-modified timestamp is used for the Last-Modified header
+     */
     public static void setDateAndCacheHeaders(HttpResponse response, File file) {
         ZonedDateTime now = ZonedDateTime.now(ZoneId.of(HTTP_DATE_GMT_TIMEZONE));
 
@@ -142,6 +198,17 @@ public class ServiceHandlerUtil {
                 HTTP_DATE_FORMATTER.format(java.time.Instant.ofEpochMilli(file.lastModified()).atZone(ZoneId.of(HTTP_DATE_GMT_TIMEZONE))));
     }
 
+    /**
+     * Parses HTTP request parameters into a flat string map.
+     *
+     * <p>For GET requests, parameters are extracted from the query string. For POST requests,
+     * form data is decoded from {@code application/x-www-form-urlencoded} or
+     * {@code multipart/form-data} bodies. Multi-valued GET parameters are indexed
+     * (e.g. {@code key[0]}, {@code key[1]}).
+     *
+     * @param request the HTTP request to parse parameters from
+     * @return a map of parameter names to their string values
+     */
     public static Map<String, String> parseRequestParameters(HttpRequest request) {
 
         Map<String, String> requestParameterMap = new HashMap<>();
@@ -186,10 +253,20 @@ public class ServiceHandlerUtil {
         return requestParameterMap;
     }
 
+    /**
+     * URL-decodes the given string using UTF-8 encoding.
+     *
+     * @param string the URL-encoded string to decode
+     * @return the decoded string
+     */
     public static String decodeRequestString(String string) {
         return URLDecoder.decode(string, StandardCharsets.UTF_8);
     }
 
+    /**
+     * Encapsulates the details of an HTTP error response, including the status code,
+     * human-readable error description, request path, optional message, and optional cause.
+     */
     public static class HttpErrorMessage {
 
         private final HttpResponseStatus responseStatus;
@@ -206,6 +283,14 @@ public class ServiceHandlerUtil {
 
         private final Throwable cause;
 
+        /**
+         * Creates a new HTTP error message with the given details.
+         *
+         * @param responseStatus the HTTP response status (e.g. 404, 500)
+         * @param path           the request URI path (may be {@code null})
+         * @param message        an optional human-readable error message (may be {@code null})
+         * @param cause          the underlying exception cause (may be {@code null})
+         */
         public HttpErrorMessage(HttpResponseStatus responseStatus, String path, String message, Throwable cause) {
             this.responseStatus = responseStatus;
             this.timestamp = ISO_TIMESTAMP_FORMATTER.format(ZonedDateTime.now(ZoneId.of("UTC")));
@@ -216,11 +301,15 @@ public class ServiceHandlerUtil {
             this.cause = cause;
         }
 
+        /** @return the HTTP response status object */
         public HttpResponseStatus getResponseStatus() {
             return responseStatus;
         }
 
         /**
+         * Returns the ISO 8601 timestamp when this error was created.
+         *
+         * @return the error timestamp string
          * @deprecated Use {@link #getTimestamp()} instead. This method has a typo in its name.
          */
         @Deprecated
@@ -228,26 +317,36 @@ public class ServiceHandlerUtil {
             return timestamp;
         }
 
+        /**
+         * Returns the ISO 8601 timestamp when this error was created.
+         *
+         * @return the error timestamp string
+         */
         public String getTimestamp() {
             return timestamp;
         }
 
+        /** @return the HTTP status code (e.g. 404, 500) */
         public Integer getStatus() {
             return status;
         }
 
+        /** @return the HTTP reason phrase (e.g. "Not Found", "Internal Server Error") */
         public String getError() {
             return error;
         }
 
+        /** @return the optional error message, or {@code null} */
         public String getMessage() {
             return message;
         }
 
+        /** @return the request URI path, or {@code null} */
         public String getPath() {
             return path;
         }
 
+        /** @return the underlying exception cause, or {@code null} */
         public Throwable getCause() {
             return cause;
         }

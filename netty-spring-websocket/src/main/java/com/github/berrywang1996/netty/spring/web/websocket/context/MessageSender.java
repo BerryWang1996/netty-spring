@@ -8,26 +8,47 @@ import java.util.Map;
 import java.util.Set;
 
 /**
+ * Core API interface for sending WebSocket messages and managing WebSocket sessions.
+ *
+ * <p>This is the primary abstraction that application code interacts with to:
+ * <ul>
+ *   <li>Send targeted messages to one or more sessions via {@link #sendMessage}</li>
+ *   <li>Broadcast messages to all sessions on a URI via {@link #topicMessage} / {@link #broadcast}</li>
+ *   <li>Query active sessions with {@link #getSessionIds}, {@link #getSessions}, {@link #isSessionAlive}</li>
+ *   <li>Close sessions programmatically with {@link #closeSession} / {@link #closeSessions}</li>
+ *   <li>Inspect runtime statistics via {@link #getRuntimeStats()}</li>
+ * </ul>
+ *
+ * <p>Inject an instance into handler beans via the
+ * {@link com.github.berrywang1996.netty.spring.web.websocket.bind.annotation.AutowiredMessageSender @AutowiredMessageSender}
+ * annotation, or obtain it from the Spring context as a
+ * {@link com.github.berrywang1996.netty.spring.web.websocket.support.MessageSenderSupport} bean.
+ *
  * @author berrywang1996
  * @version V1.0.0
+ * @since V1.0.0
+ * @see DefaultMessageSender
  */
 public interface MessageSender {
 
+    /** Standard WebSocket normal closure status code (1000). */
     int NORMAL_CLOSE_STATUS_CODE = 1000;
 
+    /** Default reason text for a normal closure. */
     String NORMAL_CLOSE_REASON = "Normal closure";
 
     /**
-     * Get all uri number of sessions
+     * Returns the total number of active sessions across all registered URIs.
      *
-     * @return all number of sessions
+     * @return total number of active sessions
      */
     int getSessionNums();
 
     /**
-     * Get current uri number of sessions
+     * Returns the number of active sessions for the specified URI.
      *
-     * @return current uri number of sessions
+     * @param uri the WebSocket mapping URI
+     * @return number of active sessions for the URI, or 0 if the URI is not registered
      */
     int getSessionNums(String uri);
 

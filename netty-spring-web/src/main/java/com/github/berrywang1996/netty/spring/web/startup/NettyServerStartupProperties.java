@@ -17,6 +17,20 @@
 package com.github.berrywang1996.netty.spring.web.startup;
 
 /**
+ * Configuration properties for the Netty HTTP/WebSocket server.
+ *
+ * <p>Aggregates all server startup settings into a single POJO, including:
+ * <ul>
+ *   <li>General settings: application name, port, Spring config location</li>
+ *   <li>HTTP settings: codec limits, timeouts, static file serving, SSL, and GZIP</li>
+ *   <li>MVC settings: enable/disable MVC controller mapping</li>
+ *   <li>WebSocket settings: thread pool sizes, connection limits, heartbeat, crypto, and broadcast policies</li>
+ *   <li>Management settings: lightweight health and status endpoint paths</li>
+ * </ul>
+ *
+ * <p>Properties are typically populated from an external configuration source (e.g. Spring property binding)
+ * and passed to {@link NettyServerBootstrap#start(NettyServerStartupProperties)} to start the server.
+ *
  * @author berrywang1996
  * @since V1.0.0
  */
@@ -187,6 +201,9 @@ public class NettyServerStartupProperties {
         this.management = management;
     }
 
+    /**
+     * SSL/TLS configuration for securing the Netty server with HTTPS.
+     */
     public static class Ssl {
 
         /**
@@ -255,6 +272,9 @@ public class NettyServerStartupProperties {
         }
     }
 
+    /**
+     * GZIP compression configuration for HTTP responses.
+     */
     public static class Gzip {
 
         /**
@@ -343,6 +363,9 @@ public class NettyServerStartupProperties {
         }
     }
 
+    /**
+     * MVC controller mapping configuration.
+     */
     public static class Mvc {
 
         /**
@@ -359,6 +382,9 @@ public class NettyServerStartupProperties {
         }
     }
 
+    /**
+     * Lightweight management endpoint configuration for health checks and runtime status.
+     */
     public static class Management {
 
         /**
@@ -401,6 +427,13 @@ public class NettyServerStartupProperties {
         }
     }
 
+    /**
+     * HTTP-specific configuration including codec limits, timeouts, and delegation to
+     * the parent class for file-serving, SSL, and GZIP settings.
+     *
+     * <p>This is a non-static inner class so it can delegate file/SSL/GZIP getters/setters
+     * to the enclosing {@link NettyServerStartupProperties} for backward compatibility.
+     */
     public class Http {
 
         /**
@@ -535,6 +568,10 @@ public class NettyServerStartupProperties {
         }
     }
 
+    /**
+     * WebSocket configuration including thread pools, connection limits, heartbeat,
+     * broadcast policies, and application-level message encryption.
+     */
     public static class WebSocket {
         /**
          * Enable websocket mapping and related beans.
@@ -772,6 +809,11 @@ public class NettyServerStartupProperties {
             this.crypto = crypto;
         }
 
+        /**
+         * Application-level WebSocket message encryption/decryption configuration.
+         * When enabled, text and/or binary frames are encrypted before sending
+         * and decrypted upon receipt using the configured algorithm and key.
+         */
         public static class Crypto {
             /**
              * Enable application-level message encryption/decryption. Disabled by default.
@@ -904,11 +946,27 @@ public class NettyServerStartupProperties {
             }
         }
 
+        /**
+         * Policy for handling channels that are not writable during a broadcast.
+         *
+         * <ul>
+         *   <li>{@code SKIP} - skip the non-writable channel and continue broadcasting</li>
+         *   <li>{@code CLOSE} - close the non-writable channel</li>
+         * </ul>
+         */
         public enum BroadcastNonWritableChannelPolicy {
             SKIP,
             CLOSE
         }
 
+        /**
+         * Policy for handling executor rejections during a broadcast operation.
+         *
+         * <ul>
+         *   <li>{@code DROP} - silently drop the broadcast message for the rejected channel</li>
+         *   <li>{@code CALLER_RUNS} - execute the broadcast on the caller's thread</li>
+         * </ul>
+         */
         public enum BroadcastRejectedExecutionPolicy {
             DROP,
             CALLER_RUNS

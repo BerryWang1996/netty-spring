@@ -3,9 +3,20 @@ package com.github.berrywang1996.netty.spring.demo.controller;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestMapping;
 import org.springframework.stereotype.Controller;
 
+/**
+ * Demo home page controller that renders an HTML dashboard linking to all demo endpoints.
+ * <p>
+ * The landing page at {@code /} provides quick-access cards for each feature area:
+ * HTTP MVC, WebSocket text/JSON messaging, AES-GCM crypto, health/status endpoints,
+ * Micrometer metrics, token-based auth, and the chat room demo.
+ *
+ * @author berrywang1996
+ * @since V1.0.0
+ */
 @Controller
 public class DemoHomeController {
 
+    /** Inline HTML template for the demo dashboard landing page. */
     private static final String HOME_HTML = """
             <!doctype html>
             <html lang="en">
@@ -170,6 +181,11 @@ public class DemoHomeController {
             </html>
             """;
 
+    /**
+     * Serves the demo home page HTML at the root URL.
+     *
+     * @return the inline HTML string for the demo dashboard
+     */
     @RequestMapping("/")
     public String home() {
         return HOME_HTML;

@@ -21,6 +21,28 @@ import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
 import java.lang.annotation.*;
 
 /**
+ * Annotation that maps WebSocket message handler methods or handler classes to
+ * specific URI paths and message types.
+ *
+ * <p>When placed on a <b>method</b>, it registers that method as a handler for the
+ * specified {@link #messageType()} on the given URI(s). When placed on a <b>class</b>,
+ * it provides a base URI prefix that is prepended to all method-level mappings
+ * within that class.
+ *
+ * <p>Example usage:
+ * <pre>{@code
+ * @Component
+ * @MessageMapping("/chat")
+ * public class ChatHandler {
+ *
+ *     @MessageMapping(messageType = MessageType.ON_CONNECTED)
+ *     public void onConnected(MessageSession session) { ... }
+ *
+ *     @MessageMapping(messageType = MessageType.TEXT_MESSAGE)
+ *     public void onMessage(MessageSession session, String text) { ... }
+ * }
+ * }</pre>
+ *
  * @author berrywang1996
  * @since V1.0.0
  */
@@ -30,17 +52,25 @@ import java.lang.annotation.*;
 public @interface MessageMapping {
 
     /**
-     * url
+     * The WebSocket URI path(s) this handler is mapped to. When used on a class,
+     * acts as a prefix for all method-level mappings within that class.
+     *
+     * @return the URI path(s); defaults to an empty string
      */
     String[] value() default "";
 
     /**
-     * message producer
+     * The type of WebSocket message or lifecycle event this method handles.
+     *
+     * @return the message type; defaults to {@link MessageType#TEXT_MESSAGE}
      */
     MessageType messageType() default MessageType.TEXT_MESSAGE;
 
     /**
-     * port. If port is null, the application will map the method
+     * Optional server port filter. When specified, the mapping is only active on
+     * the listed port(s). When empty (the default), the mapping applies to all ports.
+     *
+     * @return the port numbers this mapping applies to; empty means all ports
      */
     int[] port() default {};
 

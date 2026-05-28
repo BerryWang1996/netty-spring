@@ -34,7 +34,11 @@ import java.util.concurrent.ConcurrentHashMap;
 @Profile("auth-demo")
 public class WebSocketAuthDemoConfiguration {
 
-    /** Hardcoded demo tokens — replace with a real token service in production. */
+    /**
+     * Hardcoded set of valid demo tokens. In a production application this
+     * would be replaced by a real token service (JWT validation, OAuth2
+     * introspection, session store lookup, etc.).
+     */
     private static final Set<String> VALID_TOKENS = ConcurrentHashMap.newKeySet();
 
     static {
@@ -42,10 +46,30 @@ public class WebSocketAuthDemoConfiguration {
         VALID_TOKENS.add("test-secret");
     }
 
+    /**
+     * Registers a {@link WebSocketHandshakeInterceptor} bean that validates
+     * an authentication token before allowing a WebSocket handshake to proceed.
+     *
+     * <p>The token is extracted from either:
+     * <ol>
+     *   <li>The {@code token} query parameter in the WebSocket URL</li>
+     *   <li>The {@code Authorization: Bearer <token>} HTTP header</li>
+     * </ol>
+     *
+     * <p>If the token is missing or not in the {@link #VALID_TOKENS} set, the
+     * handshake is rejected and the client receives the
+     * {@link WebSocketHandshakeInterceptor#rejectionReason()} message.
+     *
+     * @return a new {@link WebSocketHandshakeInterceptor} that enforces token validation
+     */
     @Bean
     public WebSocketHandshakeInterceptor demoTokenInterceptor() {
         return new WebSocketHandshakeInterceptor() {
 
+            /**
+             * Validates the token extracted from the incoming handshake request.
+             * Rejects the handshake if the token is missing or invalid.
+             */
             @Override
             public boolean beforeHandshake(FullHttpRequest request, String uri) {
                 String token = extractToken(request);
@@ -62,11 +86,19 @@ public class WebSocketAuthDemoConfiguration {
                 return true;
             }
 
+            /** Returns a human-readable reason when a handshake is rejected. */
             @Override
             public String rejectionReason() {
                 return "Missing or invalid token. Pass ?token=<valid-token> in the WebSocket URL.";
             }
 
+            /**
+             * Extracts the authentication token from the request, checking the
+             * query parameter first and falling back to the Authorization header.
+             *
+             * @param request the full HTTP request initiating the WebSocket upgrade
+             * @return the extracted token string, or {@code null} if not found
+             */
             private String extractToken(FullHttpRequest request) {
                 // Try query parameter first
                 QueryStringDecoder decoder = new QueryStringDecoder(request.uri());
@@ -83,6 +115,13 @@ public class WebSocketAuthDemoConfiguration {
                 return null;
             }
 
+            /**
+             * Masks a token for safe logging by keeping only the first 4
+             * characters and replacing the rest with asterisks.
+             *
+             * @param token the raw token string
+             * @return the masked token (e.g., {@code "demo****"})
+             */
             private String maskToken(String token) {
                 if (token.length() <= 4) {
                     return "****";

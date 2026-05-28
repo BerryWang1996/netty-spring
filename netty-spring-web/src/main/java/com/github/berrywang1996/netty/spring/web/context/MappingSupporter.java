@@ -22,11 +22,28 @@ import org.springframework.context.ApplicationContext;
 import java.util.Map;
 
 /**
+ * Strategy interface for scanning the Spring application context and producing
+ * a map of URL patterns to {@link AbstractMappingResolver} instances.
+ *
+ * <p>Each protocol module (MVC, WebSocket) provides its own implementation that
+ * discovers annotated controllers or message handlers and registers the
+ * corresponding mapping resolvers. The {@link WebMappingSupporter} aggregates
+ * results from all discovered implementations into a single routing table.
+ *
+ * @param <T> the concrete mapping resolver type produced by this supporter
  * @author berrywang1996
  * @since V1.0.0
+ * @see WebMappingSupporter
  */
 public interface MappingSupporter<T extends AbstractMappingResolver> {
 
+    /**
+     * Scans the application context and builds a map of URL patterns to mapping resolvers.
+     *
+     * @param startupProperties  the server startup configuration properties
+     * @param applicationContext the Spring application context to scan for annotated beans
+     * @return a map of URL patterns to their corresponding mapping resolvers
+     */
     Map<String, T> initMappingResolverMap(NettyServerStartupProperties startupProperties,
                                           ApplicationContext applicationContext);
 

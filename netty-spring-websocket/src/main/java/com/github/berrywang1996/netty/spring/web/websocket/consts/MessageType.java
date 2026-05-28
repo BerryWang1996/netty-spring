@@ -17,63 +17,85 @@
 package com.github.berrywang1996.netty.spring.web.websocket.consts;
 
 /**
+ * Enumeration of WebSocket message types and lifecycle events that can be handled
+ * by {@code @MessageMapping}-annotated methods.
+ *
+ * <p>Each constant corresponds to a specific point in the WebSocket session lifecycle
+ * or a particular kind of inbound frame. The framework uses this enum to route
+ * incoming events to the correct handler method.
+ *
  * @author berrywang1996
  * @since V1.0.0
  */
 public enum MessageType {
 
     /**
-     * Close current session if the method throws an exception or returns false of Boolean type. The method marked by
-     * \@MessageMapping(messageType=ON_HANDSHAKE) will be execute before handshake. The method marked by
-     * \@MessageMapping(messageType=ERROR) will be execute If the method throws an exception.
+     * Pre-handshake hook. The handler is invoked before the WebSocket upgrade completes.
+     *
+     * <p>If the handler returns {@code false} (as a {@code Boolean}) or throws an
+     * exception, the handshake is rejected and the connection is closed. Any exception
+     * is forwarded to the {@link #ON_ERROR} handler if one is defined.
      */
     ON_HANDSHAKE,
 
     /**
-     * Ignore return value. The method marked by @MessageMapping(messageType=ON_CONNECTED) will be execute when
-     * connected. The method marked by @MessageMapping(messageType=ERROR) will be execute If the method throws an
-     * exception.
+     * Post-handshake hook. The handler is invoked after a successful WebSocket upgrade
+     * and session registration.
+     *
+     * <p>The return value is ignored. If the handler throws an exception, the
+     * {@link #ON_ERROR} handler is invoked and the session is closed.
      */
     ON_CONNECTED,
 
     /**
-     * Ignore return value. The method marked by @MessageMapping(messageType=ON_PING) will be execute when received ping
-     * frame. If no method marked by this, the server will response a PongWebSocketFrame. The method marked by
-     * \@MessageMapping(messageType=ERROR) will be execute If the method throws an exception.
+     * Ping frame handler. Invoked when a {@code PingWebSocketFrame} is received.
+     *
+     * <p>If no handler is registered for this type, the server automatically responds
+     * with a {@code PongWebSocketFrame}. The return value is ignored. Exceptions are
+     * forwarded to the {@link #ON_ERROR} handler.
      */
     ON_PING,
 
     /**
-     * Ignore return value. The method marked by @MessageMapping(messageType=TEXT_MESSAGE) will be execute when
-     * received text message. The method marked by @MessageMapping (messageType = ERROR) will be execute If the
-     * method throws an exception.
+     * Text message handler. Invoked when a {@code TextWebSocketFrame} is received.
+     *
+     * <p>The handler method can accept the raw frame, a {@code String} payload, or
+     * a JSON-deserialized object as its parameter. The return value is ignored.
+     * Exceptions are forwarded to the {@link #ON_ERROR} handler.
      */
     TEXT_MESSAGE,
 
     /**
-     * Ignore return value. The method marked by @MessageMapping(messageType=BINARY_MESSAGE) will be execute when
-     * received binary message. The method marked by @MessageMapping (messageType = ERROR) will be execute If the
-     * method throws an exception.
+     * Binary message handler. Invoked when a {@code BinaryWebSocketFrame} is received.
+     *
+     * <p>The handler method can accept the raw frame, a {@code ByteBuf}, or a
+     * {@code byte[]} as its parameter. The return value is ignored.
+     * Exceptions are forwarded to the {@link #ON_ERROR} handler.
      */
     BINARY_MESSAGE,
 
     /**
-     * If the method marked by @MessageMapping(messageType=ON_HANDSHAKE/ON_CONNECTED/ON_PING/TEXT_MESSAGE/BINARY_MESSAGE
-     * /OTHER) throws exception. The method marked by @MessageMapping(messageType=ERROR)the will be execute. Also you
-     * can throws exception to netty.
+     * Error handler. Invoked when any other lifecycle handler throws an exception.
+     *
+     * <p>If no {@code ON_ERROR} handler is defined, the exception propagates up to
+     * Netty's exception handling pipeline.
      */
     ON_ERROR,
 
     /**
-     * Ignore return value and exception. The method marked by @MessageMapping(messageType=ON_CLOSE) will be execute
-     * when close session.
+     * Close handler. Invoked when the session is being closed (client close frame,
+     * server-initiated close, or channel inactive).
+     *
+     * <p>The return value and any exceptions thrown by this handler are ignored.
      */
     ON_CLOSE,
 
     /**
-     * Ignore return value. The method marked by @MessageMapping(messageType=OTHER) will be execute when received
-     * undefined message type. The method marked by @MessageMapping (messageType = ERROR) will be execute If the
-     * method throws an exception.
+     * Catch-all handler for WebSocket frame types not covered by the other constants
+     * (e.g. {@code PongWebSocketFrame} when no specific pong handler is needed).
+     *
+     * <p>The return value is ignored. Exceptions are forwarded to the
+     * {@link #ON_ERROR} handler.
      */
     OTHER
 

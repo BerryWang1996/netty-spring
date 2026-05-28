@@ -51,6 +51,17 @@ public final class WebSocketEventStats {
     private final long totalCloses;
     private final Map<CloseReason, Long> closesByReason;
 
+    /**
+     * Creates a new immutable event stats snapshot.
+     *
+     * @param handshakeTotal                  total handshake attempts
+     * @param handshakeSuccess                successful handshakes
+     * @param handshakeRejectedByInterceptor  handshakes rejected by the interceptor
+     * @param messagesReceived                total inbound messages
+     * @param messagesSent                    total outbound messages
+     * @param totalCloses                     total session close events
+     * @param closesByReason                  close counts broken down by {@link CloseReason}
+     */
     public WebSocketEventStats(long handshakeTotal,
                                long handshakeSuccess,
                                long handshakeRejectedByInterceptor,
@@ -67,30 +78,41 @@ public final class WebSocketEventStats {
         this.closesByReason = closesByReason;
     }
 
+    /**
+     * Returns a singleton instance with all counters at zero.
+     *
+     * @return the empty stats instance
+     */
     public static WebSocketEventStats empty() {
         return EMPTY;
     }
 
+    /** @return total number of handshake attempts */
     public long getHandshakeTotal() {
         return handshakeTotal;
     }
 
+    /** @return number of handshakes that completed successfully */
     public long getHandshakeSuccess() {
         return handshakeSuccess;
     }
 
+    /** @return number of handshakes rejected by the interceptor */
     public long getHandshakeRejectedByInterceptor() {
         return handshakeRejectedByInterceptor;
     }
 
+    /** @return total inbound messages received */
     public long getMessagesReceived() {
         return messagesReceived;
     }
 
+    /** @return total outbound messages sent */
     public long getMessagesSent() {
         return messagesSent;
     }
 
+    /** @return total number of session close events */
     public long getTotalCloses() {
         return totalCloses;
     }
@@ -99,6 +121,8 @@ public final class WebSocketEventStats {
      * Returns close counts broken down by {@link CloseReason}.
      * The map contains every enum constant; counters that were never
      * incremented are 0.
+     *
+     * @return unmodifiable map of close reason to count
      */
     public Map<CloseReason, Long> getClosesByReason() {
         return closesByReason;
@@ -106,6 +130,9 @@ public final class WebSocketEventStats {
 
     /**
      * Returns the close count for a specific reason.
+     *
+     * @param reason the close reason to query
+     * @return the close count, or 0 if never recorded
      */
     public long getCloseCount(CloseReason reason) {
         Long val = closesByReason.get(reason);

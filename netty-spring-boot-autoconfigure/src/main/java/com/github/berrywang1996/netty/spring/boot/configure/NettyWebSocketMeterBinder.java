@@ -49,14 +49,32 @@ import java.util.Map;
  */
 public class NettyWebSocketMeterBinder implements MeterBinder {
 
+    /** The server bootstrap that holds the WebSocket mapping resolvers and event recorder. */
     private final NettyServerBootstrap bootstrap;
 
+    /**
+     * Constructs a new binder that reads WebSocket runtime counters from the given bootstrap.
+     *
+     * @param bootstrap the Netty server bootstrap instance; must not be {@code null}
+     */
     public NettyWebSocketMeterBinder(NettyServerBootstrap bootstrap) {
         this.bootstrap = bootstrap;
     }
 
+    /**
+     * Registers all WebSocket-related meters (handshake counters, message counters,
+     * session close counters by reason, active session gauge, and mapping count gauge)
+     * with the provided {@link MeterRegistry}.
+     *
+     * <p>If no WebSocket mapping resolvers are registered or the shared
+     * {@link WebSocketEventRecorder} cannot be found, this method returns
+     * immediately without registering any meters.
+     *
+     * @param registry the Micrometer meter registry to bind counters and gauges to
+     */
     @Override
     public void bindTo(MeterRegistry registry) {
+        // Retrieve the map of URI -> resolver for all registered WebSocket endpoints
         Map<String, AbstractMappingResolver> wsMap = bootstrap.getWebSocketMappingResolverMap();
         if (wsMap == null || wsMap.isEmpty()) {
             return;
@@ -95,7 +113,7 @@ public class NettyWebSocketMeterBinder implements MeterBinder {
                 .description("Total WebSocket messages sent")
                 .register(registry);
 
-        // ---- Close counters by reason ----
+        // ---- Close counters by reason: one counter per CloseReason enum value, tagged ----
         for (CloseReason reason : CloseReason.values()) {
             FunctionCounter.builder("netty.websocket.sessions.closed", recorder,
                             r -> r.getStats().getCloseCount(reason))
@@ -104,7 +122,7 @@ public class NettyWebSocketMeterBinder implements MeterBinder {
                     .register(registry);
         }
 
-        // ---- Active session gauge (sum across all resolvers) ----
+        // ---- Active session gauge: sums active sessions across all mapping resolvers ----
         Gauge.builder("netty.websocket.sessions.active", wsMap, map -> {
                     int total = 0;
                     for (AbstractMappingResolver resolver : map.values()) {
@@ -115,12 +133,24 @@ public class NettyWebSocketMeterBinder implements MeterBinder {
                 .description("Currently active WebSocket sessions")
                 .register(registry);
 
-        // ---- Mapping count gauge ----
+        // ---- Mapping count gauge: number of registered WebSocket URI mappings ----
         Gauge.builder("netty.websocket.mappings", wsMap, Map::size)
                 .description("Number of registered WebSocket mappings")
                 .register(registry);
     }
 
+    /**
+     * Searches the WebSocket mapping resolver map for a {@link MessageMappingResolver}
+     * that holds a non-null {@link WebSocketEventRecorder}.
+     *
+     * <p>All resolvers typically share the same recorder instance, so the first
+     * one found is returned.
+     *
+     * @param wsMap the map of URI paths to their corresponding mapping resolvers
+     * @return the shared {@link WebSocketEventRecorder}, or {@code null} if none
+     *         of the resolvers are {@link MessageMappingResolver} instances or
+     *         none have a recorder set
+     */
     private static WebSocketEventRecorder findEventRecorder(Map<String, AbstractMappingResolver> wsMap) {
         for (AbstractMappingResolver resolver : wsMap.values()) {
             if (resolver instanceof MessageMappingResolver) {

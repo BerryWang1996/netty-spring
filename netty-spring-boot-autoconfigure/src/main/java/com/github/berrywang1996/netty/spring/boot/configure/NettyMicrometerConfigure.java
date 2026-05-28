@@ -47,9 +47,16 @@ import org.springframework.context.annotation.Configuration;
 public class NettyMicrometerConfigure {
 
     /**
-     * HTTP runtime metrics binder. Always registered when Micrometer and the
-     * Netty bootstrap are present — HTTP counters come from {@code netty-spring-web}
-     * which is a required dependency.
+     * Creates and registers the {@link NettyHttpMeterBinder} that bridges HTTP-level
+     * runtime counters (write failures, idle closes, static file rejections, etc.)
+     * into the application's {@link MeterRegistry}.
+     *
+     * <p>This bean is always registered when both Micrometer and the Netty bootstrap
+     * are present, because the HTTP counters come from {@code netty-spring-web} which
+     * is a required dependency.
+     *
+     * @param bootstrap the running Netty server bootstrap
+     * @return a {@link NettyHttpMeterBinder} bound to the given bootstrap
      */
     @Bean
     @ConditionalOnBean({NettyServerBootstrap.class, MeterRegistry.class})
@@ -59,14 +66,24 @@ public class NettyMicrometerConfigure {
     }
 
     /**
-     * WebSocket metrics binder. Only registered when the websocket module is
-     * on the classpath and WebSocket support is enabled.
+     * Nested configuration class that conditionally registers the WebSocket
+     * {@link MeterBinder}. This inner class is only loaded when the WebSocket
+     * module ({@code WebSocketEventRecorder}) is on the classpath and the
+     * {@code server.netty.websocket.enable} property is {@code true} (default).
      */
     @Configuration
     @ConditionalOnClass(name = "com.github.berrywang1996.netty.spring.web.websocket.context.WebSocketEventRecorder")
     @ConditionalOnProperty(prefix = "server.netty.websocket", name = "enable", havingValue = "true", matchIfMissing = true)
     static class WebSocketMetricsConfiguration {
 
+        /**
+         * Creates and registers the {@link NettyWebSocketMeterBinder} that bridges
+         * WebSocket-level runtime counters (handshakes, messages, session closes,
+         * active sessions) into the application's {@link MeterRegistry}.
+         *
+         * @param bootstrap the running Netty server bootstrap
+         * @return a {@link NettyWebSocketMeterBinder} bound to the given bootstrap
+         */
         @Bean
         @ConditionalOnBean({NettyServerBootstrap.class, MeterRegistry.class})
         public NettyWebSocketMeterBinder nettyWebSocketMeterBinder(NettyServerBootstrap bootstrap) {

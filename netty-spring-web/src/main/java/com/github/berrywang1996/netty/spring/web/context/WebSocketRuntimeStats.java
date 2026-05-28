@@ -28,10 +28,23 @@ public final class WebSocketRuntimeStats {
      */
     private final Map<String, Object> eventCounters;
 
+    /**
+     * Creates a snapshot with the given mapping and session counts and no event counters.
+     *
+     * @param mappingCount       the number of registered WebSocket URL mappings
+     * @param activeSessionCount the total number of currently active WebSocket sessions
+     */
     public WebSocketRuntimeStats(int mappingCount, int activeSessionCount) {
         this(mappingCount, activeSessionCount, Collections.<String, Object>emptyMap());
     }
 
+    /**
+     * Creates a snapshot with the given mapping count, session count, and event counters.
+     *
+     * @param mappingCount       the number of registered WebSocket URL mappings
+     * @param activeSessionCount the total number of currently active WebSocket sessions
+     * @param eventCounters      aggregated event counters from all WebSocket resolvers (may be {@code null})
+     */
     public WebSocketRuntimeStats(int mappingCount, int activeSessionCount,
                                  Map<String, Object> eventCounters) {
         this.mappingCount = mappingCount;
@@ -39,14 +52,21 @@ public final class WebSocketRuntimeStats {
         this.eventCounters = eventCounters != null ? eventCounters : Collections.<String, Object>emptyMap();
     }
 
+    /**
+     * Returns the shared empty sentinel with zero mappings, zero sessions, and no event counters.
+     *
+     * @return the empty {@link WebSocketRuntimeStats} instance
+     */
     public static WebSocketRuntimeStats empty() {
         return EMPTY;
     }
 
+    /** @return the number of registered WebSocket URL mappings */
     public int getMappingCount() {
         return mappingCount;
     }
 
+    /** @return the total number of currently active WebSocket sessions */
     public int getActiveSessionCount() {
         return activeSessionCount;
     }
@@ -55,6 +75,7 @@ public final class WebSocketRuntimeStats {
      * Returns aggregated event counters. Empty map if no resolvers are active
      * or event recording is disabled.
      *
+     * @return an unmodifiable map of counter names to values, or an empty map
      * @since V1.3.0
      */
     public Map<String, Object> getEventCounters() {

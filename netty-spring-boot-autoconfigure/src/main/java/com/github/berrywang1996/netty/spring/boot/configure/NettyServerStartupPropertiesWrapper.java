@@ -20,8 +20,27 @@ import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupPrope
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
+ * Spring Boot {@link ConfigurationProperties @ConfigurationProperties} wrapper that
+ * binds the {@code server.netty.*} configuration namespace to the internal
+ * {@link NettyServerStartupProperties} model.
+ *
+ * <p>This thin subclass exists solely to attach the
+ * {@code @ConfigurationProperties(prefix = "server.netty")} annotation, keeping the
+ * core properties class in the {@code netty-spring-web} module free of any Spring Boot
+ * dependency. All actual property fields and their defaults are inherited from
+ * {@link NettyServerStartupProperties}.
+ *
+ * <p>Typical properties include:
+ * <ul>
+ *   <li>{@code server.netty.port} - the port the Netty server listens on</li>
+ *   <li>{@code server.netty.websocket.enable} - whether WebSocket support is enabled</li>
+ *   <li>{@code server.netty.management.enable} - whether management endpoints are exposed</li>
+ * </ul>
+ *
  * @author berrywang1996
  * @since V1.1.0
+ * @see NettyServerStartupProperties
+ * @see NettyServerBootstrapConfigure
  */
 @ConfigurationProperties(prefix = "server.netty")
 public class NettyServerStartupPropertiesWrapper extends NettyServerStartupProperties {

@@ -39,14 +39,31 @@ public class BinaryMessage extends AbstractMessage<BinaryWebSocketFrame> {
         binaryData.getBytes(binaryData.readerIndex(), this.binaryData);
     }
 
+    /**
+     * Returns the internal binary data array.
+     *
+     * @return the byte array backing this message
+     */
     public byte[] getBinaryData() {
         return binaryData;
     }
 
+    /**
+     * Replaces the internal binary data.
+     *
+     * @param binaryData the new byte array
+     */
     public void setBinaryData(byte[] binaryData) {
         this.binaryData = binaryData;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Returns a new {@link BinaryWebSocketFrame} backed by a defensive copy of
+     * the internal byte array, ensuring each call produces an independent frame
+     * safe for multi-session broadcast.
+     */
     @Override
     public BinaryWebSocketFrame responseMsg() {
         return new BinaryWebSocketFrame(Unpooled.wrappedBuffer(binaryData.clone()));

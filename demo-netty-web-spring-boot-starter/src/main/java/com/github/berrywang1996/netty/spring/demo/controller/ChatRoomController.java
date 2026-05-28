@@ -12,27 +12,52 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Chat room demo controller.
- * Demonstrates real-world WebSocket usage: join/leave notifications, online user list,
- * broadcast messages and private messages.
+ * Demo chat room controller illustrating real-world WebSocket usage patterns.
+ * <p>
+ * This controller manages a multi-user chat room at {@code /ws/chat} with the
+ * following features:
+ * <ul>
+ *   <li>Join/leave notifications broadcast to all connected users</li>
+ *   <li>Live online-user list updates</li>
+ *   <li>Public broadcast messages</li>
+ *   <li>Private (direct) messages via the {@code /pm <nickname> <text>} command</li>
+ * </ul>
+ * The HTML chat UI is served at {@code /chat} and connects back to the WebSocket
+ * endpoint with a user-chosen nickname.
+ *
+ * @author berrywang1996
+ * @since V1.3.0
  */
 @Slf4j
 @Controller
 public class ChatRoomController {
 
+    /** The WebSocket URI that this chat room listens on. */
     private static final String CHAT_URI = "/ws/chat";
 
+    /** Injected message sender for broadcasting and targeted WebSocket messaging. */
     private final MessageSender messageSender;
 
-    /**
-     * Maps sessionId -> nickname for connected users.
-     */
+    /** Maps WebSocket session IDs to user-chosen nicknames for all connected users. */
     private final Map<String, String> nicknames = new ConcurrentHashMap<>();
 
+    /**
+     * Constructs the chat room controller with the required message sender.
+     *
+     * @param messageSender the WebSocket message sender for broadcast and targeted delivery
+     */
     public ChatRoomController(MessageSender messageSender) {
         this.messageSender = messageSender;
     }
 
+    /**
+     * Handles a new WebSocket connection to the chat room.
+     * <p>
+     * Extracts the user's nickname from the {@code nickname} query parameter (or generates
+     * a default), registers the session, and broadcasts a join notification to all users.
+     *
+     * @param session the newly connected WebSocket session
+     */
     @MessageMapping(value = CHAT_URI, messageType = MessageType.ON_CONNECTED)
     public void onConnected(MessageSession session) {
         String nickname = session.getQueryParam("nickname");
@@ -51,6 +76,16 @@ public class ChatRoomController {
         messageSender.broadcastJson(CHAT_URI, event);
     }
 
+    /**
+     * Handles an incoming text message in the chat room.
+     * <p>
+     * If the message type is {@code "private"} and a target nickname is provided,
+     * the message is delivered only to the targeted session. Otherwise, the message
+     * is broadcast to all connected users.
+     *
+     * @param msg     the deserialized chat message DTO
+     * @param session the sender's WebSocket session
+     */
     @MessageMapping(value = CHAT_URI, messageType = MessageType.TEXT_MESSAGE)
     public void onMessage(ChatMessage msg, MessageSession session) {
         String nickname = nicknames.getOrDefault(session.getSessionId(), "Unknown");
@@ -85,6 +120,14 @@ public class ChatRoomController {
         }
     }
 
+    /**
+     * Handles a WebSocket session close event.
+     * <p>
+     * Removes the user from the nicknames map and broadcasts a leave notification
+     * with the updated online user list.
+     *
+     * @param session the WebSocket session that was closed
+     */
     @MessageMapping(value = CHAT_URI, messageType = MessageType.ON_CLOSE)
     public void onClose(MessageSession session) {
         String nickname = nicknames.remove(session.getSessionId());
@@ -99,23 +142,41 @@ public class ChatRoomController {
         }
     }
 
+    /**
+     * Handles WebSocket errors in the chat room by logging the exception.
+     *
+     * @param e the exception that occurred during WebSocket processing
+     */
     @MessageMapping(value = CHAT_URI, messageType = MessageType.ON_ERROR)
     public void onError(Exception e) {
         log.warn("Chat room error", e);
     }
 
     /**
-     * Serve the chat room HTML page.
+     * Serves the chat room HTML page at {@code /chat}.
+     *
+     * @return the inline HTML string containing the chat room UI and JavaScript
      */
     @RequestMapping("/chat")
     public String chatPage() {
         return CHAT_HTML;
     }
 
+    /**
+     * Returns a snapshot of all currently online user nicknames.
+     *
+     * @return an unordered list of nicknames
+     */
     private List<String> getOnlineUsers() {
         return new ArrayList<>(nicknames.values());
     }
 
+    /**
+     * Finds the WebSocket session ID associated with the given nickname.
+     *
+     * @param nickname the nickname to search for
+     * @return the session ID, or {@code null} if no user with that nickname is connected
+     */
     private String findSessionByNickname(String nickname) {
         for (Map.Entry<String, String> entry : nicknames.entrySet()) {
             if (entry.getValue().equals(nickname)) {
@@ -126,18 +187,31 @@ public class ChatRoomController {
     }
 
     /**
-     * Chat message DTO for JSON deserialization.
+     * DTO for deserializing inbound chat messages from the WebSocket client.
+     * <p>
+     * The {@code type} field distinguishes between broadcast ({@code "message"})
+     * and private ({@code "private"}) messages. For private messages the
+     * {@code target} field holds the recipient's nickname.
      */
     public static class ChatMessage {
-        private String type;   // "message" or "private"
+        /** Message type: {@code "message"} for broadcast or {@code "private"} for direct. */
+        private String type;
+        /** The text content of the chat message. */
         private String text;
-        private String target; // nickname for private message
+        /** The target nickname for private messages; {@code null} for broadcast. */
+        private String target;
 
+        /** @return the message type */
         public String getType() { return type; }
+        /** @param type the message type to set */
         public void setType(String type) { this.type = type; }
+        /** @return the message text */
         public String getText() { return text; }
+        /** @param text the message text to set */
         public void setText(String text) { this.text = text; }
+        /** @return the target nickname for private messages */
         public String getTarget() { return target; }
+        /** @param target the target nickname to set */
         public void setTarget(String target) { this.target = target; }
     }
 

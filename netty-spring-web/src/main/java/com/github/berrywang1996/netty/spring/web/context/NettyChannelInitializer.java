@@ -42,6 +42,23 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
+ * Netty channel pipeline initializer that configures the full HTTP processing pipeline
+ * for each newly accepted {@link SocketChannel}.
+ *
+ * <p>This initializer builds the channel pipeline with the following stages (in order):
+ * <ol>
+ *   <li>Optional SSL/TLS handler (if SSL is enabled)</li>
+ *   <li>Timeout handlers (read, write, and idle timeouts)</li>
+ *   <li>HTTP codec for request/response encoding and decoding</li>
+ *   <li>Optional GZIP compression handler</li>
+ *   <li>HTTP object aggregator to assemble full HTTP messages</li>
+ *   <li>Chunked write handler for large file transfers</li>
+ *   <li>{@link ServiceHandler} for MVC/WebSocket/static-file request dispatching</li>
+ * </ol>
+ *
+ * <p>It also initializes the {@link WebMappingSupporter} which scans Spring controllers
+ * and registers URL mapping resolvers used for request routing.
+ *
  * @author berrywang1996
  * @since V1.0.0
  */
@@ -61,17 +78,25 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
     @Getter
     private final WebMappingSupporter supporter;
 
+    /** SSL context for TLS encryption; null if SSL is not enabled. */
     private SslContext sslCtx = null;
 
     @Getter
     private final Map<String, AbstractMappingResolver> webSocketMappingResolverMap;
 
+    /**
+     * Creates a new channel initializer, configuring SSL if enabled and initializing
+     * the web mapping supporter that scans for controller mappings.
+     *
+     * @param nettyServerBootstrap the server bootstrap providing startup properties and application context
+     * @throws Exception if SSL context building or mapping supporter initialization fails
+     */
     public NettyChannelInitializer(NettyServerBootstrap nettyServerBootstrap) throws Exception {
 
         this.nettyServerBootstrap = nettyServerBootstrap;
         NettyServerStartupProperties.Http httpProperties = nettyServerBootstrap.getStartupProperties().getHttp();
 
-        // Configure SSL
+        // Configure SSL if enabled in properties
         if (httpProperties.getSsl() != null && httpProperties.getSsl().isEnable()) {
             File certificateFile = new File(httpProperties.getSsl().getCertificate());
             File privateKeyFile = new File(httpProperties.getSsl().getCertificateKey());
@@ -83,7 +108,7 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
                     privateKeyFile.getCanonicalPath());
         }
 
-        // Runtime supporter
+        // Initialize the web mapping supporter that scans Spring controllers and registers URL mappings
         log.debug("Init web mapping supporter.");
         supporter = new WebMappingSupporter(
                 nettyServerBootstrap.getStartupProperties(),
@@ -92,18 +117,34 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
         this.webSocketMappingResolverMap = supporter.getWebSocketMappingResolverMap();
     }
 
+    /**
+     * Initializes the channel pipeline for a newly accepted socket connection.
+     *
+     * <p>Adds handlers in order: SSL (optional), timeouts, HTTP codec, GZIP compression
+     * (optional), HTTP aggregation, chunked write support, and the service handler.
+     *
+     * @param ch the newly accepted socket channel
+     */
     @Override
     protected void initChannel(SocketChannel ch) {
         ChannelPipeline p = ch.pipeline();
         NettyServerStartupProperties.Http httpProperties = nettyServerBootstrap.getStartupProperties().getHttp();
+
+        // Add SSL handler first if TLS is configured
         if (sslCtx != null) {
             p.addLast(sslCtx.newHandler(ch.alloc()));
         }
+
+        // Add read/write/idle timeout handlers
         addTimeoutHandlers(p, httpProperties);
+
+        // HTTP codec with configurable limits for initial line, headers, and chunk sizes
         p.addLast(new HttpServerCodec(
                 resolveMaxInitialLineLength(httpProperties),
                 resolveMaxHeaderSize(httpProperties),
                 resolveMaxChunkSize(httpProperties)));
+
+        // Optional GZIP compression for configured content types
         if (httpProperties.getGzip().isEnable()) {
             p.addLast(new CompressorHandler(
                     httpProperties.getGzip().getCompressionLevel(),
@@ -113,11 +154,22 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
                     httpProperties.getGzip().getTypes())
             );
         }
+
+        // Aggregate HTTP chunks into a single FullHttpRequest
         p.addLast(new HttpObjectAggregator(resolveMaxHttpContentLength(httpProperties)));
+        // Support chunked transfer encoding for large file responses
         p.addLast(new ChunkedWriteHandler());
+        // Core request dispatcher that routes to MVC controllers, WebSocket handlers, or static files
         p.addLast(new ServiceHandler(supporter));
     }
 
+    /**
+     * Adds read, write, and idle timeout handlers to the pipeline when the respective
+     * timeout values are configured to be greater than zero.
+     *
+     * @param pipeline       the channel pipeline to add handlers to
+     * @param httpProperties the HTTP properties containing timeout configuration
+     */
     private static void addTimeoutHandlers(ChannelPipeline pipeline, NettyServerStartupProperties.Http httpProperties) {
         long readTimeoutSeconds = resolveReadTimeoutSeconds(httpProperties);
         if (readTimeoutSeconds > 0L) {
@@ -133,6 +185,12 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
         }
     }
 
+    /**
+     * Resolves the maximum HTTP content length, falling back to the default if not configured.
+     *
+     * @param httpProperties the HTTP properties to read from
+     * @return the maximum HTTP content length in bytes
+     */
     static int resolveMaxHttpContentLength(NettyServerStartupProperties.Http httpProperties) {
         if (httpProperties == null || httpProperties.getMaxContentLength() <= 0) {
             return DEFAULT_MAX_HTTP_CONTENT_LENGTH;
@@ -140,6 +198,12 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
         return httpProperties.getMaxContentLength();
     }
 
+    /**
+     * Resolves the maximum HTTP initial line length, falling back to the default if not configured.
+     *
+     * @param httpProperties the HTTP properties to read from
+     * @return the maximum initial line length in bytes
+     */
     static int resolveMaxInitialLineLength(NettyServerStartupProperties.Http httpProperties) {
         if (httpProperties == null || httpProperties.getMaxInitialLineLength() <= 0) {
             return DEFAULT_MAX_INITIAL_LINE_LENGTH;
@@ -147,6 +211,12 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
         return httpProperties.getMaxInitialLineLength();
     }
 
+    /**
+     * Resolves the maximum HTTP header size, falling back to the default if not configured.
+     *
+     * @param httpProperties the HTTP properties to read from
+     * @return the maximum header size in bytes
+     */
     static int resolveMaxHeaderSize(NettyServerStartupProperties.Http httpProperties) {
         if (httpProperties == null || httpProperties.getMaxHeaderSize() <= 0) {
             return DEFAULT_MAX_HEADER_SIZE;
@@ -154,6 +224,12 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
         return httpProperties.getMaxHeaderSize();
     }
 
+    /**
+     * Resolves the maximum HTTP chunk size, falling back to the default if not configured.
+     *
+     * @param httpProperties the HTTP properties to read from
+     * @return the maximum chunk size in bytes
+     */
     static int resolveMaxChunkSize(NettyServerStartupProperties.Http httpProperties) {
         if (httpProperties == null || httpProperties.getMaxChunkSize() <= 0) {
             return DEFAULT_MAX_CHUNK_SIZE;
@@ -161,6 +237,12 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
         return httpProperties.getMaxChunkSize();
     }
 
+    /**
+     * Resolves the read timeout in seconds. Returns 0 (disabled) if not configured.
+     *
+     * @param httpProperties the HTTP properties to read from
+     * @return the read timeout in seconds, or 0 if disabled
+     */
     static long resolveReadTimeoutSeconds(NettyServerStartupProperties.Http httpProperties) {
         if (httpProperties == null || httpProperties.getReadTimeoutSeconds() <= 0L) {
             return 0L;
@@ -168,6 +250,12 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
         return httpProperties.getReadTimeoutSeconds();
     }
 
+    /**
+     * Resolves the write timeout in seconds. Returns 0 (disabled) if not configured.
+     *
+     * @param httpProperties the HTTP properties to read from
+     * @return the write timeout in seconds, or 0 if disabled
+     */
     static long resolveWriteTimeoutSeconds(NettyServerStartupProperties.Http httpProperties) {
         if (httpProperties == null || httpProperties.getWriteTimeoutSeconds() <= 0L) {
             return 0L;
@@ -175,6 +263,12 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
         return httpProperties.getWriteTimeoutSeconds();
     }
 
+    /**
+     * Resolves the idle timeout in seconds. Returns 0 (disabled) if not configured.
+     *
+     * @param httpProperties the HTTP properties to read from
+     * @return the idle timeout in seconds, or 0 if disabled
+     */
     static long resolveIdleTimeoutSeconds(NettyServerStartupProperties.Http httpProperties) {
         if (httpProperties == null || httpProperties.getIdleTimeoutSeconds() <= 0L) {
             return 0L;
@@ -182,6 +276,12 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
         return httpProperties.getIdleTimeoutSeconds();
     }
 
+    /**
+     * Configures the SSL context builder with protocol and cipher settings from properties.
+     *
+     * @param sslContextBuilder the SSL context builder to configure
+     * @param sslProperties     the SSL properties containing protocol and cipher configuration
+     */
     static void configureSslContextBuilder(SslContextBuilder sslContextBuilder,
                                            NettyServerStartupProperties.Ssl sslProperties) {
         if (sslContextBuilder == null || sslProperties == null) {
@@ -197,6 +297,12 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
         }
     }
 
+    /**
+     * Parses a comma-or-whitespace-delimited configuration string into a list of trimmed values.
+     *
+     * @param configValue the delimited string to parse (may be {@code null} or empty)
+     * @return an unmodifiable list of parsed values, or an empty list if the input is blank
+     */
     static List<String> resolveDelimitedConfig(String configValue) {
         if (configValue == null || configValue.trim().isEmpty()) {
             return Collections.emptyList();

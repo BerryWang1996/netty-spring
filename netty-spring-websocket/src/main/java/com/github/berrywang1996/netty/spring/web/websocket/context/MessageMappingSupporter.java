@@ -36,28 +36,59 @@ import java.util.*;
 import java.util.concurrent.Semaphore;
 
 /**
+ * Spring-aware supporter that scans the application context for
+ * {@code @MessageMapping}-annotated methods and builds a map of
+ * {@link MessageMappingResolver} instances.
+ *
+ * <p>During {@link #initMappingResolverMap}, this class:
+ * <ol>
+ *   <li>Discovers all Spring {@code @Component} beans</li>
+ *   <li>Inspects public methods for {@code @MessageMapping} annotations</li>
+ *   <li>Builds compound URLs from class-level and method-level path prefixes</li>
+ *   <li>Creates a {@link MessageMappingResolver} per unique URI, aggregating
+ *       multiple {@link MessageType} handlers on the same URI</li>
+ *   <li>Initializes optional infrastructure: connection semaphore, crypto codec/policy,
+ *       event recorder, and handshake interceptor</li>
+ * </ol>
+ *
  * @author berrywang1996
  * @since V1.0.0
  */
 @Slf4j
 public class MessageMappingSupporter implements MappingSupporter<MessageMappingResolver> {
 
+    /** Server startup configuration properties. */
     private NettyServerStartupProperties startupProperties;
 
+    /** Spring application context used for bean discovery. */
     private ApplicationContext applicationContext;
 
+    /** Accumulated resolver map, keyed by WebSocket URI path. */
     private final Map<String, MessageMappingResolver> resolverMap = new HashMap<>();
 
+    /** Optional semaphore that enforces the global WebSocket connection limit. */
     private Semaphore connectionSemaphore;
 
+    /** Optional codec for application-level frame encryption/decryption. */
     private MessageCryptoCodec messageCryptoCodec;
 
+    /** Optional per-session policy determining whether crypto is applied. */
     private MessageCryptoPolicy messageCryptoPolicy;
 
+    /** Shared event recorder that collects metrics across all WebSocket resolvers. */
     private WebSocketEventRecorder eventRecorder;
 
+    /** Optional interceptor for custom handshake authentication/authorization. */
     private WebSocketHandshakeInterceptor handshakeInterceptor;
 
+    /**
+     * Scans the Spring context for {@code @MessageMapping} methods and builds
+     * the URI-to-resolver mapping.
+     *
+     * @param startupProperties  server startup configuration containing WebSocket settings
+     * @param applicationContext the Spring application context
+     * @return an unmodifiable map of WebSocket URI paths to their resolvers
+     */
     @Override
     public Map<String, MessageMappingResolver> initMappingResolverMap(NettyServerStartupProperties startupProperties,
                                                                       ApplicationContext applicationContext) {
@@ -147,6 +178,9 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         return resolverMap;
     }
 
+    /**
+     * Propagates the shared event recorder and optional handshake interceptor to all resolvers.
+     */
     private void configureEventRecorderAndInterceptor(Map<String, MessageMappingResolver> resolverMap) {
         for (MessageMappingResolver resolver : resolverMap.values()) {
             resolver.setEventRecorder(this.eventRecorder);
@@ -156,6 +190,13 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         }
     }
 
+    /**
+     * Discovers at most one {@link WebSocketHandshakeInterceptor} bean from the context.
+     *
+     * @param applicationContext the Spring application context
+     * @return the interceptor bean, or {@code null} if none is defined
+     * @throws IllegalStateException if more than one interceptor bean is found
+     */
     private WebSocketHandshakeInterceptor initHandshakeInterceptor(ApplicationContext applicationContext) {
         Map<String, WebSocketHandshakeInterceptor> interceptors =
                 applicationContext.getBeansOfType(WebSocketHandshakeInterceptor.class);
@@ -173,10 +214,22 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         return interceptor;
     }
 
+    /**
+     * Returns the shared event recorder used across all resolvers.
+     *
+     * @return the WebSocket event recorder
+     */
     public WebSocketEventRecorder getEventRecorder() {
         return eventRecorder;
     }
 
+    /**
+     * Resolves the effective mapping URLs for a handler method by combining class-level
+     * and method-level {@code @MessageMapping} path prefixes.
+     *
+     * @param method the annotated handler method
+     * @return the list of fully-qualified WebSocket URI paths
+     */
     private List<String> getMappingUrls(Method method) {
 
         List<String> urls = new ArrayList<>();
@@ -201,6 +254,12 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         return urls;
     }
 
+    /**
+     * Extracts the URL paths from a {@code @MessageMapping} annotation.
+     *
+     * @param methodAnno the annotation, or {@code null}
+     * @return the URL array from the annotation, or an empty array if the annotation is {@code null}
+     */
     private static String[] getAnnotationUrls(MessageMapping methodAnno) {
         if (methodAnno == null) {
             return new String[0];
@@ -208,6 +267,14 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         return methodAnno.value();
     }
 
+    /**
+     * Factory method that creates a new resolver with all current configuration.
+     *
+     * @param url            the WebSocket mapping URI
+     * @param methods        the message-type-to-method mapping
+     * @param invokeBeanName the Spring bean name of the handler
+     * @return a fully configured resolver
+     */
     private MessageMappingResolver newResolver(String url, Map<MessageType, Method> methods, String invokeBeanName) {
         return new MessageMappingResolver(
                 url,
@@ -220,6 +287,12 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
                 this.messageCryptoPolicy);
     }
 
+    /**
+     * Initializes the connection semaphore based on the configured max connections.
+     *
+     * @param startupProperties server startup properties
+     * @return a semaphore with the configured permit count, or {@code null} if no limit is set
+     */
     private Semaphore initConnectionSemaphore(NettyServerStartupProperties startupProperties) {
         if (startupProperties == null || startupProperties.getWebSocket() == null) {
             return null;
@@ -231,6 +304,16 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         return new Semaphore(maxConnections);
     }
 
+    /**
+     * Initializes the message crypto codec. If crypto is enabled and the algorithm is
+     * {@code AES-GCM}, a built-in {@link AesGcmMessageCryptoCodec} is created; otherwise
+     * a custom bean must be provided.
+     *
+     * @param startupProperties  server startup properties containing crypto configuration
+     * @param applicationContext the Spring application context for bean lookup
+     * @return the crypto codec, or {@code null} if crypto is disabled
+     * @throws IllegalStateException if crypto is enabled but no suitable codec is available
+     */
     private MessageCryptoCodec initMessageCryptoCodec(NettyServerStartupProperties startupProperties,
                                                       ApplicationContext applicationContext) {
         if (!isCryptoEnabled(startupProperties)) {
@@ -258,6 +341,14 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
                         + "or set server.netty.websocket.crypto.algorithm=AES-GCM.");
     }
 
+    /**
+     * Initializes the optional per-session crypto policy bean.
+     *
+     * @param startupProperties  server startup properties
+     * @param applicationContext the Spring application context for bean lookup
+     * @return the crypto policy, or {@code null} if none is defined or crypto is disabled
+     * @throws IllegalStateException if more than one policy bean is found
+     */
     private MessageCryptoPolicy initMessageCryptoPolicy(NettyServerStartupProperties startupProperties,
                                                         ApplicationContext applicationContext) {
         if (!isCryptoEnabled(startupProperties)) {
@@ -276,6 +367,16 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         return null;
     }
 
+    /**
+     * Resolves the {@link MessageCryptoKeyProvider} bean for AES-GCM crypto.
+     * Supports explicit provider name via configuration or auto-detection when
+     * exactly one provider bean exists.
+     *
+     * @param applicationContext the Spring application context
+     * @param cryptoProperties   crypto configuration containing the optional key-provider name
+     * @return the resolved key provider
+     * @throws IllegalStateException if no provider is found or multiple providers exist without explicit selection
+     */
     private MessageCryptoKeyProvider resolveMessageCryptoKeyProvider(
             ApplicationContext applicationContext,
             NettyServerStartupProperties.WebSocket.Crypto cryptoProperties) {
@@ -306,6 +407,12 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
                         + ". Action: set server.netty.websocket.crypto.key-provider to the intended bean name.");
     }
 
+    /**
+     * Checks whether WebSocket crypto is enabled in the startup configuration.
+     *
+     * @param startupProperties the server startup properties
+     * @return {@code true} if crypto is enabled
+     */
     private boolean isCryptoEnabled(NettyServerStartupProperties startupProperties) {
         if (startupProperties == null
                 || startupProperties.getWebSocket() == null

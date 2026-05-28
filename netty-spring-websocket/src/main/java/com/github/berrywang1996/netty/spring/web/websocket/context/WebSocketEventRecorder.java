@@ -53,10 +53,18 @@ public final class WebSocketEventRecorder {
     // ---- Close counters by reason ----
     private final Map<CloseReason, AtomicLong> closeCounters;
 
+    /**
+     * Creates an enabled recorder that actively counts events.
+     */
     public WebSocketEventRecorder() {
         this(true);
     }
 
+    /**
+     * Internal constructor for creating either an enabled or no-op recorder.
+     *
+     * @param enabled whether this recorder should actively count events
+     */
     private WebSocketEventRecorder(boolean enabled) {
         this.enabled = enabled;
         EnumMap<CloseReason, AtomicLong> counters = new EnumMap<>(CloseReason.class);
@@ -66,36 +74,51 @@ public final class WebSocketEventRecorder {
         this.closeCounters = Collections.unmodifiableMap(counters);
     }
 
+    /**
+     * Returns a shared no-op recorder that silently ignores all events.
+     *
+     * @return the no-op recorder singleton
+     */
     public static WebSocketEventRecorder noop() {
         return NOOP;
     }
 
     // ---- Handshake events ----
 
+    /** Records a WebSocket handshake attempt (before validation). */
     public void recordHandshakeAttempt() {
         increment(handshakeTotal);
     }
 
+    /** Records a successful WebSocket handshake upgrade. */
     public void recordHandshakeSuccess() {
         increment(handshakeSuccess);
     }
 
+    /** Records a handshake rejection by the {@link WebSocketHandshakeInterceptor}. */
     public void recordHandshakeRejectedByInterceptor() {
         increment(handshakeRejectedByInterceptor);
     }
 
     // ---- Message events ----
 
+    /** Records an inbound WebSocket message (any frame type). */
     public void recordMessageReceived() {
         increment(messagesReceived);
     }
 
+    /** Records a successfully sent outbound WebSocket message. */
     public void recordMessageSent() {
         increment(messagesSent);
     }
 
     // ---- Close events ----
 
+    /**
+     * Records a session close event categorized by the given reason.
+     *
+     * @param reason the reason the session was closed; {@code null} is silently ignored
+     */
     public void recordClose(CloseReason reason) {
         if (!enabled || reason == null) {
             return;
@@ -109,7 +132,10 @@ public final class WebSocketEventRecorder {
     // ---- Snapshot ----
 
     /**
-     * Takes a consistent snapshot of all counters.
+     * Takes a consistent snapshot of all counters and returns them as an
+     * immutable {@link WebSocketEventStats}.
+     *
+     * @return an immutable snapshot of all event counters
      */
     public WebSocketEventStats getStats() {
         EnumMap<CloseReason, Long> closeSnapshot = new EnumMap<>(CloseReason.class);

@@ -26,13 +26,33 @@ import java.util.HashSet;
 import java.util.Set;
 
 /**
+ * Content-type-aware GZIP compression handler for Netty HTTP responses.
+ *
+ * <p>Extends {@link HttpContentCompressor} to selectively apply GZIP compression
+ * only to responses whose {@code Content-Type} matches one of the configured
+ * compressible MIME types (e.g. "text/html", "application/json").
+ *
+ * <p>Responses with content types not in the allowed set are passed through
+ * without compression, avoiding unnecessary CPU overhead for binary content
+ * such as images or already-compressed files.
+ *
  * @author berrywang1996
  * @since V1.0.0
  */
 public class CompressorHandler extends HttpContentCompressor {
 
+    /** Set of MIME type prefixes eligible for GZIP compression. */
     private final Set<String> gzipTypes;
 
+    /**
+     * Creates a new compression handler with the specified compression parameters.
+     *
+     * @param compressionLevel     the GZIP compression level (1-9, where 9 is maximum compression)
+     * @param windowBits           the base-2 logarithm of the compression window size
+     * @param memLevel             the memory level for internal compression state
+     * @param contentSizeThreshold the minimum content size in bytes before compression is applied
+     * @param gzipTypes            space-separated list of MIME type prefixes eligible for compression
+     */
     public CompressorHandler(int compressionLevel, int windowBits, int memLevel,
                              int contentSizeThreshold, String gzipTypes) {
         super(compressionLevel, windowBits, memLevel, contentSizeThreshold);
@@ -44,11 +64,24 @@ public class CompressorHandler extends HttpContentCompressor {
         super.channelActive(ctx);
     }
 
+    /**
+     * Determines whether the response should be compressed based on its Content-Type header.
+     *
+     * <p>Compression is applied only when the response content type starts with one of
+     * the configured GZIP type prefixes. If no match is found, {@code null} is returned
+     * to skip compression entirely.
+     *
+     * @param headers        the HTTP response headers to inspect
+     * @param acceptEncoding the client's accepted encoding from the request
+     * @return the encoding result if compression should be applied, or {@code null} to skip
+     * @throws Exception if the parent encoder encounters an error
+     */
     @Override
     protected Result beginEncode(HttpResponse headers, String acceptEncoding) throws Exception {
 
         boolean shouldEncode = false;
 
+        // Check if the response content type matches any of the configured compressible types
         String contentType = headers.headers().get(HttpHeaderNames.CONTENT_TYPE);
         for (String gzipType : gzipTypes) {
             if (contentType.startsWith(gzipType)) {
@@ -60,6 +93,7 @@ public class CompressorHandler extends HttpContentCompressor {
         if (shouldEncode) {
             return super.beginEncode(headers, acceptEncoding);
         }
+        // Return null to indicate that compression should not be applied
         return null;
 
     }

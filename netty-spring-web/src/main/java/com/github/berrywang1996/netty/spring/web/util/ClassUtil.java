@@ -20,6 +20,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
+ * Utility class for reflective class loading and instantiation.
+ *
+ * <p>Provides methods to check whether a class is on the classpath and to create
+ * new instances via the default (no-arg) constructor. All failures are logged
+ * rather than thrown, returning {@code null} or {@code false} to the caller.
+ *
  * @author berrywang1996
  * @since V1.0.0
  */
@@ -27,6 +33,12 @@ public class ClassUtil {
 
     private static final Logger log = LoggerFactory.getLogger(ClassUtil.class);
 
+    /**
+     * Checks whether the given class name is available on the current classpath.
+     *
+     * @param className the fully qualified class name to check
+     * @return {@code true} if the class can be loaded, {@code false} otherwise
+     */
     public static boolean isPresent(String className) {
         try {
             Class.forName(className);
@@ -36,6 +48,13 @@ public class ClassUtil {
         }
     }
 
+    /**
+     * Creates a new instance of the class identified by the given fully qualified name
+     * using its default (no-arg) constructor.
+     *
+     * @param className the fully qualified class name to instantiate
+     * @return a new instance, or {@code null} if the class cannot be loaded or instantiated
+     */
     public static Object newInstance(String className) {
         try {
             return Class.forName(className).newInstance();
@@ -45,6 +64,13 @@ public class ClassUtil {
         }
     }
 
+    /**
+     * Creates a new instance of the given class using its default (no-arg) constructor.
+     *
+     * @param <T> the type of the class to instantiate
+     * @param clz the class to instantiate
+     * @return a new instance, or {@code null} if instantiation fails
+     */
     public static <T> T newInstance(Class<T> clz) {
         try {
             return clz.newInstance();
