@@ -611,6 +611,45 @@ public class NettyServerStartupProperties {
                 BroadcastRejectedExecutionPolicy.DROP;
 
         /**
+         * Broadcast threading model.
+         * <ul>
+         *   <li>{@code EVENT_LOOP_DIRECT} (default, v1.6+): Zero-copy broadcast with
+         *       EventLoop-direct delivery. Serializes the message payload once and shares
+         *       it across all sessions via {@code ByteBuf.retainedDuplicate()}. Tasks are
+         *       grouped by EventLoop for batch flush, eliminating the sender thread pool
+         *       overhead.</li>
+         *   <li>{@code THREAD_POOL_LEGACY}: v1.5.x behavior — each session's broadcast is
+         *       submitted as an individual task to the sender thread pool with per-task
+         *       serialization. Provided for backward compatibility.</li>
+         * </ul>
+         */
+        private BroadcastMode broadcastMode = BroadcastMode.EVENT_LOOP_DIRECT;
+
+        /**
+         * Low water mark (in bytes) for the per-channel write buffer.
+         * When the number of queued bytes drops below this threshold, the channel
+         * becomes writable again. Default: 32768 (32 KB).
+         */
+        private int writeBufferLowWaterMark = 32768;
+
+        /**
+         * High water mark (in bytes) for the per-channel write buffer.
+         * When the number of queued bytes exceeds this threshold, the channel
+         * becomes non-writable and broadcasts will skip or close the session
+         * per the configured policy. Default: 65536 (64 KB).
+         */
+        private int writeBufferHighWaterMark = 65536;
+
+        /**
+         * Flush consolidation threshold for {@code FlushConsolidationHandler}.
+         * Flushes are consolidated until this many explicit flushes are observed,
+         * reducing syscall overhead during high-throughput broadcast.
+         * 0 or negative means disabled (no FlushConsolidationHandler is added).
+         * Default: 256.
+         */
+        private int flushConsolidationThreshold = 256;
+
+        /**
          * Handler executor core pool size.
          */
         private int handlerCorePoolSize;
@@ -719,6 +758,38 @@ public class NettyServerStartupProperties {
 
         public void setBroadcastRejectedExecutionPolicy(BroadcastRejectedExecutionPolicy broadcastRejectedExecutionPolicy) {
             this.broadcastRejectedExecutionPolicy = broadcastRejectedExecutionPolicy;
+        }
+
+        public BroadcastMode getBroadcastMode() {
+            return broadcastMode;
+        }
+
+        public void setBroadcastMode(BroadcastMode broadcastMode) {
+            this.broadcastMode = broadcastMode;
+        }
+
+        public int getWriteBufferLowWaterMark() {
+            return writeBufferLowWaterMark;
+        }
+
+        public void setWriteBufferLowWaterMark(int writeBufferLowWaterMark) {
+            this.writeBufferLowWaterMark = writeBufferLowWaterMark;
+        }
+
+        public int getWriteBufferHighWaterMark() {
+            return writeBufferHighWaterMark;
+        }
+
+        public void setWriteBufferHighWaterMark(int writeBufferHighWaterMark) {
+            this.writeBufferHighWaterMark = writeBufferHighWaterMark;
+        }
+
+        public int getFlushConsolidationThreshold() {
+            return flushConsolidationThreshold;
+        }
+
+        public void setFlushConsolidationThreshold(int flushConsolidationThreshold) {
+            this.flushConsolidationThreshold = flushConsolidationThreshold;
         }
 
         public int getHandlerCorePoolSize() {
@@ -970,6 +1041,19 @@ public class NettyServerStartupProperties {
         public enum BroadcastRejectedExecutionPolicy {
             DROP,
             CALLER_RUNS
+        }
+
+        /**
+         * Broadcast threading model.
+         *
+         * <ul>
+         *   <li>{@code EVENT_LOOP_DIRECT} — zero-copy, EventLoop-direct broadcast (v1.6 default)</li>
+         *   <li>{@code THREAD_POOL_LEGACY} — per-session thread pool broadcast (v1.5.x compat)</li>
+         * </ul>
+         */
+        public enum BroadcastMode {
+            EVENT_LOOP_DIRECT,
+            THREAD_POOL_LEGACY
         }
     }
 

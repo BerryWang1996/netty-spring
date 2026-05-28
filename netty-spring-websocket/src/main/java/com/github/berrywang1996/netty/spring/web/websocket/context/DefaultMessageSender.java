@@ -7,8 +7,14 @@ import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingRe
 import com.github.berrywang1996.netty.spring.web.websocket.consts.CloseReason;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSessionClosedException;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageUriNotDefinedException;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.EventLoop;
+import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import io.netty.util.ReferenceCountUtil;
 import lombok.extern.slf4j.Slf4j;
@@ -17,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -32,20 +39,27 @@ import java.util.concurrent.atomic.AtomicLong;
  * Default implementation of the {@link MessageSender} interface.
  *
  * <p>This class provides the core logic for sending targeted messages, broadcasting
- * to all sessions on a URI, querying session state, and closing sessions. It manages
- * its own {@link ThreadPoolExecutor} for asynchronous broadcast delivery and tracks
- * runtime statistics (rejected broadcasts, write failures, non-writable channels, etc.)
- * via atomic counters.
+ * to all sessions on a URI, querying session state, and closing sessions.
  *
- * <h3>Threading model</h3>
+ * <h3>Threading model (v1.6)</h3>
+ * <p>Two broadcast modes are supported, controlled by
+ * {@link NettyServerStartupProperties.WebSocket.BroadcastMode}:
+ *
  * <ul>
- *   <li>Targeted sends ({@link #sendMessage}) run synchronously on the caller thread.</li>
- *   <li>Broadcasts ({@link #topicMessage}) submit per-session tasks to the internal thread pool.
- *       When the pool is saturated, the configurable rejection policy determines whether
- *       the task falls back to the caller thread or is dropped.</li>
- *   <li>Non-writable channels during broadcast are either skipped or force-closed,
- *       depending on the configured {@code BroadcastNonWritableChannelPolicy}.</li>
+ *   <li><strong>EVENT_LOOP_DIRECT</strong> (default): The message payload is serialized
+ *       once via {@link AbstractMessage#serializeSharedPayload} and the resulting
+ *       {@link ByteBuf} is shared across all target sessions using
+ *       {@code ByteBuf.retainedDuplicate()}. Sessions are grouped by their Netty
+ *       {@link EventLoop}, and a single task per EventLoop performs write + batch flush.
+ *       This eliminates N-1 redundant serializations, minimizes cross-thread scheduling,
+ *       and reduces syscall overhead via batch flush.</li>
+ *   <li><strong>THREAD_POOL_LEGACY</strong>: v1.5.x behavior — each session's broadcast
+ *       is submitted as an individual task to the internal thread pool with per-task
+ *       serialization. Provided for backward compatibility.</li>
  * </ul>
+ *
+ * <p>Targeted sends ({@link #sendMessage}) always run synchronously on the caller thread,
+ * regardless of the broadcast mode.
  *
  * <h3>Lifecycle</h3>
  * The sender must be shut down via {@link #shutdown()} when no longer needed.
@@ -53,7 +67,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * handles this automatically via its server stop listener.
  *
  * @author berrywang1996
- * @version V1.0.0
+ * @version V1.6.0
  * @since V1.0.0
  * @see MessageSender
  */
@@ -71,11 +85,17 @@ public class DefaultMessageSender implements MessageSender {
 
     private final NettyServerStartupProperties.WebSocket webSocketProperties;
 
-    /** Thread pool used for asynchronous broadcast delivery. */
+    /**
+     * Thread pool used for asynchronous broadcast delivery in THREAD_POOL_LEGACY mode.
+     * May be {@code null} if EVENT_LOOP_DIRECT mode is active.
+     */
     private final ThreadPoolExecutor executorService;
 
     /** URI-to-resolver mapping; each resolver owns a session map for one WebSocket URI. */
     private final Map<String, MessageMappingResolver> resolverMap;
+
+    /** The active broadcast mode. */
+    private final NettyServerStartupProperties.WebSocket.BroadcastMode broadcastMode;
 
     // ---- Runtime statistics counters (all atomic for lock-free thread safety) ----
     private final AtomicLong rejectedBroadcastCount = new AtomicLong();
@@ -104,7 +124,16 @@ public class DefaultMessageSender implements MessageSender {
                                 NettyServerStartupProperties.WebSocket webSocketProperties) {
         this.resolverMap = resolverMap;
         this.webSocketProperties = webSocketProperties;
-        this.executorService = initHandlerExecutorThreadPool(webSocketProperties);
+        this.broadcastMode = resolveBroadcastMode(webSocketProperties);
+
+        // Only create the thread pool if legacy mode is active; EVENT_LOOP_DIRECT doesn't need it
+        if (this.broadcastMode == NettyServerStartupProperties.WebSocket.BroadcastMode.THREAD_POOL_LEGACY) {
+            this.executorService = initHandlerExecutorThreadPool(webSocketProperties);
+            log.info("MessageSender initialized in THREAD_POOL_LEGACY mode.");
+        } else {
+            this.executorService = null;
+            log.info("MessageSender initialized in EVENT_LOOP_DIRECT mode (zero-copy broadcast).");
+        }
     }
 
     /**
@@ -125,6 +154,8 @@ public class DefaultMessageSender implements MessageSender {
                 new DaemonThreadFactory("messageSender"),
                 new ThreadPoolExecutor.AbortPolicy());
     }
+
+    // ==================== Session Query Methods ====================
 
     /** {@inheritDoc} */
     @Override
@@ -212,6 +243,8 @@ public class DefaultMessageSender implements MessageSender {
         return true;
     }
 
+    // ==================== Targeted Send ====================
+
     /**
      * {@inheritDoc}
      *
@@ -251,13 +284,13 @@ public class DefaultMessageSender implements MessageSender {
         }
     }
 
+    // ==================== Broadcast ====================
+
     /**
      * {@inheritDoc}
      *
      * <p>Broadcasts the message to all active sessions on the given URI.
-     * Each session's send is submitted as an asynchronous task to the internal thread
-     * pool. Sessions that are closing, inactive, or whose channel is not writable are
-     * filtered out according to the configured policies.
+     * Delegates to the active broadcast mode implementation.
      */
     @Override
     public void topicMessage(String uri, final AbstractMessage message) throws MessageUriNotDefinedException {
@@ -265,78 +298,203 @@ public class DefaultMessageSender implements MessageSender {
         if (resolver == null) {
             throw new MessageUriNotDefinedException(uri, resolverMap.keySet());
         }
+        if (broadcastMode == NettyServerStartupProperties.WebSocket.BroadcastMode.EVENT_LOOP_DIRECT) {
+            topicMessageEventLoopDirect(resolver, message);
+        } else {
+            topicMessageLegacy(resolver, message);
+        }
+    }
+
+    // ==================== EVENT_LOOP_DIRECT Broadcast (v1.6) ====================
+
+    /**
+     * Zero-copy, EventLoop-direct broadcast implementation.
+     *
+     * <p>This method:
+     * <ol>
+     *   <li>Serializes the message payload once into a shared {@link ByteBuf}</li>
+     *   <li>Groups all active sessions by their Netty {@link EventLoop}</li>
+     *   <li>Submits one task per EventLoop that:
+     *       <ul>
+     *         <li>For each session: creates a frame wrapping a {@code retainedDuplicate()}
+     *             of the shared payload, optionally encrypts it, writes it without flushing</li>
+     *         <li>After all writes: flushes each channel once (batch flush)</li>
+     *       </ul>
+     *   </li>
+     * </ol>
+     *
+     * <p>Performance characteristics on a 2-core machine with 500 sessions:
+     * <ul>
+     *   <li>Serialization: 1 call (was 500)</li>
+     *   <li>EventLoop tasks: ~4 (was 500 thread pool tasks)</li>
+     *   <li>Context switches: ~0 (tasks execute on the target EventLoop)</li>
+     * </ul>
+     */
+    private void topicMessageEventLoopDirect(final MessageMappingResolver resolver,
+                                             final AbstractMessage message) {
+        Map<String, MessageSession> sessionMap = resolver.getSessionMap();
+        if (sessionMap.isEmpty()) {
+            return;
+        }
+
+        // Step 1: Serialize once — caller thread pays the cost exactly once
+        final boolean isText = message.isTextFrame();
+        final ByteBuf sharedPayload;
+        try {
+            sharedPayload = message.serializeSharedPayload(PooledByteBufAllocator.DEFAULT);
+        } catch (Exception e) {
+            log.error("Failed to serialize broadcast message payload.", e);
+            return;
+        }
+
+        try {
+            // Step 2: Group sessions by EventLoop
+            Map<EventLoop, List<SessionContext>> groups = groupSessionsByEventLoop(resolver, sessionMap);
+
+            if (groups.isEmpty()) {
+                return;
+            }
+
+            // Step 3: Submit one task per EventLoop
+            for (Map.Entry<EventLoop, List<SessionContext>> entry : groups.entrySet()) {
+                EventLoop eventLoop = entry.getKey();
+                final List<SessionContext> sessions = entry.getValue();
+                // Each EventLoop task gets its own retained duplicate of the shared payload
+                final ByteBuf elPayload = sharedPayload.retainedDuplicate();
+
+                eventLoop.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            broadcastOnEventLoop(resolver, sessions, elPayload, isText);
+                        } catch (Exception e) {
+                            log.error("Unexpected error in EventLoop broadcast task.", e);
+                        } finally {
+                            elPayload.release();
+                        }
+                    }
+                });
+            }
+        } finally {
+            // Release the original shared payload (EventLoop tasks hold retained duplicates)
+            sharedPayload.release();
+        }
+    }
+
+    /**
+     * Groups active, writable sessions by their channel's {@link EventLoop}.
+     * Sessions that are closing, inactive, or non-writable are filtered out.
+     *
+     * @return a map of EventLoop to the list of session contexts in that loop
+     */
+    private Map<EventLoop, List<SessionContext>> groupSessionsByEventLoop(
+            MessageMappingResolver resolver, Map<String, MessageSession> sessionMap) {
+
+        Map<EventLoop, List<SessionContext>> groups = new LinkedHashMap<>();
+
+        for (MessageSession session : sessionMap.values()) {
+            if (!isSessionActive(resolver, session.getSessionId())) {
+                continue;
+            }
+            if (!isSessionWritable(session)) {
+                handleNonWritableBroadcastSession(resolver, session);
+                continue;
+            }
+            EventLoop eventLoop = session.getChannelHandlerContext().channel().eventLoop();
+            List<SessionContext> group = groups.get(eventLoop);
+            if (group == null) {
+                group = new ArrayList<>();
+                groups.put(eventLoop, group);
+            }
+            group.add(new SessionContext(session, resolver));
+        }
+        return groups;
+    }
+
+    /**
+     * Executes on a Netty EventLoop thread: writes a shared-payload frame to each
+     * session in the group, then batch-flushes all channels.
+     *
+     * @param resolver      the resolver for session lifecycle operations
+     * @param sessions      the sessions assigned to this EventLoop
+     * @param sharedPayload the serialized payload (caller retains ownership)
+     * @param isText        whether to wrap as TextWebSocketFrame or BinaryWebSocketFrame
+     */
+    private void broadcastOnEventLoop(MessageMappingResolver resolver,
+                                      List<SessionContext> sessions,
+                                      ByteBuf sharedPayload,
+                                      boolean isText) {
+        // Track contexts that need flushing
+        List<ChannelHandlerContext> toFlush = new ArrayList<>(sessions.size());
+
+        for (SessionContext sc : sessions) {
+            MessageSession session = sc.session;
+            // Re-check session state (may have changed since grouping)
+            if (!isSessionActive(resolver, session.getSessionId())) {
+                continue;
+            }
+            if (!session.getChannelHandlerContext().channel().isWritable()) {
+                handleNonWritableBroadcastSession(resolver, session);
+                continue;
+            }
+
+            ChannelHandlerContext ctx = session.getChannelHandlerContext();
+            WebSocketFrame frame = null;
+            try {
+                // Create frame from a retained duplicate — zero-copy, independent refcount
+                ByteBuf frameBuf = sharedPayload.retainedDuplicate();
+                if (isText) {
+                    frame = new TextWebSocketFrame(frameBuf);
+                } else {
+                    frame = new BinaryWebSocketFrame(frameBuf);
+                }
+
+                // Encrypt if needed (per-session; may replace the frame)
+                frame = resolver.encryptOutboundFrame(session, frame);
+
+                // write() without flush — queues the frame in the channel pipeline
+                final MessageSession finalSession = session;
+                ctx.write(frame).addListener(new ChannelFutureListener() {
+                    @Override
+                    public void operationComplete(ChannelFuture future) {
+                        if (future.isSuccess()) {
+                            resolver.getEventRecorder().recordMessageSent();
+                        } else {
+                            handleWriteFailure(resolver, finalSession, future.cause());
+                        }
+                    }
+                });
+                frame = null; // ownership transferred to pipeline
+                toFlush.add(ctx);
+            } catch (Exception e) {
+                // Release the frame if it wasn't handed to the pipeline
+                if (frame != null) {
+                    ReferenceCountUtil.release(frame);
+                }
+                handleWriteFailure(resolver, session, e);
+            }
+        }
+
+        // Batch flush: one syscall per channel (instead of per-message writeAndFlush)
+        for (ChannelHandlerContext ctx : toFlush) {
+            ctx.flush();
+        }
+    }
+
+    // ==================== THREAD_POOL_LEGACY Broadcast (v1.5.x compat) ====================
+
+    /**
+     * Legacy broadcast implementation: submits per-session tasks to the thread pool.
+     * Each task serializes the message independently. Kept for backward compatibility.
+     */
+    private void topicMessageLegacy(final MessageMappingResolver resolver,
+                                    final AbstractMessage message) {
         Map<String, MessageSession> sessionMap = resolver.getSessionMap();
         for (final MessageSession session : sessionMap.values()) {
-            // Skip sessions that are closing, inactive, or not writable
             if (!prepareSessionForBroadcast(resolver, session)) {
                 continue;
             }
             submitBroadcastTask(resolver, session, message);
-        }
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public boolean closeSession(String uri, String sessionId, int statusCode, String reasonText)
-            throws MessageUriNotDefinedException {
-        MessageMappingResolver resolver = resolverMap.get(uri);
-        if (resolver == null) {
-            throw new MessageUriNotDefinedException(uri, resolverMap.keySet());
-        }
-        return resolver.closeSession(sessionId, statusCode, reasonText);
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public int closeSessions(String uri, int statusCode, String reasonText) throws MessageUriNotDefinedException {
-        MessageMappingResolver resolver = resolverMap.get(uri);
-        if (resolver == null) {
-            throw new MessageUriNotDefinedException(uri, resolverMap.keySet());
-        }
-        int closed = 0;
-        for (String sessionId : new ArrayList<>(resolver.getSessionMap().keySet())) {
-            if (resolver.closeSession(sessionId, statusCode, reasonText)) {
-                closed++;
-            }
-        }
-        return closed;
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public MessageSenderRuntimeStats getRuntimeStats() {
-        return new MessageSenderRuntimeStats(
-                ExecutorRuntimeInfo.from(this.executorService),
-                this.rejectedBroadcastCount.get(),
-                this.callerRunsFallbackCount.get(),
-                this.droppedBroadcastCount.get(),
-                this.nonWritableSkipCount.get(),
-                this.nonWritableCloseCount.get(),
-                this.writeFailureCount.get());
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Initiates a graceful shutdown of the broadcast thread pool, waiting up to
-     * 5 seconds for in-flight tasks before forcing termination. Re-interrupts the
-     * calling thread if the wait is interrupted.
-     */
-    @Override
-    public void shutdown() {
-        if (executorService.isShutdown()) {
-            return;
-        }
-        executorService.shutdown();
-        try {
-            // Wait briefly for in-flight broadcast tasks to complete
-            if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
-                executorService.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executorService.shutdownNow();
-            // Preserve interrupt status for upstream callers
-            Thread.currentThread().interrupt();
         }
     }
 
@@ -362,6 +520,8 @@ public class DefaultMessageSender implements MessageSender {
             handleRejectedBroadcastTask(resolver, session, message, e);
         }
     }
+
+    // ==================== Frame-Level Send ====================
 
     private void sendMessageFrame(final MessageMappingResolver resolver,
                                   final MessageSession session,
@@ -424,6 +584,76 @@ public class DefaultMessageSender implements MessageSender {
         });
     }
 
+    // ==================== Session Close ====================
+
+    /** {@inheritDoc} */
+    @Override
+    public boolean closeSession(String uri, String sessionId, int statusCode, String reasonText)
+            throws MessageUriNotDefinedException {
+        MessageMappingResolver resolver = resolverMap.get(uri);
+        if (resolver == null) {
+            throw new MessageUriNotDefinedException(uri, resolverMap.keySet());
+        }
+        return resolver.closeSession(sessionId, statusCode, reasonText);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public int closeSessions(String uri, int statusCode, String reasonText) throws MessageUriNotDefinedException {
+        MessageMappingResolver resolver = resolverMap.get(uri);
+        if (resolver == null) {
+            throw new MessageUriNotDefinedException(uri, resolverMap.keySet());
+        }
+        int closed = 0;
+        for (String sessionId : new ArrayList<>(resolver.getSessionMap().keySet())) {
+            if (resolver.closeSession(sessionId, statusCode, reasonText)) {
+                closed++;
+            }
+        }
+        return closed;
+    }
+
+    // ==================== Statistics & Lifecycle ====================
+
+    /** {@inheritDoc} */
+    @Override
+    public MessageSenderRuntimeStats getRuntimeStats() {
+        return new MessageSenderRuntimeStats(
+                this.executorService != null
+                        ? ExecutorRuntimeInfo.from(this.executorService)
+                        : ExecutorRuntimeInfo.empty(),
+                this.rejectedBroadcastCount.get(),
+                this.callerRunsFallbackCount.get(),
+                this.droppedBroadcastCount.get(),
+                this.nonWritableSkipCount.get(),
+                this.nonWritableCloseCount.get(),
+                this.writeFailureCount.get());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Initiates a graceful shutdown of the broadcast thread pool (if active), waiting
+     * up to 5 seconds for in-flight tasks before forcing termination.
+     */
+    @Override
+    public void shutdown() {
+        if (executorService == null || executorService.isShutdown()) {
+            return;
+        }
+        executorService.shutdown();
+        try {
+            if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
+                executorService.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executorService.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    // ==================== Error Handling ====================
+
     /** Increments the write failure counter and closes the session via the transport error lifecycle. */
     private void handleWriteFailure(MessageMappingResolver resolver, MessageSession session, Throwable cause) {
         this.writeFailureCount.incrementAndGet();
@@ -478,15 +708,13 @@ public class DefaultMessageSender implements MessageSender {
             return;
         }
         this.nonWritableSkipCount.incrementAndGet();
-        log.warn("Skip websocket broadcast because channel is not writable. sessionId={}, stats={}",
-                session.getSessionId(),
-                getRuntimeStats());
+        if (log.isDebugEnabled()) {
+            log.debug("Skip websocket broadcast because channel is not writable. sessionId={}", session.getSessionId());
+        }
     }
 
     /**
-     * Handles a rejected broadcast task when the thread pool is saturated.
-     * Depending on the configured policy: CALLER_RUNS sends on the caller thread,
-     * DROP silently discards the message for this session.
+     * Handles a rejected broadcast task when the thread pool is saturated (THREAD_POOL_LEGACY mode only).
      */
     private void handleRejectedBroadcastTask(MessageMappingResolver resolver,
                                              MessageSession session,
@@ -512,6 +740,16 @@ public class DefaultMessageSender implements MessageSender {
 
     private boolean isSessionWritable(MessageSession session) {
         return session != null && session.getChannelHandlerContext().channel().isWritable();
+    }
+
+    // ==================== Configuration Resolution ====================
+
+    private NettyServerStartupProperties.WebSocket.BroadcastMode resolveBroadcastMode(
+            NettyServerStartupProperties.WebSocket webSocketProperties) {
+        if (webSocketProperties == null || webSocketProperties.getBroadcastMode() == null) {
+            return NettyServerStartupProperties.WebSocket.BroadcastMode.EVENT_LOOP_DIRECT;
+        }
+        return webSocketProperties.getBroadcastMode();
     }
 
     private NettyServerStartupProperties.WebSocket.BroadcastNonWritableChannelPolicy resolveBroadcastNonWritableChannelPolicy() {
@@ -565,5 +803,21 @@ public class DefaultMessageSender implements MessageSender {
             return new SynchronousQueue<Runnable>();
         }
         return new ArrayBlockingQueue<Runnable>(queueCapacity);
+    }
+
+    // ==================== Inner Classes ====================
+
+    /**
+     * Lightweight holder pairing a session with its resolver, avoiding repeated
+     * map lookups during EventLoop-direct broadcast.
+     */
+    private static final class SessionContext {
+        final MessageSession session;
+        final MessageMappingResolver resolver;
+
+        SessionContext(MessageSession session, MessageMappingResolver resolver) {
+            this.session = session;
+            this.resolver = resolver;
+        }
     }
 }

@@ -22,9 +22,11 @@ import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelPipeline;
+import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
+import io.netty.handler.flush.FlushConsolidationHandler;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.stream.ChunkedWriteHandler;
@@ -128,7 +130,12 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
     @Override
     protected void initChannel(SocketChannel ch) {
         ChannelPipeline p = ch.pipeline();
-        NettyServerStartupProperties.Http httpProperties = nettyServerBootstrap.getStartupProperties().getHttp();
+        NettyServerStartupProperties properties = nettyServerBootstrap.getStartupProperties();
+        NettyServerStartupProperties.Http httpProperties = properties.getHttp();
+        NettyServerStartupProperties.WebSocket wsProperties = properties.getWebSocket();
+
+        // Configure per-channel write buffer water marks for backpressure
+        configureWriteBufferWaterMark(ch, wsProperties);
 
         // Add SSL handler first if TLS is configured
         if (sslCtx != null) {
@@ -159,8 +166,63 @@ public class NettyChannelInitializer extends ChannelInitializer<SocketChannel> {
         p.addLast(new HttpObjectAggregator(resolveMaxHttpContentLength(httpProperties)));
         // Support chunked transfer encoding for large file responses
         p.addLast(new ChunkedWriteHandler());
+
+        // Flush consolidation: coalesce multiple flush() calls into fewer syscalls.
+        // The consolidateWhenNoReadInProgress=true flag is critical for broadcast
+        // scenarios where flushes occur outside of channelRead cycles.
+        addFlushConsolidationHandler(p, wsProperties);
+
         // Core request dispatcher that routes to MVC controllers, WebSocket handlers, or static files
         p.addLast(new ServiceHandler(supporter));
+    }
+
+    /**
+     * Configures the per-channel {@link WriteBufferWaterMark} for backpressure control.
+     *
+     * <p>When the number of bytes queued for write exceeds the high water mark, the channel
+     * becomes non-writable ({@code channel.isWritable()} returns {@code false}). Once queued
+     * bytes drop below the low water mark, the channel becomes writable again. This provides
+     * per-session backpressure during broadcast, preventing fast producers from overwhelming
+     * slow consumers.
+     *
+     * @param ch           the socket channel to configure
+     * @param wsProperties WebSocket properties containing water mark values (may be {@code null})
+     */
+    private static void configureWriteBufferWaterMark(SocketChannel ch,
+                                                      NettyServerStartupProperties.WebSocket wsProperties) {
+        if (wsProperties == null) {
+            return;
+        }
+        int low = wsProperties.getWriteBufferLowWaterMark();
+        int high = wsProperties.getWriteBufferHighWaterMark();
+        if (low > 0 && high > 0 && high > low) {
+            ch.config().setWriteBufferWaterMark(new WriteBufferWaterMark(low, high));
+        }
+    }
+
+    /**
+     * Adds a {@link FlushConsolidationHandler} to the pipeline when the configured
+     * threshold is positive. This handler coalesces multiple {@code flush()} calls
+     * into fewer system calls, significantly reducing the per-message overhead during
+     * high-throughput broadcast.
+     *
+     * <p>The {@code consolidateWhenNoReadInProgress=true} parameter ensures flush
+     * consolidation also applies to writes that happen outside of a {@code channelRead}
+     * cycle, which is the typical case for broadcast (writes originate from application
+     * code or EventLoop tasks, not from inbound frame processing).
+     *
+     * @param pipeline     the channel pipeline to add the handler to
+     * @param wsProperties WebSocket properties containing the consolidation threshold (may be {@code null})
+     */
+    private static void addFlushConsolidationHandler(ChannelPipeline pipeline,
+                                                     NettyServerStartupProperties.WebSocket wsProperties) {
+        if (wsProperties == null) {
+            return;
+        }
+        int threshold = wsProperties.getFlushConsolidationThreshold();
+        if (threshold > 0) {
+            pipeline.addLast(new FlushConsolidationHandler(threshold, true));
+        }
     }
 
     /**

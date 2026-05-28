@@ -2,6 +2,8 @@ package com.github.berrywang1996.netty.spring.web.websocket.context;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 
 /**
@@ -15,8 +17,14 @@ import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
  * {@code volatile} to allow safe mutation and reading across threads during
  * broadcast scenarios.
  *
+ * <h3>Zero-copy broadcast (v1.6)</h3>
+ * <p>Overrides {@link #serializeSharedPayload(ByteBufAllocator)} to serialize the content
+ * directly to a {@link ByteBuf} using {@link ObjectMapper#writeValueAsBytes(Object)},
+ * bypassing the intermediate {@code String} allocation that
+ * {@link ObjectMapper#writeValueAsString(Object)} produces.
+ *
  * @author berrywang1996
- * @version V1.0.0
+ * @version V1.6.0
  * @since V1.0.0
  */
 public class JsonMessage extends AbstractMessage<TextWebSocketFrame> {
@@ -96,6 +104,28 @@ public class JsonMessage extends AbstractMessage<TextWebSocketFrame> {
     public TextWebSocketFrame responseMsg() {
         try {
             return new TextWebSocketFrame(objectMapper.writeValueAsString(content));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Serialize websocket JSON message failed.", e);
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Serializes the content directly to a pooled {@link ByteBuf} using
+     * {@link ObjectMapper#writeValueAsBytes(Object)}, which is more efficient than the
+     * {@link #responseMsg()} path that goes through {@code writeValueAsString()} → UTF-8
+     * encode → frame construction.
+     *
+     * @since V1.6.0
+     */
+    @Override
+    public ByteBuf serializeSharedPayload(ByteBufAllocator allocator) {
+        try {
+            byte[] jsonBytes = objectMapper.writeValueAsBytes(content);
+            ByteBuf buf = allocator.buffer(jsonBytes.length);
+            buf.writeBytes(jsonBytes);
+            return buf;
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Serialize websocket JSON message failed.", e);
         }

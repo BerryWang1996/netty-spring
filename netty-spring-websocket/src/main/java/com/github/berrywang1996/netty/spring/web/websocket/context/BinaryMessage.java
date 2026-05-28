@@ -1,6 +1,7 @@
 package com.github.berrywang1996.netty.spring.web.websocket.context;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.Unpooled;
 import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 
@@ -11,7 +12,7 @@ import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
  * backed by a fresh retained copy, which is safe for multi-session broadcast.
  *
  * @author berrywang1996
- * @version V1.0.0
+ * @version V1.6.0
  */
 public class BinaryMessage extends AbstractMessage<BinaryWebSocketFrame> {
 
@@ -70,6 +71,31 @@ public class BinaryMessage extends AbstractMessage<BinaryWebSocketFrame> {
     @Override
     public BinaryWebSocketFrame responseMsg() {
         return new BinaryWebSocketFrame(Unpooled.wrappedBuffer(binaryData.clone()));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Copies the binary data into a pooled {@link ByteBuf} for zero-copy sharing.
+     *
+     * @since V1.6.0
+     */
+    @Override
+    public ByteBuf serializeSharedPayload(ByteBufAllocator allocator) {
+        ByteBuf buf = allocator.buffer(binaryData.length);
+        buf.writeBytes(binaryData);
+        return buf;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code false} — binary messages produce {@link BinaryWebSocketFrame}
+     * @since V1.6.0
+     */
+    @Override
+    public boolean isTextFrame() {
+        return false;
     }
 
 }
