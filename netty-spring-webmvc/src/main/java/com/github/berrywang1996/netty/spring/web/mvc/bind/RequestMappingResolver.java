@@ -39,6 +39,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.DefaultParameterNameDiscoverer;
 import org.springframework.core.ParameterNameDiscoverer;
+import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.util.PathMatcher;
 
@@ -332,6 +333,46 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
             }
         }
 
+        // Enforce consumes/produces content negotiation
+        RequestMapping mappingAnnotation =
+                AnnotatedElementUtils.findMergedAnnotation(invokeMethod, RequestMapping.class);
+        if (mappingAnnotation != null) {
+            // Validate Content-Type against consumes constraint
+            String[] consumes = mappingAnnotation.consumes();
+            if (consumes.length > 0) {
+                String contentType = msg.headers().get(HttpHeaderNames.CONTENT_TYPE);
+                if (!matchesMediaType(contentType, consumes)) {
+                    ServiceHandlerUtil.HttpErrorMessage errorMsg =
+                            new ServiceHandlerUtil.HttpErrorMessage(
+                                    HttpResponseStatus.UNSUPPORTED_MEDIA_TYPE,
+                                    msg.uri(),
+                                    "Content-Type '" + contentType + "' is not supported. Supported: "
+                                            + Arrays.toString(consumes),
+                                    null);
+                    ServiceHandlerUtil.sendError(ctx, msg, errorMsg);
+                    return;
+                }
+            }
+            // Validate Accept header against produces constraint
+            String[] produces = mappingAnnotation.produces();
+            if (produces.length > 0) {
+                String acceptHeader = msg.headers().get(HttpHeaderNames.ACCEPT);
+                if (acceptHeader != null && !acceptHeader.isEmpty()
+                        && !"*/*".equals(acceptHeader.trim())
+                        && !matchesMediaType(acceptHeader, produces)) {
+                    ServiceHandlerUtil.HttpErrorMessage errorMsg =
+                            new ServiceHandlerUtil.HttpErrorMessage(
+                                    HttpResponseStatus.NOT_ACCEPTABLE,
+                                    msg.uri(),
+                                    "Accept '" + acceptHeader + "' is not supported. Supported: "
+                                            + Arrays.toString(produces),
+                                    null);
+                    ServiceHandlerUtil.sendError(ctx, msg, errorMsg);
+                    return;
+                }
+            }
+        }
+
         // Build the request context that wraps the raw Netty request
         HttpRequestContext requestContext = new HttpRequestContext();
         requestContext.setChannelHandlerContext(ctx);
@@ -470,9 +511,10 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
             Class<?> paramType = parameterTypes[paramIndex];
             String paramName = methodParamEntry.getKey();
 
-            // Attempt annotation-based binding first (@RequestBody, @RequestHeader, @CookieValue)
+            // Attempt annotation-based binding first (@RequestBody, @RequestHeader, @CookieValue, @RequestParam)
             Object resolved = resolveAnnotatedParameter(
-                    paramAnnotations, paramType, paramName, requestContext, msg, pathParameterMap);
+                    paramAnnotations, paramType, paramName, requestContext, msg,
+                    pathParameterMap, requestParameterMap);
 
             if (resolved != UNRESOLVED) {
                 parameters.add(resolved);
@@ -503,7 +545,8 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
                                              String paramName,
                                              HttpRequestContext requestContext,
                                              FullHttpRequest msg,
-                                             Map<String, String> pathParameterMap) throws Exception {
+                                             Map<String, String> pathParameterMap,
+                                             Map<String, String> requestParameterMap) throws Exception {
         for (Annotation annotation : annotations) {
             // @RequestBody — deserialize JSON request body
             if (annotation instanceof RequestBody) {
@@ -517,9 +560,47 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
             if (annotation instanceof CookieValue) {
                 return resolveCookieValue(requestContext, paramType, paramName, (CookieValue) annotation);
             }
-            // @PathVariable and @RequestParam are resolved via the standard binding path
+            // @RequestParam — bind a query/form parameter with required/defaultValue support
+            if (annotation instanceof RequestParam) {
+                return resolveRequestParam(requestParameterMap, paramType, paramName, (RequestParam) annotation);
+            }
+            // @PathVariable is resolved via the standard binding path
         }
         return UNRESOLVED;
+    }
+
+    /**
+     * Resolves a parameter annotated with @RequestParam from query string or form data.
+     *
+     * @param requestParameterMap the parsed request parameters
+     * @param paramType           the target parameter type
+     * @param paramName           the parameter name (used as fallback if annotation value is empty)
+     * @param annotation          the @RequestParam annotation
+     * @return the resolved parameter value, converted to the target type
+     * @throws IllegalArgumentException if a required parameter is missing
+     */
+    private Object resolveRequestParam(Map<String, String> requestParameterMap, Class<?> paramType,
+                                       String paramName, RequestParam annotation) {
+        String queryParamName = StringUtil.isNotBlank(annotation.value()) ? annotation.value() : paramName;
+        String paramValue = requestParameterMap.get(queryParamName);
+
+        if (paramValue == null || paramValue.isEmpty()) {
+            if (!NO_DEFAULT_VALUE.equals(annotation.defaultValue())) {
+                paramValue = annotation.defaultValue();
+            } else if (annotation.required()) {
+                throw new IllegalArgumentException("Missing required request parameter: " + queryParamName);
+            }
+        }
+        if (paramValue == null) {
+            return null;
+        }
+        if (paramType == String.class) {
+            return paramValue;
+        }
+        if (DataBindUtil.isBasicType(paramType)) {
+            return DataBindUtil.parseStringToBasicType(paramValue, paramType);
+        }
+        return paramValue;
     }
 
     /**
@@ -899,6 +980,69 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         if (crossOrigin.maxAge() >= 0) {
             response.headers().set("Access-Control-Max-Age", String.valueOf(crossOrigin.maxAge()));
         }
+    }
+
+    // ----- Content negotiation support -----
+
+    /**
+     * Checks whether a request media type (from Content-Type or Accept header) matches
+     * any of the declared media type patterns.
+     *
+     * <p>Supports wildcard matching: a pattern of {@code "application/*"} matches
+     * {@code "application/json"}, and {@code "*&#47;*"} matches any type. Media type
+     * parameters (e.g. {@code "; charset=UTF-8"}) are stripped before comparison.
+     *
+     * @param requestMediaType the media type from the request header (may be {@code null})
+     * @param declaredTypes    the media types declared in the mapping annotation
+     * @return {@code true} if the request type matches at least one declared type
+     */
+    private boolean matchesMediaType(String requestMediaType, String[] declaredTypes) {
+        if (requestMediaType == null || requestMediaType.isEmpty()) {
+            // No Content-Type or Accept header — allow (lenient matching)
+            return true;
+        }
+
+        // Accept header may contain multiple types separated by commas
+        String[] requestTypes = requestMediaType.split(",");
+        for (String reqType : requestTypes) {
+            // Strip quality factor and parameters (e.g. ";q=0.9", "; charset=UTF-8")
+            String normalizedReq = reqType.trim();
+            int semicolonIdx = normalizedReq.indexOf(';');
+            if (semicolonIdx > 0) {
+                normalizedReq = normalizedReq.substring(0, semicolonIdx).trim();
+            }
+
+            if ("*/*".equals(normalizedReq)) {
+                return true;
+            }
+
+            for (String declaredType : declaredTypes) {
+                String normalizedDeclared = declaredType.trim();
+                int dSemicolon = normalizedDeclared.indexOf(';');
+                if (dSemicolon > 0) {
+                    normalizedDeclared = normalizedDeclared.substring(0, dSemicolon).trim();
+                }
+
+                if (normalizedReq.equalsIgnoreCase(normalizedDeclared)) {
+                    return true;
+                }
+
+                // Wildcard matching: "application/*" matches "application/json"
+                if (normalizedDeclared.endsWith("/*")) {
+                    String prefix = normalizedDeclared.substring(0, normalizedDeclared.length() - 1);
+                    if (normalizedReq.toLowerCase().startsWith(prefix.toLowerCase())) {
+                        return true;
+                    }
+                }
+                if (normalizedReq.endsWith("/*")) {
+                    String prefix = normalizedReq.substring(0, normalizedReq.length() - 1);
+                    if (normalizedDeclared.toLowerCase().startsWith(prefix.toLowerCase())) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
 }
