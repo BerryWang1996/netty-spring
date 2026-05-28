@@ -22,6 +22,15 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
+ * Annotation indicating that the return value of a handler method should be
+ * serialized directly into the HTTP response body (typically as JSON) rather
+ * than being interpreted as an HTML view name.
+ * <p>
+ * Can be applied at the method level to affect a single endpoint, or at the
+ * class level to apply to all methods in the controller. When present, the
+ * framework selects {@link com.github.berrywang1996.netty.spring.web.mvc.view.JsonViewHandler JsonViewHandler}
+ * for rendering the response.
+ *
  * @author berrywang1996
  * @since V1.0.0
  */
