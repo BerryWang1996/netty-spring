@@ -1,6 +1,6 @@
 # 开发计划与阶段状态
 
-更新时间：2026-05-27
+更新时间：2026-05-28
 
 ## 当前结论
 
@@ -11,7 +11,11 @@
 
 ## 当前发版判断
 
-- **`1.4.0`（当前推荐版本）**：P7 Demo 与文档产品化版本。聊天室 demo、API 使用指南、Starter 集成测试增强均已完成。
+- **`1.6.2`（当前推荐版本）**：安全与稳定性修复版本。修复 22 个 bug（10 HIGH / 10 MEDIUM / 2 LOW），含 CRLF 注入防护、TLS 默认安全协议、HTTP keep-alive 合规和 WebSocket 会话生命周期修复。
+- `1.6.1`：广播优化后首批关键 bug 修复（ByteBuf 泄漏、生命周期、数据绑定）。
+- `1.6.0`：Phase 1 广播性能优化（EventLoop-direct 投递、零拷贝序列化、FlushConsolidation、WriteBufferWaterMark 背压）。
+- `1.5.1`：压测基线版本，含压测套件和分析。
+- `1.4.0`：P7 Demo 与文档产品化版本。聊天室 demo、API 使用指南、Starter 集成测试增强。
 - `1.2.3`：生产就绪代码质量版本，修复了 10 项生产稳定性缺陷。
 - `1.2.2`：用户体验增强版本。
 - `1.2.1`：功能/稳定性正式版。
@@ -595,13 +599,106 @@ P4.1 首批已完成：
 | `1.2.3` | 生产就绪代码质量版 | 核心缺陷修复 |
 | `1.3.0` | 可观测与运维能力正式版 | P6 |
 | `1.3.1` | 代码质量深度治理版 | 生产代码缺陷修复 |
-| `1.4.0` | **Demo 与文档产品化版** | **P7（当前推荐版本）** |
+| `1.4.0` | Demo 与文档产品化版 | P7 |
+| `1.5.1` | 压测基线版 | 性能分析 |
+| `1.6.0` | 广播性能优化版 | Phase 1 |
+| `1.6.1` | 关键 bug 修复版 | Round 1 |
+| `1.6.2` | **安全与稳定性修复版** | **Round 2-4（当前推荐版本）** |
 
 后续版本规划：
 
-- **`1.3.1`**：代码质量深度治理。修复 `e.printStackTrace()`（8 处）、`SimpleDateFormat` 线程安全（6 处）、HTTP 空错误响应、`ObjectMapper` 每请求重建、字段拼写错误；补齐 `netty-spring-webmvc` 测试覆盖。
-- **`1.4.0`（当前推荐版本）**：P7 Demo 与文档产品化。聊天室 demo（含加入/离开通知、在线列表、广播和私聊）、API 使用指南（12 章节，覆盖全部场景）、Starter 集成测试增强（从 6 增至 12 个测试覆盖自定义 Bean 覆盖、开关组合、多 URI 注册等边缘场景）。
+- **`1.7.0`（下一版本）**：可观测性增强 + 遗留缺陷深度修复 + WebSocket 分片消息支持。详见下方 `1.7.0` 规划。
+- **`1.8.0`（中期）**：Redis Pub/Sub 集群支持（Phase 3），实现跨节点广播、分布式会话管理和弹性扩缩容。
 - **`2.0.0`（远期）**：Spring Boot 3.x / Jakarta namespace 迁移 + 企业安全版本（Dependency-Check/Dependabot 闭环、标准鉴权/CORS/TLS 策略）。
+
+## `1.7.0` 可观测性增强与深度修复版本规划（下一版本）
+
+目标：补齐 v1.6 roadmap Phase 2 可观测性体系，同时修复 v1.6.2 审计中发现的遗留缺陷。
+
+版本定位：
+
+- `1.7.0` 是功能增强 + 缺陷修复的 minor 版本。
+- 可观测性侧以 v1.6 roadmap Phase 2 为蓝图，重点落地 Micrometer 指标扩展和结构化日志。
+- 缺陷修复侧专注于 v1.6.2 审计报告中"已确认但未修复"的 6 个遗留项。
+- 所有改动向后兼容，不引入破坏性 API 变更。
+
+建议拆成四刀：
+
+### 第一刀：遗留缺陷修复（审计 Round 4 遗留项）
+
+1. **shutdown() 异步生命周期等待**（HIGH）：`MessageMappingResolver.shutdown()` 当前不等待 `dispatchLifecycleTask()` 提交的 onClose 回调完成，`WebMappingSupporter` 随后立即关闭线程池，导致用户的 `@MessageMapping(ON_CLOSE)` 可能永远不被执行。修复：收集 `dispatchLifecycleTask` 返回的 Future，在 `shutdown()` 中 `awaitTermination`（带超时），确保 onClose 回调有机会执行。
+   - 涉及文件：`MessageMappingResolver.java`、`WebMappingSupporter.java`
+
+2. **DataBindUtil 嵌套属性匹配优化**（MEDIUM）：`setObjectProperties` 内层循环遍历所有 keys 匹配所有 PropertyDescriptor，而非仅匹配 `keys.getFirst()`。当根对象属性名与嵌套属性名重复时会产生错误绑定。修复：仅匹配 `keys.getFirst()` 并使用 `keys.size() == 1` 判定叶子节点。
+   - 涉及文件：`DataBindUtil.java`
+
+3. **closeSession TOCTOU 竞态**（MEDIUM）：`closeSession(String, int, String)` 中 `isActive()` 检查与 `startClosing()` CAS 之间存在时间窗口，并发调用可能进入不同代码路径。修复：将 `startClosing()` CAS 提前到方法最前端作为唯一入口。
+   - 涉及文件：`MessageMappingResolver.java`
+
+4. **WebSocket 握手 Host 头验证**（MEDIUM）：`doHandshake()` 直接拼接客户端发送的 Host 头构造 WebSocket URL，可被用于缓存投毒。修复：验证 Host 头不含 CRLF/空白等非法字符。
+   - 涉及文件：`MessageMappingResolver.java`
+
+5. **ResponseEntity 头部 CRLF 过滤**（MEDIUM）：`applyEntityHeaders()` 和 `applyCommonResponseHeaders()` 未过滤用户设置的头部值中的 CRLF 字符。修复：复用 Cookie 中已有的 `sanitizeHeaderValue` 模式。
+   - 涉及文件：`RequestMappingResolver.java`
+
+6. **MimetypesFileTypeMap 封装**（LOW）：`MIME_TYPES_MAP` 作为 `public static` 暴露可变对象。修复：改为 `private` 并提供只读方法。
+   - 涉及文件：`ServiceHandlerUtil.java`
+
+### 第二刀：Micrometer 指标扩展
+
+基于 v1.6 roadmap Phase 2.1，在现有 `NettyWebSocketMeterBinder` 基础上扩展：
+
+- **连接维度指标**：`netty.ws.connections.active`（按 URI 分类 Gauge）、`netty.ws.connection.duration`（Timer，按 close_reason tag）
+- **消息维度指标**：`netty.ws.message.size.bytes`（DistributionSummary）、`netty.ws.broadcast.fanout`（DistributionSummary）、`netty.ws.handler.latency`（Timer，含 P50/P95/P99）
+- **线程池指标**：通过 Micrometer `ExecutorServiceMetrics.monitor()` 自动暴露 handler/sender 池利用率、队列深度、拒绝率
+- **Netty 内存指标**：`netty.allocator.used.heap.bytes`、`netty.allocator.used.direct.bytes`（Gauge）
+- 涉及文件：`NettyWebSocketMeterBinder.java`、`NettyHttpMeterBinder.java`、`WebSocketEventRecorder.java`
+
+### 第三刀：结构化日志与健康检查
+
+- **MDC 集成**：Handler 入口注入 `ws.sessionId`、`ws.remoteAddr`、`ws.uri` 到 MDC，广播线程继承调用者 MDC context
+- **自定义 HealthIndicator**：`NettyWebSocketHealthIndicator` 在 Actuator health 端点中暴露线程池饱和度、连接数接近上限、消息丢弃率等降级信号
+- **高频事件采样日志**：`server.netty.websocket.log-sample-rate` 控制消息收发日志采样频率，默认关闭
+- 涉及文件：新增 `NettyWebSocketHealthIndicator.java`，修改 `MessageMappingResolver.java`、`DefaultMessageSender.java`
+
+### 第四刀：WebSocket 分片消息支持
+
+当前 `ContinuationWebSocketFrame` 仅记录警告日志后丢弃。v1.7.0 实现基本的分片消息支持：
+
+- 在 pipeline 中添加 `WebSocketFrameAggregator`（Netty 内置），将分片 frame 自动组装为完整的 `TextWebSocketFrame` / `BinaryWebSocketFrame`
+- 通过 `server.netty.websocket.max-frame-aggregation-buffer-size` 控制聚合缓冲区上限（默认 64KB），超限关闭连接
+- 移除 v1.6.2 添加的 `ContinuationWebSocketFrame` 警告日志（不再需要）
+- 涉及文件：`NettyChannelInitializer.java`（或 `MessageMappingResolver` 握手处）、`NettyServerStartupProperties.java`
+
+`1.7.0` 完成标准：
+
+- v1.6.2 审计报告中 6 个遗留缺陷全部修复并有回归测试
+- Grafana Dashboard 模板可展示连接、消息、线程池和内存四类关键指标
+- `spring-boot-starter-actuator` 用户无需额外配置即可在 `/actuator/health` 看到 WebSocket 健康状态
+- 分片 WebSocket 消息可被正确接收和处理
+- 全量 `mvn test` 通过
+
+`1.7.0` 不作为阻塞项的内容：
+
+- OpenTelemetry 分布式追踪（推迟到 `1.8.0` 与集群支持一起落地）
+- Grafana Dashboard JSON 模板（可随文档单独发布）
+- Redis 集群支持（`1.8.0`）
+- Spring Boot 3.x 迁移（`2.0.0`）
+
+## `1.8.0` Redis 集群支持版本规划（中期）
+
+目标：实现 v1.6 roadmap Phase 3，支持多节点部署和跨节点消息路由。
+
+核心能力：
+
+- 新增 `netty-spring-cluster` 模块，基于 Redis Pub/Sub 实现跨节点广播
+- 分布式 Session Registry，支持跨节点单播路由
+- 弹性扩缩容：Scale-out 自然平衡，Scale-in 优雅排空（DRAINING 状态）
+- 故障自恢复：Redis Keyspace Notification 检测节点故障，自动清理 session
+- API 透明：`MessageSender` 接口不变，`ClusterMessageSender` 自动路由
+- 配置兼容：不启用 `server.netty.cluster.enabled` 时行为与 v1.7.x 完全一致
+
+详细设计参见 `docs/v1.6-roadmap.md` Phase 3。
 
 ## 近期建议拆成四个小里程碑
 
