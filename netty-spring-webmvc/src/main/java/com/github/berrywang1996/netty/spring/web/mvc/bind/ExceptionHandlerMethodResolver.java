@@ -166,15 +166,23 @@ public class ExceptionHandlerMethodResolver {
     /**
      * Returns the bean instance on which handler methods should be invoked.
      * If the resolver was constructed with a bean name and application context,
-     * the bean is resolved lazily on first access.
+     * the bean is resolved lazily on first access using double-checked locking
+     * for thread safety.
      *
      * @return the handler bean instance
      */
     public Object getHandlerBean() {
-        if (handlerBean == null && beanName != null && applicationContext != null) {
-            handlerBean = applicationContext.getBean(beanName);
+        Object bean = handlerBean;
+        if (bean == null && beanName != null && applicationContext != null) {
+            synchronized (this) {
+                bean = handlerBean;
+                if (bean == null) {
+                    bean = applicationContext.getBean(beanName);
+                    handlerBean = bean;
+                }
+            }
         }
-        return handlerBean;
+        return bean;
     }
 
     /**

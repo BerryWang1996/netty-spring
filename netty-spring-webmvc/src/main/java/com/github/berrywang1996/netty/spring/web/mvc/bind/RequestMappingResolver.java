@@ -22,10 +22,7 @@ import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver
 import com.github.berrywang1996.netty.spring.web.databind.DataBindUtil;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.*;
 import com.github.berrywang1996.netty.spring.web.mvc.consts.HttpRequestMethod;
-import com.github.berrywang1996.netty.spring.web.mvc.context.Cookie;
-import com.github.berrywang1996.netty.spring.web.mvc.context.HandlerInterceptor;
-import com.github.berrywang1996.netty.spring.web.mvc.context.HttpRequestContext;
-import com.github.berrywang1996.netty.spring.web.mvc.context.ResponseEntity;
+import com.github.berrywang1996.netty.spring.web.mvc.context.*;
 import com.github.berrywang1996.netty.spring.web.mvc.view.AbstractViewHandler;
 import com.github.berrywang1996.netty.spring.web.util.ServiceHandlerUtil;
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
@@ -34,7 +31,24 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.handler.codec.http.*;
+import io.netty.handler.codec.http.DefaultFullHttpResponse;
+import io.netty.handler.codec.http.DefaultHttpResponse;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.FullHttpResponse;
+import io.netty.handler.codec.http.HttpChunkedInput;
+import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.HttpResponse;
+import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.HttpUtil;
+import io.netty.handler.codec.http.HttpVersion;
+import io.netty.handler.codec.http.LastHttpContent;
+import io.netty.handler.codec.http.QueryStringDecoder;
+import io.netty.handler.codec.http.multipart.FileUpload;
+import io.netty.handler.codec.http.multipart.HttpPostRequestDecoder;
+import io.netty.handler.codec.http.multipart.InterfaceHttpData;
+import io.netty.handler.stream.ChunkedFile;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.DefaultParameterNameDiscoverer;
@@ -43,6 +57,9 @@ import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.util.PathMatcher;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.RandomAccessFile;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -381,6 +398,12 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         // Parse query-string and form-encoded request parameters
         Map<String, String> requestParameterMap = ServiceHandlerUtil.parseRequestParameters(msg);
         requestContext.setRequestParameters(requestParameterMap);
+
+        // Parse multipart files if the request is multipart/form-data
+        String contentTypeHeader = msg.headers().get(HttpHeaderNames.CONTENT_TYPE);
+        if (contentTypeHeader != null && contentTypeHeader.toLowerCase().contains("multipart/")) {
+            parseMultipartFiles(msg, requestContext);
+        }
 
         // Extract path variables from the URI for RESTful URL templates
         String rawUri = msg.uri();
@@ -737,6 +760,13 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
             return requestContext.getRequestHeaders();
         } else if (paramType == ChannelHandlerContext.class) {
             return requestContext.getChannelHandlerContext();
+        } else if (paramType == MultipartFile.class) {
+            // Inject uploaded file by parameter name
+            return requestContext.getMultipartFile(paramName);
+        } else if (paramType == MultipartFile[].class) {
+            // Inject all uploaded files as an array for the given field name
+            List<MultipartFile> files = requestContext.getMultipartFiles().get(paramName);
+            return files != null ? files.toArray(new MultipartFile[0]) : new MultipartFile[0];
         }
 
         // Basic type or String binding from request parameters
@@ -831,11 +861,18 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
     // ----- Response writing -----
 
     /**
-     * Builds and writes the HTTP response, handling ResponseEntity, @ResponseStatus, CORS,
-     * cookies, and custom response headers.
+     * Builds and writes the HTTP response, handling FileDownload, ResponseEntity,
+     * @ResponseStatus, CORS, cookies, and custom response headers.
      */
     private void writeResponse(ChannelHandlerContext ctx, FullHttpRequest msg, Object result,
                                Method invokeMethod, HttpRequestContext requestContext) {
+
+        // Extract FileDownload from result (direct or wrapped in ResponseEntity)
+        FileDownload fileDownload = extractFileDownload(result);
+        if (fileDownload != null) {
+            writeFileDownloadResponse(ctx, msg, result, fileDownload, requestContext);
+            return;
+        }
 
         FullHttpResponse response;
 
@@ -874,6 +911,183 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
             }
         }
 
+        applyCommonResponseHeaders(response, msg, requestContext);
+
+        // Flush the response to the client
+        ChannelFuture writeFuture = ctx.writeAndFlush(response);
+        writeFuture.addListener(new ChannelFutureListener() {
+            @Override
+            public void operationComplete(ChannelFuture future) {
+                if (!future.isSuccess()) {
+                    getHttpRuntimeRecorder().recordHttpResponseWriteFailure();
+                    log.warn("Write http response failed, close channel. uri={}", msg.uri(), future.cause());
+                    future.channel().close();
+                }
+            }
+        });
+    }
+
+    /**
+     * Extracts a {@link FileDownload} from the handler return value — either directly
+     * or unwrapped from a {@link ResponseEntity}.
+     *
+     * @param result the handler method return value
+     * @return the FileDownload instance, or {@code null} if not a file download
+     */
+    private FileDownload extractFileDownload(Object result) {
+        if (result instanceof FileDownload) {
+            return (FileDownload) result;
+        }
+        if (result instanceof ResponseEntity) {
+            Object body = ((ResponseEntity<?>) result).getBody();
+            if (body instanceof FileDownload) {
+                return (FileDownload) body;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Writes a file download response, using chunked transfer for {@link java.io.File} sources
+     * and buffered content for byte array and InputStream sources.
+     *
+     * <p>Sets Content-Type, Content-Length, and Content-Disposition headers automatically.
+     * ResponseEntity headers (if present) are also applied.
+     */
+    private void writeFileDownloadResponse(ChannelHandlerContext ctx, FullHttpRequest msg,
+                                           Object result, FileDownload fileDownload,
+                                           HttpRequestContext requestContext) {
+        try {
+            // Determine HTTP status code
+            int statusCode = 200;
+            Map<String, List<String>> entityHeaders = Collections.emptyMap();
+            if (result instanceof ResponseEntity) {
+                ResponseEntity<?> entity = (ResponseEntity<?>) result;
+                statusCode = entity.getStatusCode();
+                entityHeaders = entity.getHeaders();
+            }
+
+            if (fileDownload.getFile() != null) {
+                // File-based download — use Netty chunked file for zero-copy streaming
+                java.io.File downloadFile = fileDownload.getFile();
+                if (!downloadFile.exists() || !downloadFile.isFile()) {
+                    ServiceHandlerUtil.HttpErrorMessage errorMsg =
+                            new ServiceHandlerUtil.HttpErrorMessage(
+                                    HttpResponseStatus.NOT_FOUND,
+                                    msg.uri(),
+                                    "File not found: " + downloadFile.getName(),
+                                    null);
+                    ServiceHandlerUtil.sendError(ctx, msg, errorMsg);
+                    return;
+                }
+
+                RandomAccessFile raf = new RandomAccessFile(downloadFile, "r");
+                try {
+                    long fileLength = raf.length();
+
+                    HttpResponse response = new DefaultHttpResponse(
+                            HttpVersion.HTTP_1_1, HttpResponseStatus.valueOf(statusCode));
+                    HttpUtil.setContentLength(response, fileLength);
+                    response.headers().set(HttpHeaderNames.CONTENT_TYPE, fileDownload.getContentType());
+                    setContentDisposition(response, fileDownload);
+                    applyEntityHeaders(response, entityHeaders);
+                    applyCommonResponseHeaders(response, msg, requestContext);
+
+                    // Write in three parts: headers → chunked content → end marker
+                    // ChunkedFile takes ownership of the RandomAccessFile and closes it when done
+                    ctx.write(response);
+                    ctx.write(new HttpChunkedInput(new ChunkedFile(raf, 0, fileLength, 8192)));
+                    raf = null; // Ownership transferred to ChunkedFile — do not close manually
+                    ChannelFuture writeFuture = ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
+                    writeFuture.addListener(new ChannelFutureListener() {
+                        @Override
+                        public void operationComplete(ChannelFuture future) {
+                            if (!future.isSuccess()) {
+                                getHttpRuntimeRecorder().recordHttpResponseWriteFailure();
+                                log.warn("Write file download response failed. uri={}", msg.uri(), future.cause());
+                                future.channel().close();
+                            }
+                        }
+                    });
+                } finally {
+                    // Close RAF only if ownership was NOT transferred to ChunkedFile
+                    if (raf != null) {
+                        raf.close();
+                    }
+                }
+
+            } else {
+                // Byte array or InputStream — write as a FullHttpResponse
+                byte[] content;
+                if (fileDownload.getBytes() != null) {
+                    content = fileDownload.getBytes();
+                } else if (fileDownload.getInputStream() != null) {
+                    content = readInputStream(fileDownload.getInputStream());
+                } else {
+                    content = new byte[0];
+                }
+
+                ByteBuf buf = Unpooled.wrappedBuffer(content);
+                FullHttpResponse response = new DefaultFullHttpResponse(
+                        HttpVersion.HTTP_1_1, HttpResponseStatus.valueOf(statusCode), buf);
+                response.headers().set(HttpHeaderNames.CONTENT_TYPE, fileDownload.getContentType());
+                response.headers().set(HttpHeaderNames.CONTENT_LENGTH, content.length);
+                setContentDisposition(response, fileDownload);
+                applyEntityHeaders(response, entityHeaders);
+                applyCommonResponseHeaders(response, msg, requestContext);
+
+                ChannelFuture writeFuture = ctx.writeAndFlush(response);
+                writeFuture.addListener(new ChannelFutureListener() {
+                    @Override
+                    public void operationComplete(ChannelFuture future) {
+                        if (!future.isSuccess()) {
+                            getHttpRuntimeRecorder().recordHttpResponseWriteFailure();
+                            log.warn("Write file download response failed. uri={}", msg.uri(), future.cause());
+                            future.channel().close();
+                        }
+                    }
+                });
+            }
+
+        } catch (Exception e) {
+            log.warn("Failed to write file download response: {}", e.getMessage(), e);
+            ServiceHandlerUtil.HttpErrorMessage errorMsg =
+                    new ServiceHandlerUtil.HttpErrorMessage(
+                            HttpResponseStatus.INTERNAL_SERVER_ERROR,
+                            msg.uri(),
+                            "File download failed: " + e.getMessage(),
+                            e);
+            ServiceHandlerUtil.sendError(ctx, msg, errorMsg);
+        }
+    }
+
+    /**
+     * Sets the Content-Disposition header for file download.
+     */
+    private void setContentDisposition(HttpResponse response, FileDownload fileDownload) {
+        String disposition = fileDownload.isInline() ? "inline" : "attachment";
+        if (fileDownload.getFilename() != null && !fileDownload.getFilename().isEmpty()) {
+            disposition += "; filename=\"" + fileDownload.getFilename() + "\"";
+        }
+        response.headers().set("Content-Disposition", disposition);
+    }
+
+    /**
+     * Applies ResponseEntity headers to an HttpResponse.
+     */
+    private void applyEntityHeaders(HttpResponse response, Map<String, List<String>> headers) {
+        for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
+            for (String value : entry.getValue()) {
+                response.headers().add(entry.getKey(), value);
+            }
+        }
+    }
+
+    /**
+     * Applies common response headers: CORS, cookies, and custom headers from the request context.
+     */
+    private void applyCommonResponseHeaders(HttpResponse response, FullHttpRequest msg,
+                                            HttpRequestContext requestContext) {
         // Attach CORS headers if @CrossOrigin is configured
         if (crossOrigin != null) {
             applyCorsHeaders(response, msg);
@@ -891,19 +1105,70 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         if (requestContext.getResponseHeaders() != null) {
             response.headers().setAll(requestContext.getResponseHeaders());
         }
+    }
 
-        // Flush the response to the client
-        ChannelFuture writeFuture = ctx.writeAndFlush(response);
-        writeFuture.addListener(new ChannelFutureListener() {
-            @Override
-            public void operationComplete(ChannelFuture future) {
-                if (!future.isSuccess()) {
-                    getHttpRuntimeRecorder().recordHttpResponseWriteFailure();
-                    log.warn("Write http response failed, close channel. uri={}", msg.uri(), future.cause());
-                    future.channel().close();
+    /**
+     * Reads an entire InputStream into a byte array.
+     */
+    private byte[] readInputStream(InputStream inputStream) throws IOException {
+        try (InputStream is = inputStream) {
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            while ((bytesRead = is.read(buffer)) != -1) {
+                baos.write(buffer, 0, bytesRead);
+            }
+            return baos.toByteArray();
+        }
+    }
+
+    // ----- Multipart file parsing -----
+
+    /**
+     * Parses multipart/form-data request body and extracts uploaded files into the request context.
+     *
+     * <p>Uses Netty's {@link HttpPostRequestDecoder} to parse the multipart body. Form fields
+     * ({@link Attribute} instances) are skipped here since they are already handled by
+     * {@link ServiceHandlerUtil#parseRequestParameters}. Only {@link FileUpload} instances
+     * are extracted and wrapped in {@link MultipartFile} objects.
+     *
+     * @param msg            the full HTTP request
+     * @param requestContext the request context to populate with uploaded files
+     */
+    private void parseMultipartFiles(FullHttpRequest msg, HttpRequestContext requestContext) {
+        HttpPostRequestDecoder decoder = null;
+        try {
+            decoder = new HttpPostRequestDecoder(msg);
+            List<InterfaceHttpData> bodyData = decoder.getBodyHttpDatas();
+            for (InterfaceHttpData data : bodyData) {
+                if (data.getHttpDataType() == InterfaceHttpData.HttpDataType.FileUpload) {
+                    FileUpload fileUpload = (FileUpload) data;
+                    try {
+                        if (fileUpload.isCompleted()) {
+                            // Copy file content to a byte array so the FileUpload can be released
+                            byte[] content = fileUpload.get();
+                            MultipartFile multipartFile = new MultipartFile(
+                                    fileUpload.getName(),
+                                    fileUpload.getFilename(),
+                                    fileUpload.getContentType(),
+                                    content);
+                            requestContext.addMultipartFile(multipartFile);
+                            log.debug("Parsed multipart file: name={}, filename={}, size={}",
+                                    fileUpload.getName(), fileUpload.getFilename(), content.length);
+                        }
+                    } finally {
+                        // Release temporary file resources held by this FileUpload
+                        fileUpload.release();
+                    }
                 }
             }
-        });
+        } catch (Exception e) {
+            log.warn("Failed to parse multipart request: {}", e.getMessage(), e);
+        } finally {
+            if (decoder != null) {
+                decoder.destroy();
+            }
+        }
     }
 
     // ----- CORS support -----
@@ -922,7 +1187,7 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
     /**
      * Applies CORS response headers based on the @CrossOrigin annotation configuration.
      */
-    private void applyCorsHeaders(FullHttpResponse response, FullHttpRequest msg) {
+    private void applyCorsHeaders(HttpResponse response, FullHttpRequest msg) {
         if (crossOrigin == null) {
             return;
         }

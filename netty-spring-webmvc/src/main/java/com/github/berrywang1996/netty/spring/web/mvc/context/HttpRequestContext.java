@@ -44,6 +44,9 @@ public class HttpRequestContext {
     /** Cookies to be set in the response via {@code Set-Cookie} headers. */
     private List<Cookie> responseCookies = new ArrayList<>();
 
+    /** Uploaded files parsed from multipart/form-data requests, keyed by field name. */
+    private Map<String, List<MultipartFile>> multipartFiles = new HashMap<>();
+
     /** The Netty channel context associated with this request. */
     private ChannelHandlerContext channelHandlerContext;
 
@@ -173,6 +176,37 @@ public class HttpRequestContext {
      */
     public void setResponseCookies(List<Cookie> responseCookies) {
         this.responseCookies = responseCookies;
+    }
+
+    /**
+     * Returns the map of uploaded files from a multipart request.
+     * Each key is the form field name, and the value is a list of files
+     * (supporting multiple file selection per field).
+     *
+     * @return the multipart files map (never {@code null})
+     */
+    public Map<String, List<MultipartFile>> getMultipartFiles() {
+        return multipartFiles;
+    }
+
+    /**
+     * Returns the first uploaded file for the given field name.
+     *
+     * @param name the form field name
+     * @return the first file, or {@code null} if no file was uploaded with that name
+     */
+    public MultipartFile getMultipartFile(String name) {
+        List<MultipartFile> files = multipartFiles.get(name);
+        return (files != null && !files.isEmpty()) ? files.get(0) : null;
+    }
+
+    /**
+     * Adds an uploaded file to this request context.
+     *
+     * @param file the multipart file to add
+     */
+    public void addMultipartFile(MultipartFile file) {
+        multipartFiles.computeIfAbsent(file.getName(), k -> new ArrayList<>()).add(file);
     }
 
     /**
