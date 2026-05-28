@@ -75,6 +75,18 @@ class ServiceHandlerUtilErrorResponseTest {
     }
 
     @Test
+    void parseRequestParametersDoesNotDoubleDecodeQueryValues() {
+        io.netty.handler.codec.http.DefaultFullHttpRequest request =
+                new io.netty.handler.codec.http.DefaultFullHttpRequest(
+                        io.netty.handler.codec.http.HttpVersion.HTTP_1_1,
+                        io.netty.handler.codec.http.HttpMethod.GET,
+                        "/redirect?next=%252Fadmin");
+        java.util.Map<String, String> params = ServiceHandlerUtil.parseRequestParameters(request);
+        assertEquals("%2Fadmin", params.get("next"));
+        request.release();
+    }
+
+    @Test
     void parseRequestParametersFromGetWithNoParams() {
         io.netty.handler.codec.http.DefaultFullHttpRequest request =
                 new io.netty.handler.codec.http.DefaultFullHttpRequest(

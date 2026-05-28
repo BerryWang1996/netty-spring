@@ -1133,7 +1133,9 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
             }
         }
 
-        // Merge custom response headers set during handler execution
+        // Merge custom response headers set during handler execution.
+        // setAll() replaces all existing values for each header name in the source,
+        // so user-defined headers intentionally override auto-generated ones.
         if (requestContext.getResponseHeaders() != null) {
             response.headers().setAll(requestContext.getResponseHeaders());
         }

@@ -57,6 +57,16 @@ class StartupPropertiesUtilTest {
     }
 
     @Test
+    void checkAndImprovePropertiesAllowsEphemeralPortZero() throws Exception {
+        NettyServerStartupProperties properties = new NettyServerStartupProperties();
+        properties.setPort(0);
+
+        StartupPropertiesUtil.checkAndImproveProperties(properties);
+
+        assertEquals(0, properties.getPort());
+    }
+
+    @Test
     void websocketHandlerMaxPoolSizeMustNotBeLessThanCorePoolSize() {
         NettyServerStartupProperties properties = new NettyServerStartupProperties();
         properties.getWebSocket().setHandlerCorePoolSize(4);

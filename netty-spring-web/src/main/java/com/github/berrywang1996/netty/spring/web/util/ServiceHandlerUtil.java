@@ -83,8 +83,8 @@ public class ServiceHandlerUtil {
 
         // return html when request method is get and request header accept not include application/json
         if (msg == null || ("GET".equals(msg.method().name())
-                && msg.headers().get("Accept") != null
-                && !msg.headers().get("Accept").contains("application/json"))) {
+                && (msg.headers().get("Accept") == null
+                    || !msg.headers().get("Accept").contains("application/json")))) {
             byteData = Unpooled.copiedBuffer(errorResponseHtml(errorMessage), CharsetUtil.UTF_8);
             contentType = "text/html; charset=UTF-8";
         } else {
@@ -229,11 +229,11 @@ public class ServiceHandlerUtil {
             if (parameterEntry.getValue().size() > 1) {
                 for (int i = 0; i < parameterEntry.getValue().size(); i++) {
                     requestParameterMap.put(parameterEntry.getKey() + "[" + i + "]",
-                            decodeRequestString(parameterEntry.getValue().get(i)));
+                            parameterEntry.getValue().get(i));
                 }
             } else {
                 requestParameterMap.put(parameterEntry.getKey(),
-                        decodeRequestString(parameterEntry.getValue().get(0)));
+                        parameterEntry.getValue().get(0));
             }
         }
 

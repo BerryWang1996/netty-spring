@@ -120,6 +120,18 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
                         handle(ctx, msg);
                     } catch (Exception e) {
                         log.warn("Execute handler failed! Please catch exception in child handler!", e);
+                        // Send a 500 error response so the client does not hang indefinitely
+                        if (ctx.channel().isActive()) {
+                            ServiceHandlerUtil.HttpErrorMessage errorMessage =
+                                    new ServiceHandlerUtil.HttpErrorMessage(
+                                            HttpResponseStatus.INTERNAL_SERVER_ERROR,
+                                            msg instanceof FullHttpRequest ? ((FullHttpRequest) msg).uri() : null,
+                                            null,
+                                            e);
+                            ServiceHandlerUtil.sendError(ctx,
+                                    msg instanceof HttpRequest ? (HttpRequest) msg : null,
+                                    errorMessage);
+                        }
                     } finally {
                         // Release the retained reference after processing completes
                         ReferenceCountUtil.release(msg);
@@ -131,10 +143,16 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
             // Release the retained msg since the task was never submitted to the executor
             ReferenceCountUtil.release(msg);
             log.warn("Too many requests. Close request. reason={}", e.getMessage());
-            ctx.close();
+            ServiceHandlerUtil.HttpErrorMessage errorMessage =
+                    new ServiceHandlerUtil.HttpErrorMessage(
+                            HttpResponseStatus.SERVICE_UNAVAILABLE,
+                            msg instanceof FullHttpRequest ? ((FullHttpRequest) msg).uri() : null,
+                            "Server too busy",
+                            null);
+            ServiceHandlerUtil.sendError(ctx,
+                    msg instanceof HttpRequest ? (HttpRequest) msg : null,
+                    errorMessage);
         }
-
-        log.debug("Message reference count: {}", ReferenceCountUtil.refCnt(msg));
 
     }
 
@@ -568,16 +586,22 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         // HTTP cache validation using If-Modified-Since header
         String ifModifiedSince = msg.headers().get(HttpHeaderNames.IF_MODIFIED_SINCE);
         if (ifModifiedSince != null && !ifModifiedSince.isEmpty()) {
-            DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern(ServiceHandlerUtil.HTTP_DATE_FORMAT, Locale.US)
-                    .withZone(ZoneId.of(ServiceHandlerUtil.HTTP_DATE_GMT_TIMEZONE));
-            ZonedDateTime ifModifiedSinceDate = ZonedDateTime.parse(ifModifiedSince, dateFormatter);
+            try {
+                DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern(ServiceHandlerUtil.HTTP_DATE_FORMAT, Locale.US)
+                        .withZone(ZoneId.of(ServiceHandlerUtil.HTTP_DATE_GMT_TIMEZONE));
+                ZonedDateTime ifModifiedSinceDate = ZonedDateTime.parse(ifModifiedSince, dateFormatter);
 
-            // Compare at second precision since HTTP date format does not include milliseconds
-            long ifModifiedSinceDateSeconds = ifModifiedSinceDate.toEpochSecond();
-            long fileLastModifiedSeconds = file.lastModified() / 1000;
-            if (ifModifiedSinceDateSeconds == fileLastModifiedSeconds) {
-                ServiceHandlerUtil.sendNotModified(ctx, msg.uri(), msg);
-                return;
+                // Compare at second precision since HTTP date format does not include milliseconds.
+                // Per RFC 7232 §3.3: send 304 when the file has not been modified since the given date.
+                long ifModifiedSinceDateSeconds = ifModifiedSinceDate.toEpochSecond();
+                long fileLastModifiedSeconds = file.lastModified() / 1000;
+                if (ifModifiedSinceDateSeconds >= fileLastModifiedSeconds) {
+                    ServiceHandlerUtil.sendNotModified(ctx, msg.uri(), msg);
+                    return;
+                }
+            } catch (Exception e) {
+                // Malformed If-Modified-Since header — ignore and serve the file normally
+                log.debug("Ignoring malformed If-Modified-Since header: {}", ifModifiedSince);
             }
         }
 

@@ -1019,8 +1019,19 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             return false;
         }
         if (!session.getChannelHandlerContext().channel().isActive()) {
-            removeSession(sessionId);
-            return false;
+            // Channel already inactive: still run the close lifecycle for proper cleanup
+            // so that user-defined onClose handlers are invoked.
+            if (!session.startClosing()) {
+                return false;
+            }
+            eventRecorder.recordClose(CloseReason.API_CLOSE);
+            removeSession(session);
+            try {
+                notifyCloseLifecycle(null, session);
+            } finally {
+                releaseSession(session);
+            }
+            return true;
         }
         CloseWebSocketFrame closeFrame = new CloseWebSocketFrame(statusCode, reasonText == null ? "" : reasonText);
         try {
@@ -1315,10 +1326,14 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             public void operationComplete(ChannelFuture future) {
                 if (!future.isSuccess()) {
                     closeSessionOnTransportError(session, future.cause());
+                } else {
+                    // Only reschedule heartbeat after the ping was successfully written.
+                    // If the write fails, the session will be closed by the error handler above,
+                    // so rescheduling would be pointless and risks use-after-close.
+                    scheduleHeartbeat(session, intervalMillis);
                 }
             }
         });
-        scheduleHeartbeat(session, intervalMillis);
     }
 
     private long resolveHeartbeatIntervalMillis() {
@@ -1558,8 +1573,10 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         } finally {
             ReferenceCountUtil.release(lifecycleFrame);
             removeSession(session);
-            releaseSession(session);
+            // Close the channel before releasing session resources to ensure the close frame
+            // is written while the session's ChannelHandlerContext is still fully usable.
             closeChannel(session, outboundFrame);
+            releaseSession(session);
         }
     }
 
@@ -1611,8 +1628,10 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             notifyCloseLifecycle(lifecycleFrame, session);
         } finally {
             ReferenceCountUtil.release(lifecycleFrame);
-            releaseSession(session);
+            // Close the channel before releasing session resources to ensure the close frame
+            // is written while the session's ChannelHandlerContext is still fully usable.
             closeChannel(session, outboundFrame);
+            releaseSession(session);
         }
     }
 

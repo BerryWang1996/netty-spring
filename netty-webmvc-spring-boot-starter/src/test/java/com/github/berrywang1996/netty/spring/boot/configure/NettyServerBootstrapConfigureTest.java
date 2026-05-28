@@ -84,13 +84,13 @@ class NettyServerBootstrapConfigureTest {
     @Test
     void startupFailureIsReportedToSpringContext() {
         this.contextRunner
-                .withPropertyValues("server.netty.port=0")
+                .withPropertyValues("server.netty.port=-1")
                 .run(context -> {
                     assertThat(context).hasFailed();
                     assertThat(context.getStartupFailure())
                             .hasRootCauseInstanceOf(IllegalArgumentException.class)
                             .hasStackTraceContaining("Netty startup failed.")
-                            .hasStackTraceContaining("Netty port must greater than 0.");
+                            .hasStackTraceContaining("Netty port must greater than or equal to 0.");
                 });
     }
 

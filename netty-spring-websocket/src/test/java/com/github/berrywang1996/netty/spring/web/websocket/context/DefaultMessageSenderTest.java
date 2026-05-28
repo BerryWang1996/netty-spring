@@ -604,14 +604,16 @@ class DefaultMessageSenderTest {
     }
 
     @Test
-    void closeSessionReturnsFalseAndCleansUpInactiveSession() throws Exception {
+    void closeSessionRunsLifecycleAndCleansUpInactiveSession() throws Exception {
         MessageMappingResolver resolver = emptyResolver("/ws/foo");
         SessionFixture session = addSession(resolver, "/ws/foo", "closed");
         DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
         session.channel.close();
 
         try {
-            assertFalse(sender.closeSession("/ws/foo", "closed"));
+            // Should return true because the close lifecycle was successfully initiated
+            // even though the channel was already inactive.
+            assertTrue(sender.closeSession("/ws/foo", "closed"));
             assertFalse(resolver.getSessionMap().containsKey("closed"));
         } finally {
             cleanup(resolver, session);

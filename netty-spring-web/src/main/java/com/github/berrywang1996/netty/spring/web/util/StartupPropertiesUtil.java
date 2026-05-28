@@ -53,8 +53,8 @@ public class StartupPropertiesUtil {
         if (StringUtil.isBlank(properties.getApplicationName())) {
             throw new IllegalArgumentException("Netty application name should not blank.");
         }
-        if (properties.getPort() == null || properties.getPort() <= 0) {
-            throw new IllegalArgumentException("Netty port must greater than 0.");
+        if (properties.getPort() == null || properties.getPort() < 0) {
+            throw new IllegalArgumentException("Netty port must greater than or equal to 0.");
         }
         if (properties.getConfigLocation() == null) {
             throw new IllegalArgumentException("Spring config location should not be null.");

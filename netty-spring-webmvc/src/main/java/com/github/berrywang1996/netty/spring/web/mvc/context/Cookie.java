@@ -301,7 +301,7 @@ public class Cookie {
             // Split on first "=" only — values may contain "=" (e.g. base64 tokens)
             String[] split = cookieKV.split("=", 2);
             if (split.length == 2) {
-                cookies.put(split[0].trim(), split[1]);
+                cookies.put(split[0].trim(), split[1].trim());
             }
         }
         return cookies;

@@ -95,14 +95,14 @@ public class DataBindUtil {
      */
     public static boolean isBasicType(Class targetTypeClz) {
 
-        return targetTypeClz == Byte.class ||
-                targetTypeClz == Short.class ||
-                targetTypeClz == Integer.class ||
-                targetTypeClz == Long.class ||
-                targetTypeClz == Boolean.class ||
-                targetTypeClz == Double.class ||
-                targetTypeClz == Float.class ||
-                targetTypeClz == Character.class;
+        return targetTypeClz == Byte.class || targetTypeClz == byte.class ||
+                targetTypeClz == Short.class || targetTypeClz == short.class ||
+                targetTypeClz == Integer.class || targetTypeClz == int.class ||
+                targetTypeClz == Long.class || targetTypeClz == long.class ||
+                targetTypeClz == Boolean.class || targetTypeClz == boolean.class ||
+                targetTypeClz == Double.class || targetTypeClz == double.class ||
+                targetTypeClz == Float.class || targetTypeClz == float.class ||
+                targetTypeClz == Character.class || targetTypeClz == char.class;
 
     }
 
@@ -117,25 +117,30 @@ public class DataBindUtil {
     public static <T> T parseStringToBasicType(String data, Class<T> targetTypeClz) {
 
         if (StringUtil.isBlank(data)) {
+            // For primitive types, return a default value to avoid NullPointerException
+            // during autoboxing when the value is assigned to a primitive method parameter.
+            if (targetTypeClz.isPrimitive()) {
+                return primitiveDefault(targetTypeClz);
+            }
             return null;
         }
 
         try {
-            if (targetTypeClz == Byte.class) {
+            if (targetTypeClz == Byte.class || targetTypeClz == byte.class) {
                 return (T) Byte.valueOf(data);
-            } else if (targetTypeClz == Short.class) {
+            } else if (targetTypeClz == Short.class || targetTypeClz == short.class) {
                 return (T) Short.valueOf(data);
-            } else if (targetTypeClz == Integer.class) {
+            } else if (targetTypeClz == Integer.class || targetTypeClz == int.class) {
                 return (T) Integer.valueOf(data);
-            } else if (targetTypeClz == Long.class) {
+            } else if (targetTypeClz == Long.class || targetTypeClz == long.class) {
                 return (T) Long.valueOf(data);
-            } else if (targetTypeClz == Boolean.class) {
+            } else if (targetTypeClz == Boolean.class || targetTypeClz == boolean.class) {
                 return (T) Boolean.valueOf(data);
-            } else if (targetTypeClz == Double.class) {
+            } else if (targetTypeClz == Double.class || targetTypeClz == double.class) {
                 return (T) Double.valueOf(data);
-            } else if (targetTypeClz == Float.class) {
+            } else if (targetTypeClz == Float.class || targetTypeClz == float.class) {
                 return (T) Float.valueOf(data);
-            } else if (targetTypeClz == Character.class) {
+            } else if (targetTypeClz == Character.class || targetTypeClz == char.class) {
                 return (T) Character.valueOf(data.charAt(0));
             } else {
                 // For String and other types, return the raw string value
@@ -145,8 +150,32 @@ public class DataBindUtil {
         } catch (Exception e) {
             log.error("Failed to parse '{}' to type {}", data, targetTypeClz.getSimpleName(), e);
         }
+        // For primitive types, return a default rather than null to prevent NPE during unboxing
+        if (targetTypeClz.isPrimitive()) {
+            return primitiveDefault(targetTypeClz);
+        }
         return null;
 
+    }
+
+    /**
+     * Returns the default value for a primitive type, boxed as the corresponding wrapper.
+     *
+     * @param primitiveType the primitive class (e.g. {@code int.class})
+     * @param <T>           the inferred return type
+     * @return the boxed default value (0 for numeric, false for boolean, '\0' for char)
+     */
+    @SuppressWarnings("unchecked")
+    private static <T> T primitiveDefault(Class<T> primitiveType) {
+        if (primitiveType == int.class) return (T) Integer.valueOf(0);
+        if (primitiveType == long.class) return (T) Long.valueOf(0L);
+        if (primitiveType == double.class) return (T) Double.valueOf(0.0);
+        if (primitiveType == float.class) return (T) Float.valueOf(0.0f);
+        if (primitiveType == boolean.class) return (T) Boolean.FALSE;
+        if (primitiveType == byte.class) return (T) Byte.valueOf((byte) 0);
+        if (primitiveType == short.class) return (T) Short.valueOf((short) 0);
+        if (primitiveType == char.class) return (T) Character.valueOf('\0');
+        return null;
     }
 
     /**
