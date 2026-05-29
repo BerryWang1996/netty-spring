@@ -49,7 +49,7 @@ A Spring Boot integration for Netty, providing HTTP MVC and WebSocket capabiliti
 <dependency>
     <groupId>com.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
-    <version>1.7.0</version>
+    <version>1.7.1</version>
 </dependency>
 ```
 
@@ -113,7 +113,7 @@ Add `spring-boot-starter-actuator` to your project. Netty metrics are automatica
 
 - `netty.websocket.handshakes.total/success/rejected` — Handshake counters
 - `netty.websocket.messages.received/sent` — Message counters
-- `netty.websocket.sessions.closed` (tagged by `reason`) — Close counters (15 close reasons)
+- `netty.websocket.sessions.closed` (tagged by `reason`) — Close counters (one series per `CloseReason` enum value)
 - `netty.websocket.sessions.active` + `.uri` (tagged by `uri`) — Active session gauges
 - `netty.websocket.connection.duration` / `.message.size` / `.broadcast.fanout` / `.handler.latency` — Distribution metrics *(v1.7.0)*
 - HTTP failure counters + handler thread-pool & Netty allocator gauges *(v1.7.0)*
@@ -225,13 +225,16 @@ The interceptor runs after Origin check but before `@MessageMapping(ON_HANDSHAKE
 | `server.netty.websocket.max-connections` | `0` (unlimited) | Max WebSocket connections |
 | `server.netty.websocket.max-frame-aggregation-buffer-size` | `0` (disabled) | Aggregate fragmented frames up to N bytes (v1.7.0) |
 | `server.netty.websocket.heartbeat-interval-seconds` | `0` (disabled) | Server ping interval |
+| `server.netty.websocket.heartbeat-timeout-seconds` | `0` (disabled) | Inbound frame timeout |
+| `server.netty.websocket.broadcast-mode` | `EVENT_LOOP_DIRECT` | `EVENT_LOOP_DIRECT` (v1.6+ zero-copy) or `THREAD_POOL_LEGACY` (v1.5.x compat) |
+| `server.netty.websocket.crypto.enable` | `false` | Application-layer WebSocket frame encryption |
 
 Full configuration reference: [API Usage Guide](docs/api-guide.md#10-configuration-reference)
 
 ### Current Status
 
-- **Current recommended version: `1.7.0`** (Observability + deep fixes + WebSocket fragmentation)
-- `1.7.0` delivers, across four work streams: Micrometer metrics expansion (connection/message/broadcast/latency distributions, per-URI & thread-pool & allocator gauges), SLF4J MDC structured logging, an Actuator `/actuator/health` indicator, optional WebSocket fragmented-message aggregation, and 6 audited legacy defect fixes — all backward compatible
+- **Current recommended version: `1.7.1`** (Audit-driven patch on top of 1.7.0: CORS wildcard+credentials security fix, `@MessageMapping(ON_CLOSE)` correctness fix on stale-channel cleanup, CompressorHandler parser hardening, AES-GCM IV length validation, logback 1.2.13 pin for CVE-2023-6378)
+- `1.7.0` delivered, across four work streams: Micrometer metrics expansion (connection/message/broadcast/latency distributions, per-URI & thread-pool & allocator gauges), SLF4J MDC structured logging, an Actuator `/actuator/health` indicator, optional WebSocket fragmented-message aggregation, and 6 audited legacy defect fixes — all preserved in 1.7.1 and backward compatible
 - Milestones P0 through P7 are all complete; performance (1.6.x), security/stability (1.6.2) and observability (1.7.0) hardening followed
 - Next: `1.8.0` Redis Pub/Sub clustering; later `2.0.0` Spring Boot 3.x / Jakarta migration + enterprise security
 
@@ -240,7 +243,8 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#10-configurati
 - [API Usage Guide](docs/api-guide.md) — Complete integration guide with code examples
 - [Netty Configuration](docs/netty-configuration.md) — HTTP / TLS / management endpoint reference
 - [WebSocket Configuration](docs/websocket-configuration.md) — WebSocket runtime, crypto, observability
-- [Release Notes - 1.7.0](docs/release-notes-1.7.0.md) — Current recommended version
+- [Release Notes - 1.7.1](docs/release-notes-1.7.1.md) — Current recommended version
+- [Release Notes - 1.7.0](docs/release-notes-1.7.0.md)
 - [Development Plan](docs/development-plan.md) — Roadmap (1.8.0 cluster, 2.0.0 Spring Boot 3.x)
 - [Cluster Design (1.8.0 preview)](docs/cluster-design.md) — Redis Pub/Sub cluster architecture
 - [Release Checklist](docs/release-checklist.md) — Release process & gates
@@ -312,7 +316,7 @@ Verified on `GraalVM JDK 17.0.11` + `Apache Maven 3.9.9`. CI workflow runs full 
 <dependency>
     <groupId>com.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
-    <version>1.7.0</version>
+    <version>1.7.1</version>
 </dependency>
 ```
 
@@ -378,7 +382,7 @@ server.netty.management.enable=true
 
 - `netty.websocket.handshakes.total/success/rejected` — 握手计数
 - `netty.websocket.messages.received/sent` — 消息收发计数
-- `netty.websocket.sessions.closed`（按 `reason` 标签分维度）— 关闭计数（15 种关闭原因）
+- `netty.websocket.sessions.closed`（按 `reason` 标签分维度）— 关闭计数（每个 `CloseReason` 枚举值一条序列）
 - `netty.websocket.sessions.active` + `.uri`（按 `uri` 标签）— 活跃 session 数 Gauge
 - `netty.websocket.connection.duration` / `.message.size` / `.broadcast.fanout` / `.handler.latency` — 分布指标 *(1.7.0)*
 - HTTP 失败计数 + handler 线程池 & Netty allocator 内存 Gauge *(1.7.0)*
@@ -490,13 +494,16 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 | `server.netty.websocket.max-connections` | `0`（不限） | 最大 WebSocket 连接数 |
 | `server.netty.websocket.max-frame-aggregation-buffer-size` | `0`（禁用） | 分片帧聚合缓冲区上限，单位字节（1.7.0） |
 | `server.netty.websocket.heartbeat-interval-seconds` | `0`（禁用） | 服务端 ping 间隔 |
+| `server.netty.websocket.heartbeat-timeout-seconds` | `0`（禁用） | 入站帧空闲超时 |
+| `server.netty.websocket.broadcast-mode` | `EVENT_LOOP_DIRECT` | `EVENT_LOOP_DIRECT`（v1.6+ 零拷贝）或 `THREAD_POOL_LEGACY`（v1.5.x 兼容） |
+| `server.netty.websocket.crypto.enable` | `false` | 应用层 WebSocket 帧加密 |
 
 完整配置参考：[API 使用指南](docs/api-guide.md#10-configuration-reference)
 
 ### 当前阶段
 
-- **当前推荐版本：`1.7.0`**（可观测性增强 + 深度修复 + WebSocket 分片消息支持）
-- `1.7.0` 按四刀交付：Micrometer 指标扩展（连接/消息/广播/延迟分布，分 URI、线程池、allocator 内存 Gauge）、SLF4J MDC 结构化日志、Actuator `/actuator/health` 健康检查、可选 WebSocket 分片消息聚合，以及 6 项经审计的遗留缺陷修复——全部向后兼容
+- **当前推荐版本：`1.7.1`**（在 `1.7.0` 之上的审计驱动修复：CORS 通配符 + credentials 安全修复、`@MessageMapping(ON_CLOSE)` 在陈旧 channel 路径上的正确性修复、CompressorHandler 解析硬化、AES-GCM IV 长度校验、logback 1.2.13 pin 修复 CVE-2023-6378）
+- `1.7.0` 按四刀交付：Micrometer 指标扩展（连接/消息/广播/延迟分布，分 URI、线程池、allocator 内存 Gauge）、SLF4J MDC 结构化日志、Actuator `/actuator/health` 健康检查、可选 WebSocket 分片消息聚合，以及 6 项经审计的遗留缺陷修复——这些能力在 `1.7.1` 中完整保留，全部向后兼容
 - P0 至 P7 全部里程碑已完成；其后依次推进性能（1.6.x）、安全稳定性（1.6.2）、可观测性（1.7.0）加固
 - 下一步：`1.8.0` Redis Pub/Sub 集群支持；之后 `2.0.0` Spring Boot 3.x / Jakarta 迁移 + 企业安全版本
 
@@ -505,7 +512,8 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 - [API 使用指南](docs/api-guide.md) — 完整接入指南，含代码示例
 - [Netty 配置说明](docs/netty-configuration.md) — HTTP / TLS / 管理端点参考
 - [WebSocket 配置说明](docs/websocket-configuration.md) — WebSocket 运行时、加密、可观测性
-- [1.7.0 发布说明](docs/release-notes-1.7.0.md) — 当前推荐版本
+- [1.7.1 发布说明](docs/release-notes-1.7.1.md) — 当前推荐版本
+- [1.7.0 发布说明](docs/release-notes-1.7.0.md)
 - [开发计划与阶段状态](docs/development-plan.md) — 路线图（1.8.0 集群、2.0.0 Spring Boot 3.x）
 - [集群方案设计（1.8.0 预览）](docs/cluster-design.md) — Redis Pub/Sub 集群架构
 - [版本发布检查清单](docs/release-checklist.md) — 发布流程与门槛

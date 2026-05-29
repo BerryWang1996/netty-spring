@@ -77,6 +77,20 @@
 - 发布前完成 4 轮代码审计 + 1 轮对抗式验证，修复多 `MeterRegistry` 指标路由、连接时长 Timer 预创建、聚合器插入兜底、`getPort()` 空安全等问题；全部改动向后兼容。
 - 已补 `docs/release-notes-1.7.0.md`，并同步 README、`docs/api-guide.md`、`docs/netty-configuration.md`、`docs/websocket-configuration.md` 与开发计划至 `1.7.0` 状态。
 
+### `1.7.1`（当前推荐版本，已发布 tag `v1.7.1`）
+
+定位：在 `1.7.0` 之上的审计驱动 patch，全部修复向后兼容。
+
+完成确认项：
+
+- 全量 `mvn test` 通过（9 个模块），新增 6 个回归测试。
+- **HIGH 安全**：CORS `origins="*"` + `allowCredentials=true` 不再回写客户端 Origin；不再发出 `Allow-Credentials` 头；记录 WARN 日志。
+- **MEDIUM 正确性**：`DefaultMessageSender` 检测到陈旧 channel 时改走 `closeSessionOnTransportError(CHANNEL_INACTIVE)`，保证 `@MessageMapping(ON_CLOSE)` 正常触发。
+- **LOW 硬化**：CompressorHandler 类型解析支持逗号与任意空白分隔、Content-Type 比较大小写不敏感；AES-GCM 解密路径显式拒绝非 96-bit IV。
+- **依赖 CVE 覆盖**：root POM 显式 pin `logback-classic` / `logback-core` 到 1.2.13（CVE-2023-6378）。
+- 路线图修订：`docs/cluster-design.md` 与 `docs/development-plan.md` 应用 6 项架构评审修订（Redis SPOF 降级默认、API 诚实化、TraceContext 必做、`2.0`/`2.1` 拆分、企业安全 12 项清单、治理原则可执行化）。
+- 已补 `docs/release-notes-1.7.1.md`，并同步 README、`docs/api-guide.md`、`docs/dependency-governance.md` 至 1.7.1 状态。
+
 ### `1.8.0`（规划中）
 
 口径将在 `1.8.0` 进入 RC 时补充。技术设计见 [`docs/cluster-design.md`](cluster-design.md)，规划见 `development-plan.md` "`1.8.0` Redis 集群支持版本规划"。
