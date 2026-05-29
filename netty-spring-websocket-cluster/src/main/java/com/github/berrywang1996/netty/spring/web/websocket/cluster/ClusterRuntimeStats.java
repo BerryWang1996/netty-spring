@@ -41,6 +41,9 @@ public class ClusterRuntimeStats {
     /** Unicast messages sent to remote nodes via the broker. */
     final AtomicLong unicastSent = new AtomicLong();
 
+    /** Cluster publishes that failed or were dropped (oversized payload / broker error). */
+    final AtomicLong publishFailures = new AtomicLong();
+
     /** Node lookup cache hits. */
     final AtomicLong cacheHits = new AtomicLong();
 
@@ -53,6 +56,7 @@ public class ClusterRuntimeStats {
     public long getCrossNodeBroadcastReceived() { return crossNodeBroadcastReceived.get(); }
     public long getSelfDeliveryDropped() { return selfDeliveryDropped.get(); }
     public long getUnicastSent() { return unicastSent.get(); }
+    public long getPublishFailures() { return publishFailures.get(); }
     public long getCacheHits() { return cacheHits.get(); }
     public long getCacheMisses() { return cacheMisses.get(); }
 
@@ -73,6 +77,7 @@ public class ClusterRuntimeStats {
                 ", crossNodeReceived=" + crossNodeBroadcastReceived.get() +
                 ", selfDropped=" + selfDeliveryDropped.get() +
                 ", unicastSent=" + unicastSent.get() +
+                ", publishFailures=" + publishFailures.get() +
                 ", cacheHits=" + cacheHits.get() +
                 ", cacheMisses=" + cacheMisses.get() +
                 ", cacheHitRatio=" + String.format("%.2f", getCacheHitRatio()) +

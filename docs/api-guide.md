@@ -39,9 +39,9 @@ All starters share the `server.netty.*` configuration namespace and auto-configu
 
 ```xml
 <dependency>
-    <groupId>com.github.berrywang1996</groupId>
+    <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
-    <version>1.7.1</version>
+    <version>1.8.0</version>
 </dependency>
 ```
 

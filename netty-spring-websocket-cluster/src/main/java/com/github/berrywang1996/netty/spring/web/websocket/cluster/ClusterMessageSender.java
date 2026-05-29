@@ -82,6 +82,15 @@ public class ClusterMessageSender implements MessageSender {
     /** Cluster-specific runtime statistics. */
     private final ClusterRuntimeStats clusterStats = new ClusterRuntimeStats();
 
+    /** Max serialized payload size (bytes) eligible for cluster publish. 0 = unlimited. Default 1 MiB. */
+    private volatile int messageMaxSizeBytes = 1048576;
+
+    /** Policy when a cluster publish/unicast fails or a message is too large. Default LOG. */
+    private volatile ClusterProperties.OnPublishFailure onPublishFailure = ClusterProperties.OnPublishFailure.LOG;
+
+    /** Policy when the cluster transport is lost. Default DEGRADE_TO_LOCAL. */
+    private volatile ClusterProperties.OnRedisLoss onRedisLoss = ClusterProperties.OnRedisLoss.DEGRADE_TO_LOCAL;
+
     public ClusterMessageSender(MessageSender localSender,
                                 ClusterBroker broker,
                                 SessionRegistry registry,
@@ -108,6 +117,27 @@ public class ClusterMessageSender implements MessageSender {
                 new com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.DefaultMessagePayloadCodec());
     }
 
+    // ---- Optional behavioral knobs (injected by auto-config from ClusterProperties) ----
+
+    /** Sets the max serialized payload size in bytes eligible for cluster publish (0 = unlimited). */
+    public void setMessageMaxSizeBytes(int messageMaxSizeBytes) {
+        this.messageMaxSizeBytes = messageMaxSizeBytes;
+    }
+
+    /** Sets the policy applied when a cluster publish/unicast fails or a message is too large. */
+    public void setOnPublishFailure(ClusterProperties.OnPublishFailure onPublishFailure) {
+        if (onPublishFailure != null) {
+            this.onPublishFailure = onPublishFailure;
+        }
+    }
+
+    /** Sets the policy applied when the cluster transport is lost. */
+    public void setOnRedisLoss(ClusterProperties.OnRedisLoss onRedisLoss) {
+        if (onRedisLoss != null) {
+            this.onRedisLoss = onRedisLoss;
+        }
+    }
+
     /**
      * Starts cluster subscriptions: subscribe to unicast channel for this node,
      * and to broadcast channels for all locally registered URIs.
@@ -117,6 +147,15 @@ public class ClusterMessageSender implements MessageSender {
 
         // Wire reconciliation→cache invalidation (I-3 fix)
         nodeManager.setDeadNodeCallback(this::invalidateCacheForNode);
+
+        // Wire onRedisLoss=CLOSE_ALL: when the node degrades (transport lost), optionally
+        // close all local sessions instead of keeping them alive (DEGRADE_TO_LOCAL default).
+        nodeManager.addStateListener((node, from, to) -> {
+            if (to == NodeState.DEGRADED && from == NodeState.ACTIVE
+                    && onRedisLoss == ClusterProperties.OnRedisLoss.CLOSE_ALL) {
+                closeAllLocalSessions();
+            }
+        });
 
         // Subscribe to unicast messages targeted at this node
         unicastSubscription = broker.subscribeUnicast(nodeId, this::onUnicastMessage);
@@ -198,13 +237,18 @@ public class ClusterMessageSender implements MessageSender {
 
         // 2. Publish to cluster broker (at-most-once) — skip if degraded
         if (nodeManager.getState() == NodeState.ACTIVE) {
+            ClusterEnvelope envelope = buildBroadcastEnvelope(uri, message);
+            if (exceedsSizeLimit(envelope)) {
+                handlePublishFailure("broadcast for URI " + uri + " exceeds messageMaxSizeBytes ("
+                        + envelope.getPayload().length + " > " + messageMaxSizeBytes + ")", null);
+                return;
+            }
             try {
-                ClusterEnvelope envelope = buildBroadcastEnvelope(uri, message);
                 broker.publish(uri, envelope);
                 clusterStats.broadcastPublished.incrementAndGet();
             } catch (ClusterBrokerException e) {
-                log.warn("Cluster broadcast failed for URI {} — local delivery succeeded, "
-                        + "remote nodes may not have received the message", uri, e);
+                handlePublishFailure("broadcast for URI " + uri
+                        + " — local delivery succeeded, remote nodes may not have received it", e);
             }
         } else {
             log.debug("Cluster broadcast skipped for URI {} — node state is {}",
@@ -252,13 +296,19 @@ public class ClusterMessageSender implements MessageSender {
             for (String sessionId : remoteIds) {
                 String targetNodeId = lookupNodeCached(uri, sessionId);
                 if (targetNodeId != null) {
+                    ClusterEnvelope envelope = buildUnicastEnvelope(uri, sessionId, message);
+                    if (exceedsSizeLimit(envelope)) {
+                        handlePublishFailure("unicast for session " + sessionId
+                                + " exceeds messageMaxSizeBytes (" + envelope.getPayload().length
+                                + " > " + messageMaxSizeBytes + ")", null);
+                        closedIds.add(sessionId);
+                        continue;
+                    }
                     try {
-                        ClusterEnvelope envelope = buildUnicastEnvelope(uri, sessionId, message);
                         broker.unicast(targetNodeId, envelope);
                         clusterStats.unicastSent.incrementAndGet();
                     } catch (ClusterBrokerException e) {
-                        log.warn("Cluster unicast failed for session {} on node {}",
-                                sessionId, targetNodeId, e);
+                        handlePublishFailure("unicast for session " + sessionId + " on node " + targetNodeId, e);
                         closedIds.add(sessionId);
                     }
                 } else {
@@ -387,6 +437,40 @@ public class ClusterMessageSender implements MessageSender {
     }
 
     // ==================== Helpers ====================
+
+    /** Returns true if the envelope payload exceeds the configured max size (0 = unlimited). */
+    private boolean exceedsSizeLimit(ClusterEnvelope envelope) {
+        return messageMaxSizeBytes > 0 && envelope.getPayload().length > messageMaxSizeBytes;
+    }
+
+    /** Applies the configured {@link ClusterProperties.OnPublishFailure} policy. */
+    private void handlePublishFailure(String context, Throwable cause) {
+        clusterStats.publishFailures.incrementAndGet();
+        if (onPublishFailure == ClusterProperties.OnPublishFailure.LOG) {
+            if (cause != null) {
+                log.warn("Cluster publish failed: {}", context, cause);
+            } else {
+                log.warn("Cluster publish dropped: {}", context);
+            }
+        }
+        // DROP: silent (only the counter is incremented)
+    }
+
+    /** Closes all local sessions across all URIs (onRedisLoss=CLOSE_ALL policy). */
+    private void closeAllLocalSessions() {
+        int closed = 0;
+        for (String uri : localSender.getRegisteredUri()) {
+            for (String sessionId : localSender.getSessionIds(uri)) {
+                try {
+                    localSender.closeSession(uri, sessionId, 1011, "cluster transport lost");
+                    closed++;
+                } catch (Exception e) {
+                    log.debug("Failed to close session {} on URI {} during CLOSE_ALL", sessionId, uri, e);
+                }
+            }
+        }
+        log.warn("onRedisLoss=CLOSE_ALL — closed {} local sessions after transport loss", closed);
+    }
 
     private void subscribeBroadcast(String uri) {
         broadcastSubscriptions.computeIfAbsent(uri,

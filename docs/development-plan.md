@@ -1,39 +1,40 @@
 # 开发计划与阶段状态
 
-更新时间：2026-05-29
+更新时间：2026-05-30
 
 ## 当前结论
 
 - **当前推荐版本：`1.8.0`**（WebSocket 集群支持：Redis Pub/Sub 跨节点 + 5 层 SPI + 282 测试。详见 `docs/release-notes-1.8.0.md`）。
 - 上一版本：`1.7.1`（在 `1.7.0` 之上修复架构评审发现的 CORS 通配符+credentials 安全问题、`@MessageMapping(ON_CLOSE)` 在陈旧 channel 路径上未触发的正确性问题、CompressorHandler 解析与大小写问题、AES-GCM IV 长度校验，并 pin logback 1.2.13 修复 CVE-2023-6378。详见 `docs/release-notes-1.7.1.md`）。
-- `P0`–`P7` 全部里程碑已完成；项目历经"功能建设期 → 质量深化 → 产品化 → 性能优化 → 安全稳定性加固 → 可观测性增强"五个阶段。
-- 下一步：**`1.8.0`** Redis Pub/Sub 集群支持，**`2.0.0`** Spring Boot 3.x 迁移基线，**`2.1.0`** 企业安全准入。`2.0` / `2.1` 拆分见下方 `2.x` 路线说明。
+- `P0`–`P7` 全部里程碑已完成；项目历经"功能建设期 → 质量深化 → 产品化 → 性能优化 → 安全稳定性加固 → 可观测性增强 → 集群水平扩展"七个阶段。
+- 下一步：**`2.0.0`** Spring Boot 3.x 迁移基线，**`2.1.0`** 企业安全准入。`2.0` / `2.1` 拆分见下方 `2.x` 路线说明。`1.9.x` 跟随项见 `1.8.0` 推迟项清单。
 
 ## 当前发版判断
 
-`1.7.1`（当前推荐）在 `1.7.0` 之上做小幅、向后兼容的修复：
+`1.8.0`（当前推荐）在 `1.7.1` 之上新增 **WebSocket 集群支持**（向后兼容，默认单机模式行为与 `1.7.x` 完全一致）：
 
-- **CORS 通配符 + credentials 安全修复**：`@CrossOrigin(origins="*", allowCredentials=true)` 配置不再回写客户端 Origin（之前等价于"允许任意源带凭证"），改为发出 `*` 并丢弃 Allow-Credentials 头，同时记录 WARN 日志暴露错误配置。
-- **`@MessageMapping(ON_CLOSE)` 正确性修复**：`DefaultMessageSender` 在发送 / 广播路径上检测到 channel 已死时，原先调用裸 `removeSession` 绕过了关闭生命周期；改走 `closeSessionOnTransportError(CHANNEL_INACTIVE)`，保证用户 onClose 回调与关闭原因指标正常触发。
-- **CompressorHandler 解析与大小写硬化**：`server.netty.http.gzip.types` 现接受逗号或任意空白分隔（之前仅切单空格，逗号分隔配置静默不生效）；Content-Type 比较改为大小写不敏感（RFC 7231 §3.1.1.1）。
-- **AES-GCM IV 长度校验**：解密时显式拒绝非 96-bit IV，与加密路径对齐并符合 NIST SP 800-38D §8.2 推荐。
-- **依赖修复**：root pom 显式 pin `logback-classic` / `logback-core` 到 1.2.13（修复 CVE-2023-6378，1.2.x 系列最后版本）。
-- 发布前再次执行 4 路并行审计 + 对抗式验证，全量 `mvn test` 通过（9 个模块）；所有改动向后兼容。
+- **两个新模块**：`netty-spring-websocket-cluster`（集群核心 + Redis 实现）、`netty-websocket-cluster-spring-boot-starter`（自动装配，`server.netty.websocket.cluster.enable=true` 时激活）。
+- **5 层可插拔 SPI**：`ClusterBroker`（跨节点传输，Redis Pub/Sub 默认）、`SessionRegistry`（分布式会话路由）、`EnvelopeCodec`（信封线格式，零依赖默认）、`MessagePayloadCodec`（消息体序列化，零依赖默认）、`ClusterNodeHeartbeat`（心跳持久化）。全部 `@ConditionalOnMissingBean` 可覆盖。
+- **零 Jackson 依赖**：集群模块序列化全部走 SPI，用户自由选择 JSON/Protobuf/自定义。
+- **核心能力**：跨节点广播/单播、远程关闭、origin 自投递抑制、节点生命周期状态机（JOINING→ACTIVE→DEGRADED→RESYNC→DRAINING→LEFT）、心跳+周期对账、单播热路径缓存、集群运行时统计、`onRedisLoss`（degrade-to-local 默认 / close-all）、`onPublishFailure`、消息大小上限、重连抖动。
+- 282 个测试（含 6 SPI 隔离 + 8 Redis 集成 + 4 性能基准），11 模块全绿。详见 `docs/release-notes-1.8.0.md`。
 
-`1.7.0` 的能力清单（指标扩展、MDC、健康检查、分片支持等）在 `1.7.1` 中完整保留，详见 `docs/release-notes-1.7.0.md`。
+> **1.8.0 实现范围 vs 设计目标**：`docs/cluster-design.md` 描述的是**完整目标架构**，其中相当一部分能力（多 pub/sub 连接并行解码、sharded pub/sub、Redis Streams 可靠投递、写 pipeline 批量、registry 限速、Redis 失联宽限期、Redis Cluster 客户端一等支持、W3C TraceContext 跨节点传播、多节点 demo + Testcontainers）**推迟到 `1.9.x`**。1.8.0 只暴露**有实际效果**的配置项——不暴露还没实现的特性的开关（"会撒谎的配置比没有配置更糟"）。下方"四刀"为原始设计全集，标注 ✅ 已实现 / ⏳ 推迟。
 
-## `1.8.0` Redis 集群支持版本规划（下一版本）
+`1.7.1`（上一版本）在 `1.7.0` 之上做了 4 项审计驱动的安全/正确性修复（CORS 通配符+credentials、`@MessageMapping(ON_CLOSE)` 生命周期、CompressorHandler 解析、AES-GCM IV 校验）并 pin logback 1.2.13 修复 CVE-2023-6378，详见 `docs/release-notes-1.7.1.md`。
+
+## `1.8.0` Redis 集群支持版本（已交付）
 
 目标：让 netty-spring 服务可以多节点水平扩展，跨节点广播和单播对业务代码尽可能透明，节点扩缩容/故障自恢复可控；**同时对失败模式保持诚实**——Redis 中断、分区、慢订阅者在 API 层和指标层有清晰语义，而不是被吞掉。详细技术设计见 [`docs/cluster-design.md`](cluster-design.md)。
 
 版本定位：
 
-- 新增 `netty-spring-cluster` 模块和 `netty-cluster-spring-boot-starter`；底层直接依赖 `io.lettuce:lettuce-core`（而非 `spring-boot-starter-data-redis`，避免与用户已有 Spring Data Redis 配置冲突，提供 `@ConditionalOnMissingBean` 兼容点）。
+- ✅ 新增 `netty-spring-websocket-cluster` 模块和 `netty-websocket-cluster-spring-boot-starter`；底层直接依赖 `io.lettuce:lettuce-core`（`optional`，而非 `spring-boot-starter-data-redis`，避免与用户已有 Spring Data Redis 配置冲突，提供 `@ConditionalOnMissingBean` 兼容点）。
 - **传输层 SPI 是本版本最重要的结构决策**：把"跨节点传输"和"会话注册表"抽象成 `ClusterBroker` / `SessionRegistry` 两个 SPI（借鉴 Centrifugo 引擎拆分），1.8.0 唯一实现是 Redis Pub/Sub。这样 mesh / NATS 是未来的 drop-in 实现、不破坏 `MessageSender` API。**现在不做、以后改不动。**
 - 本地 `MessageSender` 查询接口语义保持不变；**新增**异步的集群查询接口（`getClusterSessionIds` / `isSessionAliveCluster` / `closeSessionCluster` 返回 `CompletionStage`），避免把网络 RTT 偷塞进同步签名。
-- 不启用集群（`server.netty.cluster.enable=false` 或缺省）时行为与 `1.7.x` 完全一致；集群依赖在单机模式下不参与运行时路径。
-- Sentinel / Redis Cluster 一等支持（Lettuce 原生）；`mode=cluster` 默认用 sharded pub/sub（须 Lettuce ≥6.5.5）。
-- 配置子键与现有约定一致使用 `enable`（不是 `enabled`），与 `Mvc.enable` / `WebSocket.enable` / `Crypto.enable` 等齐平。
+- ✅ 不启用集群（`server.netty.websocket.cluster.enable=false` 或缺省）时行为与 `1.7.x` 完全一致；集群依赖在单机模式下不参与运行时路径。
+- ⏳ **推迟到 1.9.x**：Sentinel 通过 `redis-sentinel://` URI scheme 可用（Lettuce 原生）；Redis Cluster 一等支持需要 `RedisClusterClient`（不同客户端类型），1.8.0 不通过 auto-config 提供，运行 Redis Cluster 的用户自备 `ClusterBroker`/`SessionRegistry` bean。sharded pub/sub 同步推迟。
+- ✅ 配置子键与现有约定一致使用 `enable`（不是 `enabled`），命名空间 `server.netty.websocket.cluster.*`，与 `Mvc.enable` / `WebSocket.enable` / `Crypto.enable` 等齐平。
 
 **已知扩展边界（二次评审量化结论，详见 `cluster-design.md §深度瓶颈`）：** Redis Pub/Sub 方案因扇出放大 `M·(f·N−1)` 和单 Lettuce 连接解码天花板（~80k msg/s/node），对**活跃广播 URI 仅在 ≤~10 节点安全**；超出后路径是 sharded pub/sub（仅救 Redis CPU）→ node-mesh（经 SPI 切换，业务零改动）。本版本明确以此为适用边界，不假装无限扩展。
 
@@ -43,8 +44,8 @@
 
 ### 第一刀：传输层 SPI + 集群发现与节点生命周期
 
-- 新增 `netty-spring-cluster` 模块和 `server.netty.cluster.*` 配置命名空间。
-- **定义 `ClusterBroker` / `SessionRegistry` 两个 SPI**（fan-out+单播 / presence+路由），1.8.0 落 `RedisPubSubBroker` + `RedisSessionRegistry`；`ClusterMessageSender` 只依赖 SPI 不直接碰 Lettuce。两者 `@ConditionalOnMissingBean` 可覆盖。
+- ✅ 新增 `netty-spring-websocket-cluster` 模块和 `server.netty.websocket.cluster.*` 配置命名空间。
+- ✅ **定义 `ClusterBroker` / `SessionRegistry` 两个 SPI**（fan-out+单播 / presence+路由），1.8.0 落 `RedisPubSubBroker` + `RedisSessionRegistry`；`ClusterMessageSender` 只依赖 SPI 不直接碰 Lettuce。两者 `@ConditionalOnMissingBean` 可覆盖。
 - 基于 Redis Heartbeat + Keyspace Notification 完成节点注册、心跳维护、故障检测。
 - **故障检测默认 3s/10s**（之前规划的 30s 对实时 WebSocket 太长）；节点状态机 `JOINING → ACTIVE → DRAINING → LEFT`，Redis 重连恢复期插入 `RESYNC` 状态。
 - **Keyspace Notification 对账兜底**：通知是 fire-and-forget、无重放，节点断连瞬间会永久错过 `NODE_LEFT`。必须有周期对账（`reconciliation-interval` 默认 15s）扫描 `netty:cluster:nodes` 比对 `lastHeartbeat` 作为慢路径兜底。指标 `netty.cluster.reconciliation.detected`。
@@ -53,16 +54,16 @@
 ### 第二刀：分布式 Session Registry + 跨节点广播 + 分布式追踪
 
 - 设计 Redis 数据模型（`netty:session:{uri}:{sessionId}`、`netty:node:{nodeId}:sessions`、`netty:broadcast:{uri}` Pub/Sub）。
-- 实现 `RedisPubSubBroker`：本地 fan-out + Redis Pub/Sub；URI 无跨节点 session 时短路为本地路径。
-- **🔴 origin 自投递抑制（正确性，非优化）**：envelope 带 `originNodeId`，订阅回调比对本节点 id 命中即丢弃——否则 origin 本地用户会**收到重复消息**（本地 fan-out + 自己 PUBLISH 回环）。指标 `netty.cluster.pubsub.self-dropped`。
-- **多 pub/sub 连接解码**：单 Lettuce 连接 ~80k msg/s 即天花板且与 WS I/O 抢 event loop；每节点 2–4 连接（`pubsub-connections`）按 URI 哈希分片，解码后立即移交业务线程池。指标 `netty.cluster.subscribe.decode.lag`。**Redis 分片救不了这个天花板。**
-- **sharded pub/sub（仅 cluster 模式）**：`mode=cluster` 默认 `SSUBSCRIBE`/`SPUBLISH`，避免经典 pub/sub 的 cluster-bus 全节点广播税；须 Lettuce ≥6.5.5，启动期校验。standalone/sentinel 无收益保持经典。
-- **单播热路径缓存**：`sessionId→nodeId` 本地短 TTL 缓存（`registry-read-cache-ttl-ms` 默认 5000）+ NODE_LEFT 失效，避免每条跨节点 DM 一次 HGET（≳100k DM/s 时 registry 读会先于广播撞墙）。陈旧时回退一次实时 HGET。
-- **广播频道基数边界**：本基线仅覆盖 `@MessageMapping` URI（典型 10–100 条），`cluster.max-subscribed-channels` 硬上限默认 1024；房间/主题级 fan-out 推迟到 `1.9.x` 的 `ClusterRoomRegistry`。
-- **投递契约（at-most-once 默认 + offset/epoch 可靠路径）**：Pub/Sub fire-and-forget，Javadoc 明确 at-most-once + drop 计数。`reliableBroadcast(...)` 走 Redis Streams，采用 Centrifugo 的 `offset`+`epoch` 契约（陈旧 offset 恢复时给"无法恢复"显式信号而非静默空洞）+ 周期 offset 同步 + **重连从 last-consumed ID 续读**（否则是假可靠）。
-- **顺序契约写入 Javadoc**：单 publisher × 单 channel 保序；跨 publisher 不保序；本地 fan-out 可能先于远端。
-- **写放大控制**：connect/close 默认走 pipeline（`publish-batch-size` 64、`publish-flush-interval` 10ms）；可选 lazy registry——仅在 session 第一次成为跨节点目标时写 Redis。
-- **W3C TraceContext 跨节点传播**：Pub/Sub 信封注入 `traceparent`，订阅侧恢复 SLF4J MDC + Micrometer Observation Scope。分布式系统最小可调试基线，**必须随集群同步落地**。
+- ✅ 实现 `RedisPubSubBroker`：本地 fan-out + Redis Pub/Sub。
+- ✅ **🔴 origin 自投递抑制（正确性，非优化）**：envelope 带 `originNodeId`，订阅回调比对本节点 id 命中即丢弃——否则 origin 本地用户会**收到重复消息**（本地 fan-out + 自己 PUBLISH 回环）。统计 `ClusterRuntimeStats.selfDeliveryDropped`，有回归测试。
+- ⏳ **（推迟 1.9.x）多 pub/sub 连接解码**：单 Lettuce 连接 ~80k msg/s 即天花板且与 WS I/O 抢 event loop；每节点 2–4 连接按 URI 哈希分片。**1.8.0 实测吞吐（~14–16k msg/s）远低于单连接天花板，属过早优化，待基准证明需要时再加。**
+- ⏳ **（推迟 1.9.x）sharded pub/sub（仅 cluster 模式）**：经典 pub/sub 在所有模式可用，sharded（`SSUBSCRIBE`/`SPUBLISH`，须 Lettuce ≥6.5.5）作为 cluster 模式优化推迟。
+- ✅ **单播热路径缓存**：`sessionId→nodeId` 本地短 TTL 缓存（`registry-read-cache-ttl-ms` 默认 5000）+ NODE_LEFT 失效；陈旧/错误时移除并回退一次实时 HGET。`ClusterRuntimeStats.cacheHitRatio`。
+- ⏳ **（推迟 1.9.x）广播频道基数边界 / `max-subscribed-channels`**：本基线仅覆盖 `@MessageMapping` URI（典型 10–100 条，订阅集在启动期即固定，不会无界增长）；房间/主题级 fan-out + 频道硬上限推迟到 `1.9.x` 的 `ClusterRoomRegistry`。
+- ⏳ **（推迟 1.9.x）可靠投递路径（offset/epoch + Redis Streams）**：1.8.0 仅 at-most-once（Pub/Sub fire-and-forget），envelope 已带 `version` 字段为未来格式演进留口；`reliableBroadcast(...)` 与 Streams 生命周期推迟。
+- ✅ **顺序契约**：单 publisher × 单 channel 保序；跨 publisher 不保序；本地 fan-out 可能先于远端（Javadoc 说明）。
+- ⏳ **（推迟 1.9.x）写放大控制 / 写 pipeline 批量**：1.8.0 registry 写为单条 async（Lettuce 连接层已自动 pipeline）；显式 `publish-batch-size`/lazy registry 推迟。
+- ⏳ **（推迟 1.9.x）W3C TraceContext 跨节点传播**：envelope 已预留 `traceparent` 字段，但订阅侧 MDC/Observation Scope 恢复推迟。
 
 ### 第三刀：弹性扩缩容与失效模式硬化
 
@@ -70,28 +71,27 @@
 - Scale-in：DRAINING 节点停接新连接，向所有 session 发送 `CloseFrame(1001)`，等待客户端重连（**客户端必须实现退避重连**，文档明确此契约）。
 - 节点故障：通过 heartbeat TTL + Keyspace Notification + 周期对账（第一刀）双路触发清理，发布 `NODE_LEFT`；跨节点单播目标缺失时**同步返回错误**，不再静默丢消息。
 - **分区下广播静默丢失须明示**：部分分区时 A 的广播只是 PUBLISH，连不上 Redis 的 B 收不到、其本地用户静默丢消息直到 B 被判 LEFT。这是 at-most-once 固有后果；需可靠送达走 `reliableBroadcast`（B 恢复后回放）。
-- **Redis SPOF 降级**：`cluster.on-redis-loss=degrade-to-local`（默认）——Redis 失联时本节点切 `DEGRADED`，本地 fan-out / 本地 session 保持工作；跨节点暂停。`close-all` 改为显式 opt-in。
-- **Redis 失联宽限期**：`cluster.redis-loss-grace-period`（默认 60s）内不改状态机，避免抖动误降级。
-- **重连风暴控制**：恢复同步携带 `jitter(0, reconnect-jitter-max)`（默认 10s）；registry 重建 token-bucket 限速；订阅重建按 100 URI / pipeline 批量。
-- **慢订阅者保护**：Lettuce 重连回调触发 `DEGRADED` + 计数；运维章节明确 Redis `client-output-buffer-limit pubsub` 配置要求。
+- ✅ **Redis SPOF 降级**：`on-redis-loss=degrade-to-local`（默认）——Redis 失联时本节点切 `DEGRADED`，本地 fan-out / 本地 session 保持工作；跨节点暂停。`close-all` 显式 opt-in（关闭全部本地 session）。
+- ⏳ **（推迟 1.9.x）Redis 失联宽限期**：`redis-loss-grace-period` 推迟；1.8.0 心跳失败即转 `DEGRADED`（无宽限窗口）。
+- ✅/⏳ **重连风暴控制**：✅ 恢复同步携带 `jitter(0, reconnect-jitter-max-seconds)`（默认 10s，可配）；⏳ registry 重建 token-bucket 限速推迟到 1.9.x。
+- ⏳ **（推迟 1.9.x）慢订阅者保护**：Lettuce 重连回调触发 `DEGRADED`（✅ 已有）；`client-output-buffer-limit pubsub` 运维章节推迟补充。
 
 ### 第四刀：API 诚实化、可观测完整化、文档与 demo
 
-- `MessageSender` 接口设计修正：本地接口语义不变；集群查询作为新异步接口提供（详见 `cluster-design.md §API 契约`）。
-- 集群版 Micrometer 指标完整集：`netty.cluster.nodes.active`、`.state`、`netty.cluster.broadcast.published`、`netty.cluster.unicast.routed.cross-node / .local / .unknown-target`、`netty.cluster.pubsub.drops.unknown`、`.subscriber.disconnected`、`.self-dropped`、`netty.cluster.subscribe.decode.lag`、`netty.cluster.registry.read.cache.hit-ratio`、`netty.cluster.reconciliation.detected`、`netty.cluster.degraded.duration`、`netty.cluster.publish.latency`、`netty.cluster.registry.writes / .reads`。
-- `/actuator/health` 集成集群健康（Redis 连通性、本节点状态、降级窗口）。
-- 多节点 demo + Docker Compose；端到端 smoke test（Testcontainers）作为 CI 阻塞项。
-- 文档：`cluster-design.md` 同步实现细节、容量表与适用边界，README 增加集群快速接入小节，发布说明覆盖兼容/迁移注意事项。
+- ✅ `MessageSender` 接口设计修正：本地接口语义不变；集群查询作为新异步接口提供（`getClusterSessionIds` / `isSessionAliveCluster` 返回 `CompletionStage`）。
+- ✅/⏳ **运行时统计**：✅ 1.8.0 提供 `ClusterRuntimeStats`（broadcastPublished / crossNodeReceived / selfDeliveryDropped / unicastSent / publishFailures / cacheHitRatio）的程序内计数；⏳ 完整 Micrometer 指标集（`netty.cluster.*`）+ `/actuator/health` 集群健康推迟到 1.9.x。
+- ⏳ **（推迟 1.9.x）多节点 demo + Docker Compose + Testcontainers 端到端**：1.8.0 用真实 Redis（Docker）跑了 8 项 `RedisIntegrationTest` + 4 项性能基准，但多节点 demo 与 Testcontainers CI 阻塞项推迟。
+- ✅ 文档：`cluster-design.md` 标注实现范围与推迟项，README 增加集群快速接入 + 性能基准 + 选型/容量表，`release-notes-1.8.0.md` 覆盖兼容/迁移。
 
-`1.8.0` 完成标准：
+`1.8.0` 完成标准（实际达成情况）：
 
-- 3 节点集群跨节点聊天 demo 走通：广播、私聊、缩扩容、Redis 故障演练（拔 Redis 仍能本地工作 ≥ 60s，恢复后无雷击）。
-- **origin 自投递抑制有回归测试**：集群下本地用户对一条广播只收一次（不重复）。
-- 不启用集群时行为与 `1.7.x` 完全一致；启用集群仅修改依赖坐标 + 一个配置开关。
-- `ClusterBroker` / `SessionRegistry` SPI 边界清晰：有一个非 Redis 的 stub 实现证明 `ClusterMessageSender` 不漏依赖 Lettuce。
-- 容量表与节点数适用边界（≤~10 节点活跃广播）写入文档，并用 `redis-benchmark` / `pubsub-sub-bench` 实测校准规划数字。
-- 全量 `mvn test` 通过；集群路径补 Testcontainers 端到端测试。
-- W3C TraceContext 跨节点端到端串联（demo 可视化）。
+- ⏳ 多节点 demo（推迟）；✅ 用真实 Redis 跑通双节点跨节点广播端到端测试 + Redis 故障降级路径（`onRedisLoss`）。
+- ✅ **origin 自投递抑制有回归测试**：集群下本地用户对一条广播只收一次（不重复）。
+- ✅ 不启用集群时行为与 `1.7.x` 完全一致；启用集群仅修改依赖坐标 + 一个配置开关。
+- ✅ `ClusterBroker` / `SessionRegistry` SPI 边界清晰：`InMemoryBroker` / `InMemorySessionRegistry` 非 Redis stub 证明 `ClusterMessageSender` 不漏依赖 Lettuce。
+- ✅ 容量表与节点数适用边界（≤~10 节点活跃广播）写入文档，并用 `redis-benchmark` + Java 基准实测校准。
+- ✅ 全量 `mvn test` 通过（282 测试 / 11 模块）；✅ 集群路径有真实 Redis 集成测试（⏳ Testcontainers 化推迟）。
+- ⏳ W3C TraceContext 跨节点端到端串联（推迟 1.9.x，envelope 已预留字段）。
 
 `1.8.0` 不作为阻塞项的内容：
 
@@ -176,7 +176,7 @@
 | **审计闭环** | 每个 minor 发布前执行 4 路并行审计（功能正确性 / 资源 / 安全 / API 契约）+ 对抗式验证；触发条件：PR 打 `release-candidate` 标签；输出：`audit-finding` 标签 issue 全部 close 或显式 defer 才能发版。单维护者项目使用 `release-checklist.md` 中的自我审计 checklist，但必须留下逐条勾选记录。 |
 | **配置兼容** | 旧配置键保持兼容至少一个 major 版本；新增配置项必须有合理默认值，使现有部署零改动可升级。 |
 | **测试基线** | 全量 `mvn test` 必须通过；新增能力补端到端测试或集成测试；不接受"仅单元测试覆盖"作为完成判定。 |
-| **demo 同步（CI 强制）** | demo 工程的 smoke test（启动、`/actuator/health`、一次 WebSocket roundtrip）作为发布阻塞 CI job；`1.8.0` 起 Docker Compose 集群 demo 也进 CI。 |
+| **demo 同步（CI 强制）** | demo 工程的 smoke test（启动、`/actuator/health`、一次 WebSocket roundtrip）作为发布阻塞 CI job；Docker Compose 集群 demo 进 CI 推迟到 `1.9.x`（1.8.0 已有真实 Redis 集成测试覆盖集群路径）。 |
 | **可选依赖契约** | 对每个 optional dep 声明"最低支持版本"；CI 矩阵跑最低 + 最新两版；版本升级时显式评估兼容性，破坏只能在 major 版本。 |
 
 ## 历史版本一览
@@ -190,9 +190,10 @@
 | `1.4.0` | Demo 与文档产品化 | P7 |
 | `1.5.0`–`1.5.1` | 压测基线 | 性能分析 |
 | `1.6.1`–`1.6.2` | 广播性能优化 + 关键 bug 修复 + 安全稳定性修复 | Phase 1 / Round 1–4 |
-| `1.7.0` | 可观测性增强 + 深度修复 + WebSocket 分片支持 | 上一推荐版本 |
-| `1.7.1` | **`1.7.0` 之上 4 项审计修复 + 依赖安全** | **当前推荐版本** |
-| `1.8.0` | Redis Pub/Sub 集群支持 | 规划中 |
+| `1.7.0` | 可观测性增强 + 深度修复 + WebSocket 分片支持 | 历史版本 |
+| `1.7.1` | `1.7.0` 之上 4 项审计修复 + 依赖安全 | 上一版本 |
+| `1.8.0` | **WebSocket 集群支持（Redis Pub/Sub + 5 层 SPI）** | **当前推荐版本** |
+| `1.9.x` | 集群扩展项（NATS broker、多连接解码、可靠投递、完整指标、多节点 demo、Redis Cluster 客户端） | 规划中 |
 | `2.0.0` | Spring Boot 3.x 迁移基线 | 远期 |
 | `2.1.0` | 企业安全准入 | 远期（在 2.0.0 之后） |
 

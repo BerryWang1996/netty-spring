@@ -24,12 +24,20 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster;
  * When enabled, a {@link ClusterMessageSender} replaces the default
  * {@link com.github.berrywang1996.netty.spring.web.websocket.context.DefaultMessageSender}.
  *
+ * <p><b>Scope note (1.8.0):</b> this class exposes only properties that have an observable
+ * effect in the 1.8.0 implementation. Additional knobs described in
+ * {@code docs/cluster-design.md} (multi pub/sub connections, write pipelining, rate limiting,
+ * reliable streams, Redis Cluster client, sharded pub/sub, etc.) are roadmap items and are
+ * intentionally NOT exposed here until their underlying feature ships — config that does
+ * nothing is worse than no config.
+ *
  * @author berrywang1996
  * @since V1.8.0
  */
 public class ClusterProperties {
 
-    /** Master switch. Default false — cluster is opt-in only. */
+    /** Master switch. Default false — cluster is opt-in only.
+     *  (Read by {@code @ConditionalOnProperty}; the cluster auto-configuration only activates when true.) */
     private boolean enable = false;
 
     /** Unique node identifier. Null or empty = auto-generated UUID. */
@@ -53,50 +61,28 @@ public class ClusterProperties {
     /** Drain timeout in seconds (max time to wait for sessions to close during graceful shutdown). Default 60. */
     private long drainTimeoutSeconds = 60;
 
-    // ---- Failure mode ----
-
-    /** What to do when Redis is lost. Default: degrade-to-local (keep local sessions alive). */
-    private OnRedisLoss onRedisLoss = OnRedisLoss.DEGRADE_TO_LOCAL;
-
-    /** Grace period in seconds before transitioning to DEGRADED after Redis loss. Default 60. */
-    private long redisLossGracePeriodSeconds = 60;
-
-    /** Max jitter in seconds for reconnect storm prevention. Default 10. */
+    /** Max jitter in seconds applied before a DEGRADED→RESYNC re-registration, to avoid
+     *  reconnect storms when many nodes recover simultaneously. Default 10. */
     private long reconnectJitterMaxSeconds = 10;
 
-    // ---- Performance / capacity ----
+    // ---- Failure handling ----
 
-    /** Number of Pub/Sub connections per node (parallel decode). Default 2. */
-    private int pubsubConnections = 2;
+    /** What to do when Redis (cluster transport) is lost. Default {@code DEGRADE_TO_LOCAL}:
+     *  keep local sessions alive and continue local fan-out, pausing only cross-node traffic. */
+    private OnRedisLoss onRedisLoss = OnRedisLoss.DEGRADE_TO_LOCAL;
 
-    /** Pipeline batch size for session registry writes. Default 64. */
-    private int publishBatchSize = 64;
-
-    /** Pipeline flush interval in ms. Default 10. */
-    private long publishFlushIntervalMs = 10;
-
-    /** Max subscribed channels (hard limit). Default 1024. */
-    private int maxSubscribedChannels = 1024;
-
-    /** Subscription hold duration in seconds after last local session leaves a URI. Default 60. */
-    private long subscriptionHoldDurationSeconds = 60;
-
-    /** Local sessionId→nodeId cache TTL in ms for unicast hot path. Default 5000. */
-    private long registryReadCacheTtlMs = 5000;
-
-    /** Max message size in bytes. Default 1MB. */
-    private int messageMaxSizeBytes = 1048576;
-
-    /** Session registry write rate limit in ops/s/node (reconnect storm throttle). Default 1000. */
-    private int sessionRegistryWriteRate = 1000;
-
-    // ---- Delivery ----
-
-    /** What to do on publish failure. Default: log. */
+    /** What to do when a cluster publish/unicast fails. Default {@code LOG}. */
     private OnPublishFailure onPublishFailure = OnPublishFailure.LOG;
 
-    /** Redis Streams MAXLEN for reliable broadcast. Default 100000. */
-    private long reliableStreamMaxLen = 100000;
+    // ---- Capacity / safety ----
+
+    /** Local sessionId→nodeId cache TTL in ms for the unicast hot path. Default 5000. */
+    private long registryReadCacheTtlMs = 5000;
+
+    /** Max serialized cluster message size in bytes. Messages larger than this are not
+     *  published to the cluster (local delivery is unaffected); handled per {@link #onPublishFailure}.
+     *  Default 1 MiB. */
+    private int messageMaxSizeBytes = 1048576;
 
     // ---- Getters / Setters ----
 
@@ -121,29 +107,14 @@ public class ClusterProperties {
     public long getDrainTimeoutSeconds() { return drainTimeoutSeconds; }
     public void setDrainTimeoutSeconds(long v) { this.drainTimeoutSeconds = v; }
 
-    public OnRedisLoss getOnRedisLoss() { return onRedisLoss; }
-    public void setOnRedisLoss(OnRedisLoss v) { this.onRedisLoss = v; }
-
-    public long getRedisLossGracePeriodSeconds() { return redisLossGracePeriodSeconds; }
-    public void setRedisLossGracePeriodSeconds(long v) { this.redisLossGracePeriodSeconds = v; }
-
     public long getReconnectJitterMaxSeconds() { return reconnectJitterMaxSeconds; }
     public void setReconnectJitterMaxSeconds(long v) { this.reconnectJitterMaxSeconds = v; }
 
-    public int getPubsubConnections() { return pubsubConnections; }
-    public void setPubsubConnections(int v) { this.pubsubConnections = v; }
+    public OnRedisLoss getOnRedisLoss() { return onRedisLoss; }
+    public void setOnRedisLoss(OnRedisLoss v) { this.onRedisLoss = v; }
 
-    public int getPublishBatchSize() { return publishBatchSize; }
-    public void setPublishBatchSize(int v) { this.publishBatchSize = v; }
-
-    public long getPublishFlushIntervalMs() { return publishFlushIntervalMs; }
-    public void setPublishFlushIntervalMs(long v) { this.publishFlushIntervalMs = v; }
-
-    public int getMaxSubscribedChannels() { return maxSubscribedChannels; }
-    public void setMaxSubscribedChannels(int v) { this.maxSubscribedChannels = v; }
-
-    public long getSubscriptionHoldDurationSeconds() { return subscriptionHoldDurationSeconds; }
-    public void setSubscriptionHoldDurationSeconds(long v) { this.subscriptionHoldDurationSeconds = v; }
+    public OnPublishFailure getOnPublishFailure() { return onPublishFailure; }
+    public void setOnPublishFailure(OnPublishFailure v) { this.onPublishFailure = v; }
 
     public long getRegistryReadCacheTtlMs() { return registryReadCacheTtlMs; }
     public void setRegistryReadCacheTtlMs(long v) { this.registryReadCacheTtlMs = v; }
@@ -151,63 +122,39 @@ public class ClusterProperties {
     public int getMessageMaxSizeBytes() { return messageMaxSizeBytes; }
     public void setMessageMaxSizeBytes(int v) { this.messageMaxSizeBytes = v; }
 
-    public int getSessionRegistryWriteRate() { return sessionRegistryWriteRate; }
-    public void setSessionRegistryWriteRate(int v) { this.sessionRegistryWriteRate = v; }
-
-    public OnPublishFailure getOnPublishFailure() { return onPublishFailure; }
-    public void setOnPublishFailure(OnPublishFailure v) { this.onPublishFailure = v; }
-
-    public long getReliableStreamMaxLen() { return reliableStreamMaxLen; }
-    public void setReliableStreamMaxLen(long v) { this.reliableStreamMaxLen = v; }
-
     // ---- Nested classes ----
 
+    /**
+     * Redis connection settings. The topology (standalone vs sentinel) is selected by the
+     * URI scheme, which Lettuce auto-detects:
+     * <ul>
+     *   <li>{@code redis://host:port} — standalone</li>
+     *   <li>{@code redis-sentinel://host:port/?sentinelMasterId=...} — sentinel</li>
+     * </ul>
+     * Redis Cluster (which requires a different client type) is a roadmap item; users running
+     * Redis Cluster should provide their own {@code ClusterBroker}/{@code SessionRegistry} beans.
+     */
     public static class Redis {
-        /** Redis mode. Default standalone. */
-        private RedisMode mode = RedisMode.STANDALONE;
-
-        /** Redis connection URI. Default redis://localhost:6379. */
+        /** Redis connection URI. Default {@code redis://localhost:6379}. */
         private String uri = "redis://localhost:6379";
-
-        /** Whether to use sharded pub/sub in cluster mode. auto = detect. */
-        private ShardedPubSub shardedPubsub = ShardedPubSub.AUTO;
-
-        public RedisMode getMode() { return mode; }
-        public void setMode(RedisMode mode) { this.mode = mode; }
 
         public String getUri() { return uri; }
         public void setUri(String uri) { this.uri = uri; }
-
-        public ShardedPubSub getShardedPubsub() { return shardedPubsub; }
-        public void setShardedPubsub(ShardedPubSub v) { this.shardedPubsub = v; }
     }
 
-    public enum RedisMode {
-        STANDALONE, SENTINEL, CLUSTER
-    }
-
-    public enum ShardedPubSub {
-        /** Auto-detect: use sharded pub/sub if mode=CLUSTER and Lettuce ≥6.5.5. */
-        AUTO,
-        /** Force sharded pub/sub on. */
-        ON,
-        /** Force sharded pub/sub off (classic SUBSCRIBE/PUBLISH). */
-        OFF
-    }
-
+    /** Behavior when the cluster transport (Redis) is lost. */
     public enum OnRedisLoss {
-        /** Keep local sessions alive, pause cross-node traffic. Default. */
+        /** Keep local sessions alive, continue local fan-out, pause cross-node traffic. Default. */
         DEGRADE_TO_LOCAL,
-        /** Close all local sessions when Redis is lost. */
+        /** Close all local sessions when the transport is lost (fail-fast / load-shed). */
         CLOSE_ALL
     }
 
+    /** Behavior when a cluster publish/unicast fails. */
     public enum OnPublishFailure {
         /** Silently drop the message. */
         DROP,
         /** Log a warning (default). */
-        LOG,
-        /** Invoke a user-provided callback. */
-        CALLBACK
+        LOG
     }
 }

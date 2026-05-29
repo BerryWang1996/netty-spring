@@ -77,7 +77,7 @@
 - 发布前完成 4 轮代码审计 + 1 轮对抗式验证，修复多 `MeterRegistry` 指标路由、连接时长 Timer 预创建、聚合器插入兜底、`getPort()` 空安全等问题；全部改动向后兼容。
 - 已补 `docs/release-notes-1.7.0.md`，并同步 README、`docs/api-guide.md`、`docs/netty-configuration.md`、`docs/websocket-configuration.md` 与开发计划至 `1.7.0` 状态。
 
-### `1.7.1`（当前推荐版本，已发布 tag `v1.7.1`）
+### `1.7.1`（已发布 tag `v1.7.1`）
 
 定位：在 `1.7.0` 之上的审计驱动 patch，全部修复向后兼容。
 
@@ -91,6 +91,19 @@
 - 路线图修订：`docs/cluster-design.md` 与 `docs/development-plan.md` 应用 6 项架构评审修订（Redis SPOF 降级默认、API 诚实化、TraceContext 必做、`2.0`/`2.1` 拆分、企业安全 12 项清单、治理原则可执行化）。
 - 已补 `docs/release-notes-1.7.1.md`，并同步 README、`docs/api-guide.md`、`docs/dependency-governance.md` 至 1.7.1 状态。
 
-### `1.8.0`（规划中）
+### `1.8.0`（当前推荐版本，已发布 tag `v1.8.0`）
 
-口径将在 `1.8.0` 进入 RC 时补充。技术设计见 [`docs/cluster-design.md`](cluster-design.md)，规划见 `development-plan.md` "`1.8.0` Redis 集群支持版本规划"。
+定位：WebSocket 集群支持（Redis Pub/Sub + 5 层 SPI），向后兼容，默认单机模式行为与 `1.7.x` 完全一致。
+
+完成确认项：
+
+- 全量 `mvn test` 通过（**282 个测试 / 11 个模块**）；新增 6 个 SPI 隔离测试 + 8 个 Redis 集成测试 + 4 个性能基准。
+- **2 个新模块**：`netty-spring-websocket-cluster`、`netty-websocket-cluster-spring-boot-starter`。
+- **5 层可插拔 SPI**：`ClusterBroker` / `SessionRegistry` / `EnvelopeCodec` / `MessagePayloadCodec` / `ClusterNodeHeartbeat`，全部 `@ConditionalOnMissingBean` 可覆盖；集群模块**零 Jackson 依赖**（序列化用户自选）。
+- **配置诚实化**：`ClusterProperties` 只暴露有实际效果的配置项；设计文档中尚未实现的特性（多 pub/sub 连接、sharded pub/sub、可靠 streams、写 pipeline、限速、宽限期、Redis Cluster 客户端）**不暴露开关**，明确标注推迟到 `1.9.x`。
+- 真实 Redis 7.4.9（Docker）实测：本地广播 ~180 万 msg/s，跨节点 ~14k msg/s @ 77µs。
+- 已补 `docs/release-notes-1.8.0.md`，并同步 README（集群快速接入 + 性能基准 + 选型/容量表）、`docs/api-guide.md`、`docs/cluster-design.md`（实现范围 vs 设计目标）、`docs/development-plan.md`。
+
+### `1.9.x`（规划中）
+
+集群扩展项：NATS broker（ADR-001）、多 pub/sub 连接并行解码、sharded pub/sub、Redis Streams 可靠投递、完整 Micrometer 指标集 + Actuator 集群健康、多节点 demo + Testcontainers、Redis Cluster 客户端一等支持、W3C TraceContext 跨节点传播。详见 `development-plan.md`。

@@ -148,6 +148,7 @@ public class NettyWebSocketClusterConfigure {
                 properties.getDrainTimeoutSeconds() * 1000,
                 heartbeat,
                 sessionRegistry);
+        manager.setReconnectJitterMaxMs(properties.getReconnectJitterMaxSeconds() * 1000);
         manager.start();
         log.info("Cluster node manager started (nodeId={})", manager.getNodeId());
         return manager;
@@ -165,8 +166,12 @@ public class NettyWebSocketClusterConfigure {
         ClusterMessageSender sender = new ClusterMessageSender(
                 localSender, broker, sessionRegistry, nodeManager,
                 properties.getRegistryReadCacheTtlMs(), messagePayloadCodec);
+        sender.setMessageMaxSizeBytes(properties.getMessageMaxSizeBytes());
+        sender.setOnPublishFailure(properties.getOnPublishFailure());
+        sender.setOnRedisLoss(properties.getOnRedisLoss());
         sender.start();
-        log.info("ClusterMessageSender started — cluster mode is ACTIVE");
+        log.info("ClusterMessageSender started — cluster mode is ACTIVE (onRedisLoss={}, onPublishFailure={}, maxMsgBytes={})",
+                properties.getOnRedisLoss(), properties.getOnPublishFailure(), properties.getMessageMaxSizeBytes());
         return sender;
     }
 

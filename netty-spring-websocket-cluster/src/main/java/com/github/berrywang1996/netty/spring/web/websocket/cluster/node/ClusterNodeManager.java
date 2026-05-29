@@ -65,6 +65,10 @@ public class ClusterNodeManager {
     /** Callback invoked when a dead node is detected during reconciliation (for cache invalidation). */
     private volatile java.util.function.Consumer<String> deadNodeCallback;
 
+    /** Max jitter (ms) applied before DEGRADED→RESYNC re-registration, to avoid reconnect storms.
+     *  Default 10000ms; configurable via {@link #setReconnectJitterMaxMs(long)}. */
+    private volatile long reconnectJitterMaxMs = 10_000L;
+
     private ScheduledExecutorService scheduler;
     private ScheduledFuture<?> heartbeatFuture;
     private ScheduledFuture<?> reconciliationFuture;
@@ -119,6 +123,16 @@ public class ClusterNodeManager {
      */
     public void setDeadNodeCallback(java.util.function.Consumer<String> callback) {
         this.deadNodeCallback = callback;
+    }
+
+    /**
+     * Sets the max jitter (ms) applied before a DEGRADED→RESYNC re-registration.
+     * Bound from {@code server.netty.websocket.cluster.reconnect-jitter-max-seconds}.
+     */
+    public void setReconnectJitterMaxMs(long reconnectJitterMaxMs) {
+        if (reconnectJitterMaxMs >= 0) {
+            this.reconnectJitterMaxMs = reconnectJitterMaxMs;
+        }
     }
 
     /**
@@ -240,7 +254,7 @@ public class ClusterNodeManager {
                     log.error("Failed to resync node {}, staying DEGRADED", nodeId, e);
                     transitionTo(NodeState.DEGRADED);
                 }
-            }, jitter(1000), TimeUnit.MILLISECONDS);
+            }, jitter(reconnectJitterMaxMs), TimeUnit.MILLISECONDS);
         }
     }
 
@@ -254,7 +268,7 @@ public class ClusterNodeManager {
         // Note: RESYNC state is handled by the scheduled task in onTransportRestored().
         // During RESYNC, heartbeat does nothing — the resync task will re-register and
         // transition to ACTIVE (or back to DEGRADED on failure). This delay is bounded
-        // by the jitter(1000) in onTransportRestored and is acceptable.
+        // by the reconnect jitter in onTransportRestored and is acceptable.
 
         try {
             if (currentState == NodeState.DEGRADED) {

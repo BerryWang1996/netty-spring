@@ -1,8 +1,44 @@
-# Cluster Design — `1.8.0` Redis 集群方案
+# Cluster Design — Redis 集群方案（设计全集 + 1.8.0 实现范围）
 
-> 本文档是 `netty-spring 1.8.0` 集群支持的设计参考。`1.8.0` 当前为规划中状态。
-> 落地进度跟踪：`docs/development-plan.md` 中的 "`1.8.0` Redis 集群支持版本规划"。
-> 1.7.x 架构评审已对本设计作出关键修订，详见每节末尾的"设计注记"。
+> **本文档描述的是完整目标架构（设计全集），不是 1.8.0 的实现清单。** `1.8.0` 已发布，
+> 实现了其中一个**子集**；其余能力推迟到 `1.9.x`。下方"## 1.8.0 实现范围"表是实现与
+> 设计的权威对照——阅读本文其余章节时，请以该表为准判断某项是否已落地。
+> 落地进度与推迟项跟踪：`docs/development-plan.md`。
+
+## 1.8.0 实现范围 vs 设计目标
+
+> 原则：**1.8.0 只暴露有实际效果的配置项**。本文档其余章节描述的 `pubsub-connections`、
+> `sharded-pubsub`、`publish-batch-size`、`reliable-stream-max-len`、`redis-loss-grace-period`、
+> `session-registry-write-rate`、`max-subscribed-channels`、`subscription-hold-duration`、
+> `redis.mode` 等配置项**在 1.8.0 的 `ClusterProperties` 中不存在**（其特性尚未实现，不提供会
+> 撒谎的开关），待对应特性在 `1.9.x` 落地时再引入。
+
+| 能力 | 1.8.0 | 说明 |
+| --- | :---: | --- |
+| `ClusterBroker` / `SessionRegistry` SPI + Redis 实现 | ✅ | `RedisPubSubBroker` + `RedisSessionRegistry` |
+| `EnvelopeCodec` / `MessagePayloadCodec` SPI（零 Jackson） | ✅ | 默认 `SimpleTextEnvelopeCodec` + `DefaultMessagePayloadCodec` |
+| `ClusterNodeHeartbeat` SPI + Redis TTL 实现 | ✅ | 心跳注册/续约/过期检测 |
+| 跨节点广播 + 单播 + 远程关闭（CLOSE） | ✅ | at-most-once |
+| origin 自投递抑制 | ✅ | 有回归测试 |
+| 节点状态机 JOINING→ACTIVE→DEGRADED→RESYNC→DRAINING→LEFT | ✅ | |
+| 心跳 + 周期对账（reconciliation）双路故障检测 | ✅ | 兜底 keyspace notification 漏报 |
+| 单播热路径缓存（`registry-read-cache-ttl-ms`） | ✅ | + dead-node 失效 |
+| `on-redis-loss`（degrade-to-local 默认 / close-all） | ✅ | |
+| `on-publish-failure`（log / drop）、`message-max-size-bytes`、`reconnect-jitter-max-seconds` | ✅ | |
+| `ClusterRuntimeStats` 程序内计数 | ✅ | broadcastPublished / selfDropped / unicastSent / publishFailures / cacheHitRatio |
+| Sentinel（`redis-sentinel://` URI） | ✅ | Lettuce 原生，URI scheme 选择拓扑 |
+| 多 pub/sub 连接并行解码（`pubsub-connections`） | ⏳ 1.9.x | 实测吞吐远低于单连接天花板，过早优化 |
+| sharded pub/sub（`SSUBSCRIBE`/`SPUBLISH`） | ⏳ 1.9.x | 经典 pub/sub 已覆盖所有模式 |
+| Redis Cluster 客户端一等支持（`RedisClusterClient`） | ⏳ 1.9.x | 需不同客户端类型；用户自备 bean |
+| 可靠投递（offset/epoch + Redis Streams、`reliable-stream-max-len`） | ⏳ 1.9.x | envelope 已留 `version` 字段 |
+| 写 pipeline 批量（`publish-batch-size` / `publish-flush-interval`） | ⏳ 1.9.x | 当前单条 async（Lettuce 连接层自动 pipeline） |
+| registry 写限速（`session-registry-write-rate`） | ⏳ 1.9.x | |
+| Redis 失联宽限期（`redis-loss-grace-period`） | ⏳ 1.9.x | 当前心跳失败即降级 |
+| 频道基数硬上限 / 订阅 hold（`max-subscribed-channels` / `subscription-hold-duration`） | ⏳ 1.9.x | 订阅集由 `@MessageMapping` URI 固定，不会无界增长 |
+| 完整 Micrometer 指标集 + Actuator 集群健康 | ⏳ 1.9.x | 1.8.0 提供程序内 `ClusterRuntimeStats` |
+| W3C TraceContext 跨节点传播 | ⏳ 1.9.x | envelope 已留 `traceparent` 字段 |
+| NATS broker（ADR-001 规模化档位） | ⏳ 1.9.x | SPI 下新增实现，非替换 |
+| 多节点 demo + Docker Compose + Testcontainers | ⏳ 1.9.x | 1.8.0 已有真实 Redis 集成测试 |
 
 ## 目标
 
@@ -245,42 +281,37 @@ public class ChatController {
 
 ### 配置参考
 
+> 命名空间是 `server.netty.websocket.cluster.*`（集群是 WebSocket 的扩展能力）。
+
+**1.8.0 实际可用配置（`ClusterProperties` 中真实存在且有效果）：**
+
 ```yaml
 server:
   netty:
-    cluster:
-      enable: false                        # 关闭或缺省 → 退化为 1.7.x 单机行为
-      redis:
-        mode: standalone                   # standalone | sentinel | cluster
-        uri: redis://localhost:6379        # 或复用 spring.data.redis.*（@ConditionalOnMissingBean）
-        sharded-pubsub: auto               # auto（cluster 模式且 Lettuce≥6.5.5 时启用）| on | off
-      node-id: ${HOSTNAME:auto}            # 默认自动生成
-      heartbeat-interval-seconds: 3
-      heartbeat-timeout-seconds: 10
-      reconciliation-interval-seconds: 15  # keyspace 通知漏报的慢路径对账兜底（§5）
-      drain-timeout-seconds: 60
-
-      # ---- 失效模式 ----
-      on-redis-loss: degrade-to-local       # degrade-to-local（默认） | close-all
-      redis-loss-grace-period-seconds: 60
-      reconnect-jitter-max-seconds: 10
-
-      # ---- 性能 / 容量 ----
-      pubsub-connections: 2                 # 每节点 pub/sub 连接数，并行解码（§3 瓶颈 #2）
-      publish-batch-size: 64
-      publish-flush-interval-ms: 10
-      max-subscribed-channels: 1024
-      subscription-hold-duration-seconds: 60
-      registry-read-cache-ttl-ms: 5000      # sessionId→nodeId 单播热路径缓存（§2 瓶颈 #4）
-      unicast-buffer-size: 4096
-      message-max-size-bytes: 1048576
-      compression: none                    # none | lz4 | gzip
-      session-registry-write-rate: 1000    # ops/s/节点
-
-      # ---- 投递策略 ----
-      on-publish-failure: log              # drop | log | callback
-      reliable-stream-max-len: 100000      # Streams MAXLEN 上限
+    websocket:
+      cluster:
+        enable: false                      # 关闭或缺省 → 退化为 1.7.x 单机行为
+        node-id: ${HOSTNAME:auto}          # 默认自动生成 UUID
+        redis:
+          uri: redis://localhost:6379      # 拓扑由 URI scheme 决定：
+                                           #   redis://...           → standalone
+                                           #   redis-sentinel://...  → sentinel（Lettuce 原生）
+        heartbeat-interval-seconds: 3
+        heartbeat-timeout-seconds: 10
+        reconciliation-interval-seconds: 15 # keyspace 通知漏报的慢路径对账兜底（§5）
+        drain-timeout-seconds: 60
+        reconnect-jitter-max-seconds: 10    # DEGRADED→RESYNC 重注册前抖动，防重连风暴
+        registry-read-cache-ttl-ms: 5000    # sessionId→nodeId 单播热路径缓存（§2 瓶颈 #4）
+        message-max-size-bytes: 1048576     # 超限消息不发往集群（本地投递不受影响）
+        on-redis-loss: degrade-to-local     # degrade-to-local（默认） | close-all
+        on-publish-failure: log             # log（默认） | drop
 ```
+
+**设计全集中尚未实现的键（⏳ 1.9.x，当前设置无效，故 1.8.0 不提供）：**
+`redis.mode`、`redis.sharded-pubsub`、`pubsub-connections`、`publish-batch-size`、
+`publish-flush-interval-ms`、`max-subscribed-channels`、`subscription-hold-duration-seconds`、
+`session-registry-write-rate`、`reliable-stream-max-len`、`redis-loss-grace-period-seconds`、
+`compression`、`unicast-buffer-size`。详见本文档顶部"1.8.0 实现范围"表。
 
 ### 命名空间一致性
 
