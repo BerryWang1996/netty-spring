@@ -36,6 +36,8 @@
 
 **已知扩展边界（二次评审量化结论，详见 `cluster-design.md §深度瓶颈`）：** Redis Pub/Sub 方案因扇出放大 `M·(f·N−1)` 和单 Lettuce 连接解码天花板（~80k msg/s/node），对**活跃广播 URI 仅在 ≤~10 节点安全**；超出后路径是 sharded pub/sub（仅救 Redis CPU）→ node-mesh（经 SPI 切换，业务零改动）。本版本明确以此为适用边界，不假装无限扩展。
 
+**中间件选型已采纳（ADR-001，见 `cluster-design.md`）：Redis-first，NATS 后补。** 1.8.0 落 Redis；NATS 在 1.9.x 以 `NatsBroker` **新增实现**形式追加（规模化档位，非替换，Redis 长期保留服务小集群）。不自研通用 broker、不引自研 Go/Rust 中间件——要 Go 级性能直接 adopt 开源 NATS。因 SPI 共享 ~80% transport-agnostic 代码，"先 Redis 后 NATS"不是重复开发；档位切换对业务零改动、可逆。
+
 建议拆成四刀：
 
 ### 第一刀：传输层 SPI + 集群发现与节点生命周期
@@ -99,6 +101,8 @@
 
 ### `1.8.x` / `1.9.x` 跟随项 backlog
 
+- **`NatsBroker` adapter（规模化中间件档位，ADR-001）**：在 `ClusterBroker` SPI 下新增 NATS 实现，兴趣路由消除 Redis Pub/Sub 的 N× 扇出放大；Redis 实现保留服务小集群。触发条件：有用户撞到 ≤~10 节点活跃广播天花板。
+- 直接 node→node 单播（Slack 模式 mesh 第一步，把 Redis 移出单播热路径）。
 - 入站背压 / 速率限制（per-session token bucket + `netty.websocket.inbound.dropped` 指标）。
 - 房间 / 主题级集群 fan-out（`ClusterRoomRegistry` 含分片频道）。
 - Redis Streams 完整生命周期：消费者重平衡、死信队列、离线消息 API。

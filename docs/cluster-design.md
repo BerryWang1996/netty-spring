@@ -333,6 +333,34 @@ public interface SessionRegistry {
 
 **1.9.x 第一个 mesh 步**：单播（A→B 私聊）当前是 Redis 中继（`unicast:{nodeId}` 频道）。registry 已经知道"在哪个节点"，把单播改成**直接 node→node 发送**（registry 只做发现），即可把 Redis 移出单播热路径——这是 Slack 模式的最小落地，也是 TOP 瓶颈 #4 的终极解。
 
+## ADR-001：集群中间件选型 —— Redis-first，NATS 后补，不自研、不引 Go/Rust 中间件
+
+> 状态：**已采纳（2026-05-29）**。本节固化决策与理由，避免后续（尤其有人提议"用 Go/Rust 重写中间件"时）重复争论。
+
+**背景：** 1.8.0 需要跨节点消息传输。§深度瓶颈量化了 Redis Pub/Sub 的天花板（扇出放大 `M·(f·N−1)`、单连接解码 ~80k msg/s、活跃广播 ≤~10 节点）。自然会问：既然 Redis 有上限、迟早要换 NATS/mesh，为何不一次做对、先上 Redis 是不是重复开发？
+
+**决策：**
+
+1. **1.8.0 先落 Redis**（`RedisPubSubBroker` + `RedisSessionRegistry`），置于 `ClusterBroker` / `SessionRegistry` SPI 之后。
+2. **NATS 作为"规模化档位"在 1.9.x 以 `NatsBroker` 形式追加**——是**新增实现**，不是替换；Redis 实现长期保留服务小集群。
+3. **不自研通用 broker/消息总线**（任何语言）；**不引入自研 Go/Rust 中间件进程**。要"Go 级中间件性能"直接 **adopt 开源的 NATS**（Apache-2.0、CNCF、兴趣路由天然无 N× 放大），不自己造。
+
+**为什么这不是重复开发（驳"先 Redis 再换=浪费"）：**
+
+- 有 SPI 后是**加实现**不是**换实现**：集群层 ~80% 是 transport-agnostic 逻辑（SPI、`ClusterMessageSender` 集成、envelope/trace/序列化、self-delivery 抑制、失败状态机、背压/顺序/投递语义、指标、demo、测试），**只写一遍**被所有 transport 复用；Redis 专属适配器仅占 ~15–20%。真正的重复开发是"没有抽象、每个 transport 重写一遍"——SPI 正是用来杜绝它。
+- Redis 与 NATS 服务**不同档位、并存**，不是"差的"被"好的"取代（类比：框架同时支持内存缓存和 Redis 缓存，没人说前者是浪费）。
+- 先在最简单 transport 上验证抽象与失败模式（简单模式），再上复杂 transport，低风险。
+
+**被拒方案及复议条件：**
+
+| 方案 | 拒绝理由 | 何时复议 |
+|---|---|---|
+| NATS-first / NATS-only | 抬高所有用户接入门槛（人人要装 NATS）；多数目标用户（≤10 节点）到不了 Redis 天花板（YAGNI） | 若定位从"库"转为"只打大规模" |
+| mesh-only 自研 | 工程量最大、首版最慢；多数用户用不到 | 单节点解码 >80k 或要彻底去中心依赖 |
+| 自研 Go/Rust 中间件 | 等于做第二个产品（独立 roadmap/运维/安全/语言生态）；单人维护不可持续；NATS 已覆盖该需求 | 仅当要做 Centrifugo 级"实时平台"且有持续维护力量 |
+
+**后果：** Redis 实现长期保留（小集群档位）；NATS 是有证据表明用户撞墙后的规模化档位；因 SPI，档位切换对业务零改动、决策可逆（成本只是薄适配器）。**节点本身永远是 Java——中间件语言无关，节点只作客户端对接。**
+
 ## 模块结构（规划）
 
 ```
