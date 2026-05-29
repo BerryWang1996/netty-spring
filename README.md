@@ -47,11 +47,13 @@ A Spring Boot integration for Netty, providing HTTP MVC and WebSocket capabiliti
 
 ```xml
 <dependency>
-    <groupId>com.github.berrywang1996</groupId>
+    <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
     <version>1.7.1</version>
 </dependency>
 ```
+
+Available on Maven Central as `io.github.berrywang1996:*` (versions `1.4.0`, `1.6.2`, `1.7.0`, `1.7.1`). Earlier `com.github.berrywang1996:*` artifacts were only published to a private repository — migrate by changing the groupId in your `pom.xml`.
 
 #### 3. Configure
 
@@ -314,11 +316,13 @@ Verified on `GraalVM JDK 17.0.11` + `Apache Maven 3.9.9`. CI workflow runs full 
 
 ```xml
 <dependency>
-    <groupId>com.github.berrywang1996</groupId>
+    <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
     <version>1.7.1</version>
 </dependency>
 ```
+
+Maven Central 上以 `io.github.berrywang1996:*` 提供（版本 `1.4.0`、`1.6.2`、`1.7.0`、`1.7.1`）。早期 `com.github.berrywang1996:*` 仅发布到私有仓库——迁移时只需把 `pom.xml` 里的 groupId 改成新的即可。
 
 #### 3. 配置
 
