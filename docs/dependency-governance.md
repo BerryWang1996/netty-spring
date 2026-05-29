@@ -1,6 +1,6 @@
 # 依赖治理与供应链门禁
 
-更新时间：2026-05-29
+更新时间：2026-05-30
 
 ## 目标
 
@@ -15,7 +15,9 @@
 - Runtime 不再依赖 `netty-all`，只显式引入当前代码实际使用的 `netty-codec-http`、`netty-handler`、`netty-transport`、`netty-buffer` 和 `netty-common`，减少无关协议模块带来的漏洞面和扫描噪音。
 - Spring Boot 仍由 `org.springframework.boot:spring-boot-dependencies:${spring-boot.version}` 管理；如果后续升级 Spring Boot，需要重新确认 Netty BOM 覆盖顺序和 `mvn dependency:tree -Dincludes=io.netty` 输出。
 - **logback 1.2.13 显式 pin（自 `1.7.1` 起）**：Spring Boot 2.7.18 BOM 默认 logback 1.2.12 仍有 CVE-2023-6378（`SocketReceiver` / `SocketAppender` 序列化漏洞）。根 POM 的 `<dependencyManagement>` 在 `spring-boot-dependencies` 之前显式声明 `logback-classic:1.2.13` 与 `logback-core:1.2.13` 覆盖。
-- **Spring Boot OSS-EOL 说明**：Spring Boot `2.7.x` OSS 线已于 2023-11 停止维护；后续 `2.7.x` Enterprise 修复需付费。`netty-spring 1.x` 跟随 OSS 2.7.18，对单项 CVE 通过覆盖（如 logback）补救；完整迁移路径是 `2.0.0` 切换到 Spring Boot 3.x。
+- **spring-framework 5.3.39 显式 pin（自 `1.8.0` 起）**：Spring Boot 2.7.18 BOM 默认 Spring Framework 5.3.31，存在后续 5.3.x 已修复的 CVE-2024-22243/22259/22262（`UriComponentsBuilder` open-redirect / SSRF）与 CVE-2024-38809/38816/38820（内容协商 DoS、静态资源路径穿越、数据绑定）。根 POM 在 `spring-boot-dependencies` 之前 import `org.springframework:spring-framework-bom:5.3.39`（5.3.x EOL 末版，ABI 兼容 Boot 2.7.18）覆盖。
+- **snakeyaml 1.33 显式 pin（自 `1.8.0` 起）**：Spring Boot 2.7.18 BOM 默认 snakeyaml 1.30，存在 CVE-2022-38751/38752/41854（不可信 YAML 解析栈溢出 / DoS）。根 POM 在 `spring-boot-dependencies` 之前显式声明 `snakeyaml:1.33`（1.x 末版含 DoS 修复，Boot 用于 `application.yml` 解析）覆盖。
+- **Spring Boot OSS-EOL 说明**：Spring Boot `2.7.x` OSS 线已于 2023-11 停止维护；后续 `2.7.x` Enterprise 修复需付费。`netty-spring 1.x` 跟随 OSS 2.7.18，对单项 CVE 通过覆盖（logback / spring-framework / snakeyaml）补救；完整迁移路径是 `2.0.0` 切换到 Spring Boot 3.x。这些覆盖均为同 minor 线 patch 升级，向后兼容、全量 `mvn test` 验证通过。
 
 ## Maven Profiles
 

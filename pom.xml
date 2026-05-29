@@ -112,6 +112,35 @@
                 <version>1.2.13</version>
             </dependency>
 
+            <!--
+              spring-framework 5.3.39 override: Spring Boot 2.7.18 BOM pins Spring Framework
+              5.3.31, which has several advisories fixed later in the 5.3.x line — CVE-2024-22243 /
+              CVE-2024-22259 / CVE-2024-22262 (UriComponentsBuilder open-redirect / SSRF) and
+              CVE-2024-38809 / CVE-2024-38816 / CVE-2024-38820 (content-negotiation DoS, static-
+              resource path traversal, data-binding). 5.3.39 is the last 5.3.x release (EOL line)
+              and ships all fixes; it is ABI-compatible with Boot 2.7.18. Imported BEFORE
+              spring-boot-dependencies so these versions win.
+            -->
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-framework-bom</artifactId>
+                <version>5.3.39</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!--
+              snakeyaml 1.33 override: Spring Boot 2.7.18 BOM pins snakeyaml 1.30, vulnerable to
+              CVE-2022-38751 / CVE-2022-38752 / CVE-2022-41854 (stack-overflow / DoS on untrusted
+              YAML). 1.33 is the last 1.x release with the DoS fixes (used by Boot for
+              application.yml parsing). Declared BEFORE spring-boot-dependencies so it wins.
+            -->
+            <dependency>
+                <groupId>org.yaml</groupId>
+                <artifactId>snakeyaml</artifactId>
+                <version>1.33</version>
+            </dependency>
+
             <!-- spring boot managed versions -->
             <dependency>
                 <groupId>org.springframework.boot</groupId>
