@@ -685,6 +685,17 @@ public class NettyServerStartupProperties {
         private int maxFramePayloadLength;
 
         /**
+         * Maximum buffer size in bytes for WebSocket frame aggregation. When positive,
+         * a {@code WebSocketFrameAggregator} is added to the pipeline after the handshake
+         * to reassemble fragmented WebSocket messages (ContinuationWebSocketFrame) into
+         * complete frames before they reach the handler.
+         *
+         * <p>0 or negative means frame aggregation is disabled and fragmented messages
+         * will be discarded with a warning.
+         */
+        private int maxFrameAggregationBufferSize;
+
+        /**
          * Comma or whitespace separated allowed Origin values. Blank means allow all origins.
          */
         private String allowedOrigins;
@@ -846,6 +857,14 @@ public class NettyServerStartupProperties {
 
         public void setMaxFramePayloadLength(int maxFramePayloadLength) {
             this.maxFramePayloadLength = maxFramePayloadLength;
+        }
+
+        public int getMaxFrameAggregationBufferSize() {
+            return maxFrameAggregationBufferSize;
+        }
+
+        public void setMaxFrameAggregationBufferSize(int maxFrameAggregationBufferSize) {
+            this.maxFrameAggregationBufferSize = maxFrameAggregationBufferSize;
         }
 
         public String getAllowedOrigins() {

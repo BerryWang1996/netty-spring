@@ -31,9 +31,11 @@ import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.ContinuationWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.PingWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.PongWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.WebSocketFrameAggregator;
 import io.netty.util.CharsetUtil;
 import io.netty.util.ReferenceCountUtil;
 import org.junit.jupiter.api.Test;
@@ -1568,6 +1570,124 @@ class MessageMappingResolverTest {
         assertNotNull(closesByReason);
         assertEquals(1L, closesByReason.get("channel_inactive"));
         testChannel.finish();
+    }
+
+    // ---- v1.7.0 第四刀: WebSocket frame aggregation ----
+
+    @Test
+    void frameAggregatorAddedToPipelineWhenConfigured() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setMaxFrameAggregationBufferSize(65536);
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint, properties, null);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        try {
+            resolver.resolve(testChannel.ctx, request);
+            Object handshakeResponse = testChannel.channel.readOutbound();
+            ReferenceCountUtil.release(handshakeResponse);
+            drainChannel(testChannel.channel);
+
+            assertEquals(1, endpoint.connectedCount);
+            assertEquals(1, resolver.getSessionMap().size());
+            // The WebSocketFrameAggregator should have been added to the pipeline
+            assertNotNull(testChannel.channel.pipeline().get("wsFrameAggregator"),
+                    "WebSocketFrameAggregator should be in the pipeline when maxFrameAggregationBufferSize > 0");
+            assertTrue(testChannel.channel.pipeline().get("wsFrameAggregator") instanceof WebSocketFrameAggregator);
+        } finally {
+            request.release();
+            resolver.onChannelInactive(testChannel.ctx);
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void noFrameAggregatorWhenNotConfigured() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        try {
+            resolver.resolve(testChannel.ctx, request);
+            Object handshakeResponse = testChannel.channel.readOutbound();
+            ReferenceCountUtil.release(handshakeResponse);
+            drainChannel(testChannel.channel);
+
+            assertEquals(1, endpoint.connectedCount);
+            // No aggregator should be in the pipeline when not configured
+            assertNull(testChannel.channel.pipeline().get("wsFrameAggregator"),
+                    "WebSocketFrameAggregator should NOT be in the pipeline when maxFrameAggregationBufferSize is not set");
+        } finally {
+            request.release();
+            resolver.onChannelInactive(testChannel.ctx);
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void noFrameAggregatorWhenBufferSizeIsZero() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setMaxFrameAggregationBufferSize(0);
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint, properties, null);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        try {
+            resolver.resolve(testChannel.ctx, request);
+            Object handshakeResponse = testChannel.channel.readOutbound();
+            ReferenceCountUtil.release(handshakeResponse);
+            drainChannel(testChannel.channel);
+
+            assertEquals(1, endpoint.connectedCount);
+            assertNull(testChannel.channel.pipeline().get("wsFrameAggregator"),
+                    "WebSocketFrameAggregator should NOT be in the pipeline when maxFrameAggregationBufferSize is 0");
+        } finally {
+            request.release();
+            resolver.onChannelInactive(testChannel.ctx);
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void continuationFrameDiscardedWithWarningWhenAggregationDisabled() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        methods.put(MessageType.TEXT_MESSAGE, method(endpoint, "onTextPayload", String.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        try {
+            resolver.resolve(testChannel.ctx, request);
+            Object handshakeResponse = testChannel.channel.readOutbound();
+            ReferenceCountUtil.release(handshakeResponse);
+            drainChannel(testChannel.channel);
+
+            // Send a ContinuationWebSocketFrame without aggregation enabled — should be silently discarded
+            ContinuationWebSocketFrame contFrame =
+                    new ContinuationWebSocketFrame(Unpooled.copiedBuffer("fragment", CharsetUtil.UTF_8));
+            resolver.resolve(testChannel.ctx, contFrame);
+            contFrame.release();
+
+            // No text message handler should have been called
+            assertEquals(0, endpoint.textPayloadCount);
+            // Session should remain active (not closed on continuation frame)
+            assertEquals(1, resolver.getSessionMap().size());
+        } finally {
+            request.release();
+            resolver.onChannelInactive(testChannel.ctx);
+            testChannel.finish();
+        }
     }
 
     private static Method method(Object target, String methodName, Class<?>... parameterTypes) throws Exception {

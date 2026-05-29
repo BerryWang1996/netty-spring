@@ -365,6 +365,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                         handleHandshakeFailure(pendingSession, future.cause());
                         return;
                     }
+                    addFrameAggregatorIfConfigured(ctx);
                     eventRecorder.recordHandshakeSuccess();
                     registerSession(pendingSession);
                     startHeartbeat(pendingSession);
@@ -1178,10 +1179,12 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                 handleLifecycleException(frame, session, e);
             }
         } else if (frame instanceof ContinuationWebSocketFrame) {
-            // Fragmented WebSocket messages (ContinuationWebSocketFrame) are not supported.
+            // Fragmented WebSocket messages (ContinuationWebSocketFrame) are not supported
+            // unless the server-side WebSocketFrameAggregator is enabled.
             // Log a warning so operators know data is being dropped rather than failing silently.
             log.warn("Received ContinuationWebSocketFrame on session {} — fragmented messages are not supported "
-                    + "and will be discarded. Consider enabling WebSocket frame aggregation on the client side.",
+                    + "and will be discarded. Set 'maxFrameAggregationBufferSize' in WebSocket properties "
+                    + "to enable server-side frame aggregation.",
                     session.getSessionId());
         } else {
             try {
@@ -1311,6 +1314,39 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             return DEFAULT_MAX_FRAME_PAYLOAD_LENGTH;
         }
         return webSocketProperties.getMaxFramePayloadLength();
+    }
+
+    /**
+     * Returns the configured maximum aggregation buffer size for fragmented
+     * WebSocket frames, or {@code 0} if aggregation is disabled.
+     */
+    private int resolveMaxFrameAggregationBufferSize() {
+        if (webSocketProperties == null || webSocketProperties.getMaxFrameAggregationBufferSize() <= 0) {
+            return 0;
+        }
+        return webSocketProperties.getMaxFrameAggregationBufferSize();
+    }
+
+    /**
+     * Dynamically adds a {@link WebSocketFrameAggregator} to the pipeline when
+     * {@code maxFrameAggregationBufferSize} is configured. The aggregator is
+     * inserted just before the {@link ServiceHandler} so that downstream
+     * handlers always receive complete (non-fragmented) frames.
+     *
+     * <p>Must be called from the handshake-success listener, after the
+     * WebSocket codec has been installed by the handshaker.</p>
+     *
+     * @param ctx the channel handler context used during the handshake
+     */
+    private void addFrameAggregatorIfConfigured(ChannelHandlerContext ctx) {
+        int maxAggBufSize = resolveMaxFrameAggregationBufferSize();
+        if (maxAggBufSize <= 0) {
+            return;
+        }
+        ctx.pipeline().addBefore(ctx.name(), "wsFrameAggregator",
+                new WebSocketFrameAggregator(maxAggBufSize));
+        log.debug("Added WebSocketFrameAggregator with maxContentLength={} to pipeline for channel {}",
+                maxAggBufSize, ctx.channel().id());
     }
 
     private boolean rejectWithHttp(ChannelHandlerContext ctx, FullHttpRequest req, HttpResponseStatus status, String msg) {
