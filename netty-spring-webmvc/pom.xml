@@ -7,18 +7,19 @@
     <packaging>jar</packaging>
 
     <parent>
-        <groupId>com.github.berrywang1996</groupId>
+        <groupId>io.github.berrywang1996</groupId>
         <artifactId>netty-spring-parent</artifactId>
         <version>1.7.1</version>
     </parent>
 
     <artifactId>netty-spring-webmvc</artifactId>
 
+    <name>netty-spring-webmvc</name>
     <description>
-        netty-server-spring-boot-starter
+        HTTP MVC routing and parameter binding for netty-spring — @RequestMapping,
+        @PathVariable, @RequestParam, @ResponseBody, @CrossOrigin.
     </description>
-
-    <url>https://github.com/BerryWang1996/netty-spring-webmvc</url>
+    <url>https://github.com/BerryWang1996/netty-spring</url>
 
     <developers>
         <developer>
@@ -37,7 +38,7 @@
     <dependencies>
 
         <dependency>
-            <groupId>com.github.berrywang1996</groupId>
+            <groupId>io.github.berrywang1996</groupId>
             <artifactId>netty-spring-web</artifactId>
             <version>${project.version}</version>
         </dependency>

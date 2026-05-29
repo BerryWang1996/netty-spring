@@ -6,18 +6,18 @@
     <packaging>jar</packaging>
 
     <parent>
-        <groupId>com.github.berrywang1996</groupId>
+        <groupId>io.github.berrywang1996</groupId>
         <artifactId>netty-spring-parent</artifactId>
         <version>1.7.1</version>
     </parent>
 
     <artifactId>demo-netty-web-spring-boot-starter</artifactId>
 
+    <name>demo-netty-web-spring-boot-starter</name>
     <description>
-        demo-netty-web-spring-boot-starter
+        Demo application showcasing the netty-spring framework. Not published to Maven Central.
     </description>
-
-    <url>https://github.com/BerryWang1996/netty-spring-webmvc</url>
+    <url>https://github.com/BerryWang1996/netty-spring</url>
 
     <developers>
         <developer>
@@ -41,7 +41,7 @@
         </dependency>
 
         <dependency>
-            <groupId>com.github.berrywang1996</groupId>
+            <groupId>io.github.berrywang1996</groupId>
             <artifactId>netty-web-spring-boot-starter</artifactId>
             <version>${project.version}</version>
         </dependency>

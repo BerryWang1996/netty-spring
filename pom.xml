@@ -6,9 +6,16 @@
     <modelVersion>4.0.0</modelVersion>
     <packaging>pom</packaging>
 
-    <groupId>com.github.berrywang1996</groupId>
+    <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-spring-parent</artifactId>
     <version>1.7.1</version>
+
+    <name>netty-spring-parent</name>
+    <description>
+        Spring Boot integration for Netty — HTTP MVC, WebSocket, application-layer crypto,
+        observability (Micrometer / Actuator / MDC) and production-ready connection lifecycle.
+    </description>
+    <url>https://github.com/BerryWang1996/netty-spring</url>
 
     <modules>
         <module>netty-spring-web</module>
@@ -21,25 +28,28 @@
         <module>demo-netty-web-spring-boot-starter</module>
     </modules>
 
-    <description>
-        netty-spring-parent
-    </description>
-
-    <url>https://github.com/BerryWang1996/netty-spring-webmvc.git</url>
-
     <developers>
         <developer>
             <name>wangbor</name>
             <email>wangbor@yeah.net</email>
+            <url>https://github.com/BerryWang1996</url>
         </developer>
     </developers>
 
     <licenses>
         <license>
-            <name>Apache 2.0</name>
+            <name>Apache License, Version 2.0</name>
             <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
         </license>
     </licenses>
+
+    <scm>
+        <connection>scm:git:git://github.com/BerryWang1996/netty-spring.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/BerryWang1996/netty-spring.git</developerConnection>
+        <url>https://github.com/BerryWang1996/netty-spring</url>
+        <tag>HEAD</tag>
+    </scm>
 
     <properties>
         <java.version>17</java.version>
@@ -60,6 +70,15 @@
         <cyclonedx-maven-plugin.version>2.9.1</cyclonedx-maven-plugin.version>
         <dependency-check-maven.version>12.2.1</dependency-check-maven.version>
         <dependency-check.fail-build-on-cvss>7.0</dependency-check.fail-build-on-cvss>
+
+        <!-- GPG signing key — full fingerprint of the publisher's key.
+             Override on the command line if you fork: -Dgpg.keyname=YOUR_KEY -->
+        <gpg.keyname>09CC1D729D9E1CBBA18DE39E8B24A2A210E4168C</gpg.keyname>
+        <!-- Path to the GPG executable that owns the keyring with the above key.
+             Defaults to `gpg` on PATH. On the project maintainer's Windows machine
+             the Git Bash bundled gpg uses a different keyring, so point at Gpg4win:
+             override per environment via -Dgpg.executable=... -->
+        <gpg.executable>gpg</gpg.executable>
     </properties>
 
     <dependencyManagement>
@@ -238,18 +257,112 @@
                 </plugins>
             </build>
         </profile>
+
+        <!--
+          release profile: Maven Central via Sonatype Central Portal.
+          Activate with: mvn deploy -P release
+          Requires:
+            * a GPG keypair installed locally (the gpg list-secret-keys command must show it)
+            * server id="central" in ~/.m2/settings.xml with the Central Portal user token
+              (username + password generated at central.sonatype.com)
+            * optional server id="gpg.passphrase" with a passphrase element in settings.xml,
+              or set GPG_PASSPHRASE env var so gpg-agent picks it up
+        -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <!-- 1. Attach sources jar (Central requirement) -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <!-- 2. Attach javadoc jar (Central requirement) -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.10.0</version>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <!-- Be lenient about old-style Javadoc; project mixes Chinese + English comments -->
+                            <doclint>none</doclint>
+                            <failOnError>false</failOnError>
+                            <source>${java.version}</source>
+                            <encoding>${project.build.sourceEncoding}</encoding>
+                            <docencoding>${project.build.sourceEncoding}</docencoding>
+                            <charset>${project.build.sourceEncoding}</charset>
+                        </configuration>
+                    </plugin>
+                    <!-- 3. PGP sign every artifact (Central requirement).
+                         The local GPG key has no passphrase, so we let gpg-agent
+                         handle signing without loopback/pinentry interaction.
+                         keyname explicitly points to the project's signing key so
+                         gpg-plugin 3.2.x's new Signer abstraction doesn't fall back
+                         to a non-existent "default" key. -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.4</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                                <configuration>
+                                    <keyname>${gpg.keyname}</keyname>
+                                    <executable>${gpg.executable}</executable>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <!-- 4. Upload bundle to Sonatype Central Portal -->
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.7.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <!-- false = upload then wait for manual "Publish" click on portal.
+                                 Set to true once the workflow is trusted. -->
+                            <autoPublish>false</autoPublish>
+                            <waitUntil>validated</waitUntil>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
     </profiles>
 
     <distributionManagement>
+        <!--
+          Maven Central deployment is handled by central-publishing-maven-plugin
+          inside the "release" profile above. This block is intentionally minimal
+          and only matters for the rare case of `mvn deploy` without -P release.
+          The Aliyun private repository from earlier versions is retired.
+        -->
         <repository>
-            <id>repo-spqjj</id>
-            <url>https://packages.aliyun.com/661fad12d833774c93cbf601/maven/repo-spqjj</url>
-            <releases>
-                <enabled>true</enabled>
-            </releases>
-            <snapshots>
-                <enabled>true</enabled>
-            </snapshots>
+            <id>central</id>
+            <name>Sonatype Central Portal</name>
+            <url>https://central.sonatype.com/api/v1/publisher</url>
         </repository>
     </distributionManagement>
 

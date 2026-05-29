@@ -6,18 +6,19 @@
     <packaging>jar</packaging>
 
     <parent>
-        <groupId>com.github.berrywang1996</groupId>
+        <groupId>io.github.berrywang1996</groupId>
         <artifactId>netty-spring-parent</artifactId>
         <version>1.7.1</version>
     </parent>
 
     <artifactId>netty-web-spring-boot-starter</artifactId>
 
+    <name>netty-web-spring-boot-starter</name>
     <description>
-        netty-web-spring-boot-starter
+        Spring Boot starter combining HTTP MVC and WebSocket capabilities of netty-spring
+        into a single Netty server instance.
     </description>
-
-    <url>https://github.com/BerryWang1996/netty-spring-webmvc</url>
+    <url>https://github.com/BerryWang1996/netty-spring</url>
 
     <developers>
         <developer>
@@ -37,17 +38,17 @@
 
         <!-- basic dependencies -->
         <dependency>
-            <groupId>com.github.berrywang1996</groupId>
+            <groupId>io.github.berrywang1996</groupId>
             <artifactId>netty-spring-boot-autoconfigure</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.github.berrywang1996</groupId>
+            <groupId>io.github.berrywang1996</groupId>
             <artifactId>netty-spring-webmvc</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.github.berrywang1996</groupId>
+            <groupId>io.github.berrywang1996</groupId>
             <artifactId>netty-spring-websocket</artifactId>
             <version>${project.version}</version>
         </dependency>

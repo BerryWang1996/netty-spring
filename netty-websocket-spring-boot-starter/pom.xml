@@ -6,18 +6,19 @@
     <packaging>jar</packaging>
 
     <parent>
-        <groupId>com.github.berrywang1996</groupId>
+        <groupId>io.github.berrywang1996</groupId>
         <artifactId>netty-spring-parent</artifactId>
         <version>1.7.1</version>
     </parent>
 
     <artifactId>netty-websocket-spring-boot-starter</artifactId>
 
+    <name>netty-websocket-spring-boot-starter</name>
     <description>
-        netty-websocket-spring-boot-starter
+        Spring Boot starter for the netty-spring WebSocket module — enables @MessageMapping
+        endpoints, MessageSender API and optional application-layer crypto.
     </description>
-
-    <url>https://github.com/BerryWang1996/netty-spring-webmvc</url>
+    <url>https://github.com/BerryWang1996/netty-spring</url>
 
     <developers>
         <developer>
@@ -37,12 +38,12 @@
 
         <!-- basic dependencies -->
         <dependency>
-            <groupId>com.github.berrywang1996</groupId>
+            <groupId>io.github.berrywang1996</groupId>
             <artifactId>netty-spring-boot-autoconfigure</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.github.berrywang1996</groupId>
+            <groupId>io.github.berrywang1996</groupId>
             <artifactId>netty-spring-websocket</artifactId>
             <version>${project.version}</version>
         </dependency>
