@@ -1,6 +1,7 @@
 package com.github.berrywang1996.netty.spring.web.mvc.bind;
 
 import com.github.berrywang1996.netty.spring.web.context.HttpRuntimeRecorder;
+import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.CrossOrigin;
 import com.github.berrywang1996.netty.spring.web.mvc.consts.HttpRequestMethod;
 import com.github.berrywang1996.netty.spring.web.mvc.context.ResponseEntity;
 import com.github.berrywang1996.netty.spring.web.mvc.view.HtmlViewHandler;
@@ -27,6 +28,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RequestMappingResolverTest {
@@ -113,8 +116,107 @@ class RequestMappingResolverTest {
         }
     }
 
+    // ---- v1.7.1 Fix #1: CORS wildcard + allowCredentials must not echo Origin ----
+
+    @Test
+    void corsWildcardWithAllowCredentialsRefusesToEchoOrigin() throws Exception {
+        // Misconfigured: origins="*" + allowCredentials=true. Pre-1.7.1 echoed the
+        // request Origin verbatim, effectively allowing any origin with credentials —
+        // a CSRF / cross-origin credential leak surface. The fix: serve `*` and
+        // suppress Allow-Credentials with a warning log.
+        Method method = WildcardCredentialsController.class.getMethod("handle");
+        RequestMappingResolver resolver = new RequestMappingResolver(
+                "/cors-wildcard",
+                Collections.singletonMap(HttpRequestMethod.GET, method),
+                new WildcardCredentialsController(),
+                new JsonViewHandler());
+        resolver.setCrossOrigin(method.getAnnotation(CrossOrigin.class));
+        EmbeddedChannel channel = new EmbeddedChannel(
+                new SimpleChannelInboundHandler<FullHttpRequest>() {
+                    @Override
+                    protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest msg) throws Exception {
+                        resolver.resolve(ctx, msg);
+                    }
+                });
+
+        try {
+            DefaultFullHttpRequest request = new DefaultFullHttpRequest(
+                    HttpVersion.HTTP_1_1, HttpMethod.GET, "/cors-wildcard");
+            request.headers().set(HttpHeaderNames.ORIGIN, "https://evil.example");
+            channel.writeInbound(request);
+            channel.runPendingTasks();
+
+            FullHttpResponse response = channel.readOutbound();
+            assertNotNull(response);
+            try {
+                // Allow-Origin must be the safe wildcard, NOT the attacker-controlled Origin.
+                assertEquals("*", response.headers().get("Access-Control-Allow-Origin"));
+                // Allow-Credentials must NOT be emitted alongside wildcard origin.
+                assertNull(response.headers().get("Access-Control-Allow-Credentials"),
+                        "Allow-Credentials must not be set when Allow-Origin is wildcard");
+            } finally {
+                ReferenceCountUtil.release(response);
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void corsExplicitOriginWithCredentialsStillWorks() throws Exception {
+        // The fix must not regress the legitimate case: explicit origin + credentials.
+        Method method = ExplicitOriginCredentialsController.class.getMethod("handle");
+        RequestMappingResolver resolver = new RequestMappingResolver(
+                "/cors-explicit",
+                Collections.singletonMap(HttpRequestMethod.GET, method),
+                new ExplicitOriginCredentialsController(),
+                new JsonViewHandler());
+        resolver.setCrossOrigin(method.getAnnotation(CrossOrigin.class));
+        EmbeddedChannel channel = new EmbeddedChannel(
+                new SimpleChannelInboundHandler<FullHttpRequest>() {
+                    @Override
+                    protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest msg) throws Exception {
+                        resolver.resolve(ctx, msg);
+                    }
+                });
+
+        try {
+            DefaultFullHttpRequest request = new DefaultFullHttpRequest(
+                    HttpVersion.HTTP_1_1, HttpMethod.GET, "/cors-explicit");
+            request.headers().set(HttpHeaderNames.ORIGIN, "https://trusted.example");
+            channel.writeInbound(request);
+            channel.runPendingTasks();
+
+            FullHttpResponse response = channel.readOutbound();
+            assertNotNull(response);
+            try {
+                assertEquals("https://trusted.example", response.headers().get("Access-Control-Allow-Origin"));
+                assertEquals("true", response.headers().get("Access-Control-Allow-Credentials"));
+                assertEquals("Origin", response.headers().get("Vary"));
+            } finally {
+                ReferenceCountUtil.release(response);
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
     public static class TestController {
 
+        public String handle() {
+            return "ok";
+        }
+    }
+
+    public static class WildcardCredentialsController {
+        @CrossOrigin(origins = "*", allowCredentials = true)
+        public String handle() {
+            return "ok";
+        }
+    }
+
+    public static class ExplicitOriginCredentialsController {
+        @CrossOrigin(origins = "https://trusted.example", allowCredentials = true)
         public String handle() {
             return "ok";
         }

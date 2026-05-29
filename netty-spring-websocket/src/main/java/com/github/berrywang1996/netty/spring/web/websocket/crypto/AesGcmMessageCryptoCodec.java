@@ -182,6 +182,13 @@ public class AesGcmMessageCryptoCodec implements MessageCryptoCodec {
         validateEnvelope(envelope);
 
         byte[] iv = Base64.getDecoder().decode(envelope.iv);
+        // Reject any IV that doesn't match our 96-bit nonce convention: AES-GCM
+        // mathematically tolerates other lengths but they trigger GHASH-based IV derivation
+        // with weaker security margins, and an attacker-controlled IV length is a useful
+        // signal for "this envelope wasn't produced by our encrypt path".
+        if (iv.length != IV_LENGTH_BYTES) {
+            throw new IllegalArgumentException("Invalid AES-GCM IV length.");
+        }
         byte[] cipherText = Base64.getDecoder().decode(envelope.ciphertext);
 
         // Initialize cipher for decryption with the same GCM parameters

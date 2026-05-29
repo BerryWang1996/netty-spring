@@ -8,7 +8,7 @@
 
     <groupId>com.github.berrywang1996</groupId>
     <artifactId>netty-spring-parent</artifactId>
-    <version>1.7.0</version>
+    <version>1.7.1</version>
 
     <modules>
         <module>netty-spring-web</module>
@@ -72,6 +72,23 @@
                 <version>${netty.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+
+            <!--
+              logback 1.2.13 override: Spring Boot 2.7.18 BOM pins logback 1.2.12, which
+              still has CVE-2023-6378 (serialization vulnerability in SocketReceiver /
+              SocketAppender). 1.2.13 is the last 1.2.x release and ships the fix. Declared
+              BEFORE spring-boot-dependencies so this version wins.
+            -->
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-classic</artifactId>
+                <version>1.2.13</version>
+            </dependency>
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-core</artifactId>
+                <version>1.2.13</version>
             </dependency>
 
             <!-- spring boot managed versions -->

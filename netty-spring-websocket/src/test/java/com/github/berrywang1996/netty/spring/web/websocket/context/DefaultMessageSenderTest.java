@@ -231,6 +231,62 @@ class DefaultMessageSenderTest {
         }
     }
 
+    // ---- v1.7.1 Fix #2: stale-channel cleanup must fire @MessageMapping(ON_CLOSE) ----
+    //
+    // Pre-1.7.1, sendMessage/broadcast detecting !channel.isActive() called the bare
+    // resolver.removeSession(sessionId), which bypasses startClosing() CAS, the close
+    // lifecycle dispatch, and the close-reason recording. As a result, any user-defined
+    // @MessageMapping(ON_CLOSE) silently failed to fire when an app thread observed a
+    // closed channel before Netty's own channelInactive ran on the EventLoop. Fixed by
+    // routing through closeSessionOnTransportError(CHANNEL_INACTIVE).
+
+    @Test
+    void sendMessageOnStaleChannelStillFiresOnCloseLifecycle() throws Exception {
+        LifecycleEndpoint endpoint = new LifecycleEndpoint();
+        MessageMappingResolver resolver = lifecycleResolver("/ws/foo", endpoint);
+        SessionFixture session = addSession(resolver, "/ws/foo", "stale");
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+        // Close the channel BEFORE sendMessage observes it — simulates the race where
+        // app threads see a dead channel before Netty's channelInactive runs.
+        session.channel.close();
+
+        try {
+            assertThrows(MessageSessionClosedException.class,
+                    () -> sender.sendMessage("/ws/foo", new TextMessage("hello"), "stale"));
+
+            assertTrue(awaitLatch(endpoint.closeLatch, session),
+                    "onClose lifecycle must fire even when the channel is already inactive");
+            assertEquals(1, endpoint.closeCount);
+            assertFalse(resolver.getSessionMap().containsKey("stale"));
+        } finally {
+            cleanup(resolver, session);
+        }
+    }
+
+    @Test
+    void topicMessageOnStaleChannelStillFiresOnCloseLifecycle() throws Exception {
+        LifecycleEndpoint endpoint = new LifecycleEndpoint();
+        MessageMappingResolver resolver = lifecycleResolver("/ws/foo", endpoint);
+        SessionFixture activeSession = addSession(resolver, "/ws/foo", "active");
+        SessionFixture staleSession = addSession(resolver, "/ws/foo", "stale");
+        NettyServerStartupProperties.WebSocket properties = new NettyServerStartupProperties.WebSocket();
+        properties.setBroadcastMode(NettyServerStartupProperties.WebSocket.BroadcastMode.THREAD_POOL_LEGACY);
+        DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver), properties);
+        // Same race in the broadcast path: stale session detected by isSessionActiveWithCleanup.
+        staleSession.channel.close();
+
+        try {
+            sender.topicMessage("/ws/foo", new TextMessage("hello"));
+
+            assertTrue(awaitLatch(endpoint.closeLatch, activeSession, staleSession),
+                    "broadcast stale-session cleanup must fire onClose lifecycle");
+            assertEquals(1, endpoint.closeCount);
+            assertFalse(resolver.getSessionMap().containsKey("stale"));
+        } finally {
+            cleanup(resolver, activeSession, staleSession);
+        }
+    }
+
     @Test
     void sendMessageWriteFailureDispatchesErrorThenCloseLifecycle() throws Exception {
         LifecycleEndpoint endpoint = new LifecycleEndpoint();

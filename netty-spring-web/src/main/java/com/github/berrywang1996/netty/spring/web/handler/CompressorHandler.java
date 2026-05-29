@@ -23,7 +23,9 @@ import io.netty.handler.codec.http.HttpResponse;
 
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Content-type-aware GZIP compression handler for Netty HTTP responses.
@@ -51,12 +53,18 @@ public class CompressorHandler extends HttpContentCompressor {
      * @param windowBits           the base-2 logarithm of the compression window size
      * @param memLevel             the memory level for internal compression state
      * @param contentSizeThreshold the minimum content size in bytes before compression is applied
-     * @param gzipTypes            space-separated list of MIME type prefixes eligible for compression
+     * @param gzipTypes            comma- or whitespace-separated list of MIME type prefixes eligible for compression
      */
     public CompressorHandler(int compressionLevel, int windowBits, int memLevel,
                              int contentSizeThreshold, String gzipTypes) {
         super(compressionLevel, windowBits, memLevel, contentSizeThreshold);
-        this.gzipTypes = new HashSet<>(Arrays.asList(gzipTypes.split(" ")));
+        // Accept commas and any whitespace as separators (consistent with allowed-origins
+        // parser); lowercase every entry so Content-Type comparison is case-insensitive
+        // as required by RFC 7231 §3.1.1.1 (media types are case-insensitive).
+        this.gzipTypes = Arrays.stream(gzipTypes.split("[,\\s]+"))
+                .filter(s -> !s.isEmpty())
+                .map(s -> s.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toCollection(HashSet::new));
     }
 
     @Override
@@ -86,8 +94,10 @@ public class CompressorHandler extends HttpContentCompressor {
             return null;
         }
 
+        // Case-insensitive comparison (RFC 7231 §3.1.1.1); gzipTypes is pre-lowercased.
+        String lowerContentType = contentType.toLowerCase(Locale.ROOT);
         for (String gzipType : gzipTypes) {
-            if (contentType.startsWith(gzipType)) {
+            if (lowerContentType.startsWith(gzipType)) {
                 return super.beginEncode(headers, acceptEncoding);
             }
         }

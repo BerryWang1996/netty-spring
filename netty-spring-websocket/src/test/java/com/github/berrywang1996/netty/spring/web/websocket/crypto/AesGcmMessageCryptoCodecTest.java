@@ -143,6 +143,34 @@ class AesGcmMessageCryptoCodecTest {
         }
     }
 
+    // ---- v1.7.1 Fix #4: reject AES-GCM envelopes with non-96-bit IV ----
+    //
+    // NIST SP 800-38D §8.2 standardizes on a 96-bit IV for AES-GCM; non-96-bit IVs
+    // trigger a GHASH-based derivation with weaker security margins, and an
+    // attacker-controlled length is also a useful signal for "this envelope
+    // wasn't produced by our encrypt path". Lock decrypt to 12 bytes explicitly.
+
+    @Test
+    void rejectsEnvelopeWithNon96BitIv() throws Exception {
+        AesGcmMessageCryptoCodec codec = newCodec();
+        // Craft an envelope with an 8-byte IV (base64 of 8 NUL bytes) — would have
+        // been silently accepted pre-1.7.1.
+        AesGcmMessageCryptoCodec.CryptoEnvelope envelope = new AesGcmMessageCryptoCodec.CryptoEnvelope();
+        envelope.alg = AesGcmMessageCryptoCodec.ALGORITHM;
+        envelope.kid = "main";
+        envelope.typ = "text";
+        envelope.iv = java.util.Base64.getEncoder().encodeToString(new byte[8]);
+        envelope.ciphertext = java.util.Base64.getEncoder().encodeToString(new byte[16]);
+        TextWebSocketFrame malformedFrame = new TextWebSocketFrame(OBJECT_MAPPER.writeValueAsString(envelope));
+        try {
+            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                    () -> codec.decrypt(null, malformedFrame));
+            assertTrue(ex.getMessage().contains("IV"));
+        } finally {
+            ReferenceCountUtil.release(malformedFrame);
+        }
+    }
+
     private static AesGcmMessageCryptoCodec newCodec() {
         return newCodec("main", new MessageCryptoKeyProvider() {
             @Override

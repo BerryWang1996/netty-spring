@@ -1243,15 +1243,20 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         // Access-Control-Allow-Origin
         String[] origins = crossOrigin.origins();
         String requestOrigin = msg.headers().get("Origin");
-        if (origins.length == 1 && "*".equals(origins[0])) {
-            // When allowCredentials is true, wildcard "*" is invalid per CORS spec;
-            // echo back the request Origin instead and add Vary: Origin
-            if (crossOrigin.allowCredentials() && requestOrigin != null) {
-                response.headers().set("Access-Control-Allow-Origin", requestOrigin);
-                response.headers().set("Vary", "Origin");
-            } else {
-                response.headers().set("Access-Control-Allow-Origin", "*");
+        boolean wildcardOrigin = origins.length == 1 && "*".equals(origins[0]);
+        if (wildcardOrigin) {
+            // Wildcard "*" combined with allowCredentials=true is forbidden by the CORS
+            // spec (browsers reject it) and silently echoing the request Origin would
+            // be equivalent to "any origin with credentials" — a serious security hole.
+            // Surface the misconfiguration loudly and serve the safe `*` header instead;
+            // credentialsAllowed below ensures Allow-Credentials is NOT emitted.
+            if (crossOrigin.allowCredentials()) {
+                log.warn("Refusing to honor allowCredentials=true with wildcard origin (\"*\") "
+                        + "on {} {} — this combination is forbidden by the CORS spec. "
+                        + "Configure explicit origins to use credentialed CORS.",
+                        msg.method(), msg.uri());
             }
+            response.headers().set("Access-Control-Allow-Origin", "*");
         } else if (requestOrigin != null) {
             for (String origin : origins) {
                 if (origin.equals(requestOrigin)) {
@@ -1291,8 +1296,9 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
             response.headers().set("Access-Control-Expose-Headers", String.join(", ", exposedHeaders));
         }
 
-        // Access-Control-Allow-Credentials
-        if (crossOrigin.allowCredentials()) {
+        // Access-Control-Allow-Credentials — never emitted with wildcard origin
+        // (browsers reject the combination and silently honoring it would defeat origin checking).
+        if (crossOrigin.allowCredentials() && !wildcardOrigin) {
             response.headers().set("Access-Control-Allow-Credentials", "true");
         }
 

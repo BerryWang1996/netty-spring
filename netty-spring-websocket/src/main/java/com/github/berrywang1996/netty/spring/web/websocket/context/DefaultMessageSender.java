@@ -266,9 +266,14 @@ public class DefaultMessageSender implements MessageSender {
         for (String sessionId : sessionIds) {
             MessageSession session = sessionMap.get(sessionId);
             if (session == null || !session.getChannelHandlerContext().channel().isActive()) {
-                // Clean up stale session from the map if the channel is dead
+                // Close the session via the full lifecycle path so @MessageMapping(ON_CLOSE)
+                // fires and metrics are recorded. Plain removeSession() bypasses both, which
+                // silently drops user close handlers when a stale channel is observed here
+                // before Netty's own channelInactive runs on the EventLoop.
                 if (session != null) {
-                    resolver.removeSession(sessionId);
+                    resolver.closeSessionOnTransportError(session,
+                            new IllegalStateException("Channel inactive on send"),
+                            CloseReason.CHANNEL_INACTIVE);
                 }
                 if (closedSessionIds == null) {
                     closedSessionIds = new ArrayList<>();
@@ -711,7 +716,11 @@ public class DefaultMessageSender implements MessageSender {
             return false;
         }
         if (!session.getChannelHandlerContext().channel().isActive()) {
-            resolver.removeSession(sessionId);
+            // Use the full close-lifecycle path so @MessageMapping(ON_CLOSE) fires; the
+            // CAS in startClosing() makes this idempotent with Netty's own channelInactive.
+            resolver.closeSessionOnTransportError(session,
+                    new IllegalStateException("Channel inactive during broadcast"),
+                    CloseReason.CHANNEL_INACTIVE);
             return false;
         }
         return true;
