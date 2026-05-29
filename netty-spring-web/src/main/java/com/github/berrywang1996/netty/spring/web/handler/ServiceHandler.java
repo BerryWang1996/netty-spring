@@ -22,6 +22,7 @@ import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver
 import com.github.berrywang1996.netty.spring.web.context.HttpRuntimeRecorder;
 import com.github.berrywang1996.netty.spring.web.context.WebMappingSupporter;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
+import com.github.berrywang1996.netty.spring.web.util.MdcUtil;
 import com.github.berrywang1996.netty.spring.web.util.ServiceHandlerUtil;
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import io.netty.channel.*;
@@ -49,6 +50,7 @@ import java.util.LinkedHashMap;
 import java.util.Date;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.RejectedExecutionException;
 
 import static io.netty.handler.codec.http.HttpResponseStatus.OK;
@@ -221,11 +223,33 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
      * based on the message type.
      */
     private void handle(ChannelHandlerContext ctx, Object msg) throws Exception {
+        try {
+            setMdcContext(ctx, msg);
+            if (msg instanceof FullHttpRequest) {
+                handleHttpRequest(ctx, msg);
+            } else if (msg instanceof WebSocketFrame) {
+                handleWebSocketFrame(ctx, msg);
+            }
+        } finally {
+            MdcUtil.clear();
+        }
+    }
 
+    /**
+     * Sets SLF4J MDC context for the current request or WebSocket frame so that all log
+     * statements within the handler execution carry structured identifiers.
+     */
+    private void setMdcContext(ChannelHandlerContext ctx, Object msg) {
         if (msg instanceof FullHttpRequest) {
-            handleHttpRequest(ctx, msg);
+            FullHttpRequest request = (FullHttpRequest) msg;
+            MdcUtil.setHttpContext(UUID.randomUUID().toString(), request.uri(), ctx);
         } else if (msg instanceof WebSocketFrame) {
-            handleWebSocketFrame(ctx, msg);
+            String sessionId = ctx.channel().attr(SESSION_ID_IN_CHANNEL).get();
+            FullHttpRequest request = ctx.channel().attr(REQUEST_IN_CHANNEL).get();
+            MdcUtil.setWebSocketContext(
+                    sessionId,
+                    request != null ? request.uri() : null,
+                    ctx);
         }
     }
 

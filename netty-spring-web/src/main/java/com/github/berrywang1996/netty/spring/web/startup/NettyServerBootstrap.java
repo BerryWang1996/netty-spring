@@ -353,6 +353,28 @@ public final class NettyServerBootstrap {
         return this.webMappingSupporter.getWebSocketRuntimeStats();
     }
 
+    /**
+     * Returns whether the Netty server is currently running (started but not yet stopped).
+     *
+     * @return {@code true} if the server has been started and not yet stopped
+     */
+    public boolean isRunning() {
+        return !stopped.get();
+    }
+
+    /**
+     * Returns the port number the server is bound to, or {@code -1} if the server
+     * has not been started or the startup properties are not available.
+     *
+     * @return the server port, or {@code -1}
+     */
+    public int getPort() {
+        if (startupProperties == null) {
+            return -1;
+        }
+        return startupProperties.getPort();
+    }
+
     /** Invokes all registered stop listeners, logging but not propagating individual failures. */
     private void notifyStopListeners() {
         for (Runnable listener : this.stopListeners) {
