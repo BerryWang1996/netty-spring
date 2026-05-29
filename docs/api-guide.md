@@ -1,6 +1,6 @@
 # netty-spring API Usage Guide
 
-> Version: 1.7.1 | Updated: 2026-05-29
+> Version: 1.8.0 | Updated: 2026-05-29
 
 This guide walks through the most common integration scenarios for `netty-spring`. Each section is self-contained — jump directly to the scenario that matches your use case.
 

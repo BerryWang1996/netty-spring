@@ -81,6 +81,9 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
     /** Optional interceptor for custom handshake authentication/authorization. */
     private WebSocketHandshakeInterceptor handshakeInterceptor;
 
+    /** Optional cluster session hook — null in single-node mode. */
+    private ClusterSessionHook clusterSessionHook;
+
     /**
      * Scans the Spring context for {@code @MessageMapping} methods and builds
      * the URI-to-resolver mapping.
@@ -100,6 +103,7 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         this.messageCryptoPolicy = initMessageCryptoPolicy(startupProperties, applicationContext);
         this.eventRecorder = new WebSocketEventRecorder();
         this.handshakeInterceptor = initHandshakeInterceptor(applicationContext);
+        this.clusterSessionHook = initClusterSessionHook(applicationContext);
 
         String[] beanNames = applicationContext.getBeanNamesForAnnotation(Component.class);
         log.debug("Find method had annotation \"MessageMapping\"");
@@ -187,6 +191,9 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
             if (this.handshakeInterceptor != null) {
                 resolver.setHandshakeInterceptor(this.handshakeInterceptor);
             }
+            if (this.clusterSessionHook != null) {
+                resolver.setClusterSessionHook(this.clusterSessionHook);
+            }
         }
     }
 
@@ -212,6 +219,21 @@ public class MessageMappingSupporter implements MappingSupporter<MessageMappingR
         WebSocketHandshakeInterceptor interceptor = interceptors.values().iterator().next();
         log.info("Registered WebSocket handshake interceptor: {}", interceptor.getClass().getName());
         return interceptor;
+    }
+
+    /**
+     * Discovers at most one {@link ClusterSessionHook} bean from the context.
+     * Returns null when cluster mode is disabled (no hook bean registered).
+     */
+    private ClusterSessionHook initClusterSessionHook(ApplicationContext applicationContext) {
+        Map<String, ClusterSessionHook> hooks =
+                applicationContext.getBeansOfType(ClusterSessionHook.class);
+        if (hooks.isEmpty()) {
+            return null;
+        }
+        ClusterSessionHook hook = hooks.values().iterator().next();
+        log.info("Registered cluster session hook: {}", hook.getClass().getName());
+        return hook;
     }
 
     /**

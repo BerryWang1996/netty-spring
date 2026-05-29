@@ -1,0 +1,181 @@
+/*
+ * Copyright 2018 berrywang1996
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.github.berrywang1996.netty.spring.boot.configure;
+
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterMessageSender;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterProperties;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterSessionHookImpl;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.DefaultMessagePayloadCodec;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.EnvelopeCodec;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MessagePayloadCodec;
+import com.github.berrywang1996.netty.spring.web.websocket.context.ClusterSessionHook;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeHeartbeat;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterNodeHeartbeat;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisPubSubBroker;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisSessionRegistry;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.SessionRegistry;
+import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSender;
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.api.StatefulRedisConnection;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.AutoConfigureAfter;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+
+/**
+ * Spring Boot auto-configuration for WebSocket cluster support.
+ *
+ * <p>Activated only when:
+ * <ul>
+ *   <li>The cluster module is on the classpath ({@code ClusterBroker.class})</li>
+ *   <li>{@code server.netty.websocket.cluster.enable=true} is set</li>
+ * </ul>
+ *
+ * <p>When active, this configuration replaces the default {@link MessageSender} with
+ * a {@link ClusterMessageSender} that adds cross-node broadcast and unicast via the
+ * {@link ClusterBroker} and {@link SessionRegistry} SPIs.
+ *
+ * <p>The SPI beans ({@code ClusterBroker}, {@code SessionRegistry}) default to Redis
+ * implementations but can be overridden by the user via {@code @ConditionalOnMissingBean}.
+ *
+ * @author berrywang1996
+ * @since V1.8.0
+ */
+@Slf4j
+@Configuration
+@ConditionalOnClass(ClusterBroker.class)
+@ConditionalOnProperty(prefix = "server.netty.websocket.cluster", name = "enable", havingValue = "true")
+@AutoConfigureAfter(NettyServerBootstrapConfigure.class)
+public class NettyWebSocketClusterConfigure {
+
+    @Bean
+    @ConfigurationProperties(prefix = "server.netty.websocket.cluster")
+    public ClusterProperties clusterProperties() {
+        return new ClusterProperties();
+    }
+
+    // ---- Redis connections (only created when no user-provided alternative exists) ----
+
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnMissingBean(RedisClient.class)
+    public RedisClient nettyClusterRedisClient(ClusterProperties properties) {
+        String uri = properties.getRedis().getUri();
+        log.info("Creating Lettuce RedisClient for cluster at {}", uri);
+        return RedisClient.create(uri);
+    }
+
+    @Bean(name = "nettyClusterRedisConnection", destroyMethod = "close")
+    @ConditionalOnMissingBean(name = "nettyClusterRedisConnection")
+    public StatefulRedisConnection<String, String> nettyClusterRedisConnection(RedisClient redisClient) {
+        return redisClient.connect();
+    }
+
+    // ---- SPI beans (user can override with @ConditionalOnMissingBean) ----
+
+    @Bean
+    @ConditionalOnMissingBean(EnvelopeCodec.class)
+    public EnvelopeCodec envelopeCodec() {
+        log.info("Using default SimpleTextEnvelopeCodec (zero-dependency, pipe-delimited). "
+                + "Override with your own EnvelopeCodec bean for JSON/Protobuf/etc.");
+        return new SimpleTextEnvelopeCodec();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(MessagePayloadCodec.class)
+    public MessagePayloadCodec messagePayloadCodec() {
+        log.info("Using default DefaultMessagePayloadCodec (T:/J:/B: prefix). "
+                + "Override with your own MessagePayloadCodec bean for custom serialization.");
+        return new DefaultMessagePayloadCodec();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ClusterBroker.class)
+    public RedisPubSubBroker clusterBroker(RedisClient redisClient, EnvelopeCodec envelopeCodec) {
+        return new RedisPubSubBroker(redisClient, envelopeCodec);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(SessionRegistry.class)
+    public RedisSessionRegistry sessionRegistry(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
+            StatefulRedisConnection<String, String> connection) {
+        return new RedisSessionRegistry(connection);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ClusterNodeHeartbeat.class)
+    public RedisClusterNodeHeartbeat clusterNodeHeartbeat(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
+            StatefulRedisConnection<String, String> connection) {
+        return new RedisClusterNodeHeartbeat(connection);
+    }
+
+    // ---- Core cluster beans ----
+
+    @Bean(destroyMethod = "shutdown")
+    public ClusterNodeManager clusterNodeManager(
+            ClusterProperties properties,
+            ClusterNodeHeartbeat heartbeat,
+            SessionRegistry sessionRegistry) {
+        ClusterNodeManager manager = new ClusterNodeManager(
+                properties.getNodeId(),
+                properties.getHeartbeatIntervalSeconds() * 1000,
+                properties.getHeartbeatTimeoutSeconds() * 1000,
+                properties.getReconciliationIntervalSeconds() * 1000,
+                properties.getDrainTimeoutSeconds() * 1000,
+                heartbeat,
+                sessionRegistry);
+        manager.start();
+        log.info("Cluster node manager started (nodeId={})", manager.getNodeId());
+        return manager;
+    }
+
+    @Bean
+    @Primary
+    public ClusterMessageSender clusterMessageSender(
+            @org.springframework.beans.factory.annotation.Qualifier("messageSender") MessageSender localSender,
+            ClusterBroker broker,
+            SessionRegistry sessionRegistry,
+            ClusterNodeManager nodeManager,
+            ClusterProperties properties,
+            MessagePayloadCodec messagePayloadCodec) {
+        ClusterMessageSender sender = new ClusterMessageSender(
+                localSender, broker, sessionRegistry, nodeManager,
+                properties.getRegistryReadCacheTtlMs(), messagePayloadCodec);
+        sender.start();
+        log.info("ClusterMessageSender started — cluster mode is ACTIVE");
+        return sender;
+    }
+
+    @Bean
+    public ClusterSessionHook clusterSessionHook(
+            SessionRegistry sessionRegistry,
+            ClusterNodeManager nodeManager,
+            ClusterMessageSender clusterSender) {
+        log.info("Registering cluster session hook for distributed session lifecycle");
+        return new ClusterSessionHookImpl(sessionRegistry, nodeManager, clusterSender);
+    }
+}

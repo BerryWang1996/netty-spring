@@ -49,11 +49,11 @@ A Spring Boot integration for Netty, providing HTTP MVC and WebSocket capabiliti
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
-    <version>1.7.1</version>
+    <version>1.8.0</version>
 </dependency>
 ```
 
-Available on Maven Central as `io.github.berrywang1996:*` (versions `1.4.0`, `1.6.2`, `1.7.0`, `1.7.1`). Earlier `com.github.berrywang1996:*` artifacts were only published to a private repository — migrate by changing the groupId in your `pom.xml`.
+Available on Maven Central as `io.github.berrywang1996:*` (versions `1.4.0`, `1.6.2`, `1.7.0`, `1.8.0`). Earlier `com.github.berrywang1996:*` artifacts were only published to a private repository — migrate by changing the groupId in your `pom.xml`.
 
 #### 3. Configure
 
@@ -130,6 +130,70 @@ Handler and WebSocket lifecycle code populates SLF4J **MDC** (`netty.requestId`,
 
 ```
 %d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} [%X{netty.requestId}] [%X{netty.sessionId}] - %msg%n
+```
+
+### WebSocket Cluster *(v1.8.0)*
+
+Scale WebSocket across multiple nodes with Redis Pub/Sub. Default is single-node mode (zero overhead). Enable cluster with one config flag:
+
+```xml
+<!-- Add the cluster starter alongside your existing starter -->
+<dependency>
+    <groupId>io.github.berrywang1996</groupId>
+    <artifactId>netty-websocket-cluster-spring-boot-starter</artifactId>
+    <version>1.8.0</version>
+</dependency>
+```
+
+```properties
+server.netty.websocket.cluster.enable=true
+server.netty.websocket.cluster.redis.uri=redis://your-redis:6379
+```
+
+**Zero business code changes** — `MessageSender` automatically switches to `ClusterMessageSender` with cross-node broadcast and unicast.
+
+#### Performance Benchmarks
+
+Tested with Redis 7.4.9, JDK 17, Docker Desktop, zero-dependency `SimpleTextEnvelopeCodec`:
+
+| Scenario | Throughput | Latency | Notes |
+| --- | --- | --- | --- |
+| Local broadcast (no Redis) | **1,808,057 msg/s** | **0.6 µs** | Baseline — pure in-memory |
+| Raw Redis Pub/Sub | **16,281 msg/s** | **61 µs** | Lettuce PUBLISH→SUBSCRIBE E2E |
+| Two-node cross-node broadcast | **~14,000 msg/s** | **77 µs** | Node A → Redis → Node B |
+
+#### When to Use Cluster vs Single-Node
+
+| Dimension | Single-Node (default) | Cluster (`cluster.enable=true`) |
+| --- | --- | --- |
+| Use case | ≤ 1 server, ≤ 25k connections | Multiple servers, horizontal scaling |
+| Broadcast latency | ~0.6 µs (in-memory) | ~77 µs (via Redis) |
+| Throughput ceiling | ≥ 1.8M msg/s | ~14k msg/s cross-node (Redis bound) |
+| Extra dependency | None | Redis 7+ |
+| Failure impact | Process dies = all disconnected | One node dies = only that node's users disconnect |
+| Config cost | Zero | One line + Redis address |
+
+#### Capacity Planning
+
+| Target Connections | Nodes | Recommended Redis | Cluster Broadcast Ceiling |
+| --- | --- | --- | --- |
+| ≤ 25k | 1 (single-node) | Not needed | ≥ 1.8M msg/s |
+| 25k – 75k | 2–3 | Standalone or Sentinel | ~14k msg/s |
+| 75k – 250k | 4–10 | Sentinel (recommended) | ~14k msg/s (single primary) |
+| > 250k | > 10 | Need SPI switch (NATS/mesh) | Beyond Redis Pub/Sub |
+
+#### Pluggable Serialization
+
+All serialization is SPI-based — **zero Jackson dependency** in the cluster module. Override any layer with a Spring `@Bean`:
+
+```java
+// Custom envelope format (e.g. Protobuf)
+@Bean
+public EnvelopeCodec envelopeCodec() { return new MyProtobufEnvelopeCodec(); }
+
+// Custom message body format
+@Bean
+public MessagePayloadCodec messagePayloadCodec() { return new MyProtobufPayloadCodec(); }
 ```
 
 ### Production Deployment
@@ -235,8 +299,8 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#10-configurati
 
 ### Current Status
 
-- **Current recommended version: `1.7.1`** (Audit-driven patch on top of 1.7.0: CORS wildcard+credentials security fix, `@MessageMapping(ON_CLOSE)` correctness fix on stale-channel cleanup, CompressorHandler parser hardening, AES-GCM IV length validation, logback 1.2.13 pin for CVE-2023-6378)
-- `1.7.0` delivered, across four work streams: Micrometer metrics expansion (connection/message/broadcast/latency distributions, per-URI & thread-pool & allocator gauges), SLF4J MDC structured logging, an Actuator `/actuator/health` indicator, optional WebSocket fragmented-message aggregation, and 6 audited legacy defect fixes — all preserved in 1.7.1 and backward compatible
+- **Current recommended version: `1.8.0`** (WebSocket cluster support via Redis Pub/Sub + 5-layer SPI architecture + 282 tests)
+- `1.7.0` delivered, across four work streams: Micrometer metrics expansion (connection/message/broadcast/latency distributions, per-URI & thread-pool & allocator gauges), SLF4J MDC structured logging, an Actuator `/actuator/health` indicator, optional WebSocket fragmented-message aggregation, and 6 audited legacy defect fixes — all preserved in 1.8.0 and backward compatible
 - Milestones P0 through P7 are all complete; performance (1.6.x), security/stability (1.6.2) and observability (1.7.0) hardening followed
 - Next: `1.8.0` Redis Pub/Sub clustering; later `2.0.0` Spring Boot 3.x / Jakarta migration + enterprise security
 
@@ -245,7 +309,8 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#10-configurati
 - [API Usage Guide](docs/api-guide.md) — Complete integration guide with code examples
 - [Netty Configuration](docs/netty-configuration.md) — HTTP / TLS / management endpoint reference
 - [WebSocket Configuration](docs/websocket-configuration.md) — WebSocket runtime, crypto, observability
-- [Release Notes - 1.7.1](docs/release-notes-1.7.1.md) — Current recommended version
+- [Release Notes - 1.8.0](docs/release-notes-1.8.0.md) — Current recommended version (cluster)
+- [Release Notes - 1.7.1](docs/release-notes-1.7.1.md)
 - [Release Notes - 1.7.0](docs/release-notes-1.7.0.md)
 - [Development Plan](docs/development-plan.md) — Roadmap (1.8.0 cluster, 2.0.0 Spring Boot 3.x)
 - [Cluster Design (1.8.0 preview)](docs/cluster-design.md) — Redis Pub/Sub cluster architecture
@@ -318,11 +383,11 @@ Verified on `GraalVM JDK 17.0.11` + `Apache Maven 3.9.9`. CI workflow runs full 
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
-    <version>1.7.1</version>
+    <version>1.8.0</version>
 </dependency>
 ```
 
-Maven Central 上以 `io.github.berrywang1996:*` 提供（版本 `1.4.0`、`1.6.2`、`1.7.0`、`1.7.1`）。早期 `com.github.berrywang1996:*` 仅发布到私有仓库——迁移时只需把 `pom.xml` 里的 groupId 改成新的即可。
+Maven Central 上以 `io.github.berrywang1996:*` 提供（版本 `1.4.0`、`1.6.2`、`1.7.0`、`1.8.0`）。早期 `com.github.berrywang1996:*` 仅发布到私有仓库——迁移时只需把 `pom.xml` 里的 groupId 改成新的即可。
 
 #### 3. 配置
 
@@ -401,6 +466,67 @@ handler 与 WebSocket 生命周期会写入 SLF4J **MDC**（`netty.requestId`、
 
 ```
 %d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} [%X{netty.requestId}] [%X{netty.sessionId}] - %msg%n
+```
+
+### WebSocket 集群 *(v1.8.0)*
+
+通过 Redis Pub/Sub 实现跨节点广播和单播。默认单机模式零开销；一个配置开关即可启用集群：
+
+```xml
+<!-- 在已有 starter 旁加入集群 starter -->
+<dependency>
+    <groupId>io.github.berrywang1996</groupId>
+    <artifactId>netty-websocket-cluster-spring-boot-starter</artifactId>
+    <version>1.8.0</version>
+</dependency>
+```
+
+```properties
+server.netty.websocket.cluster.enable=true
+server.netty.websocket.cluster.redis.uri=redis://your-redis:6379
+```
+
+**业务代码零改动** — `MessageSender` 自动切换为 `ClusterMessageSender`，跨节点广播和单播即刻生效。
+
+#### 性能基准
+
+Redis 7.4.9 / JDK 17 / Docker / 零依赖 SimpleTextEnvelopeCodec：
+
+| 场景 | 吞吐量 | 延迟 | 说明 |
+| --- | --- | --- | --- |
+| 本地广播（无 Redis） | **1,808,057 msg/s** | **0.6 µs** | 基线——纯内存 |
+| Raw Redis Pub/Sub | **16,281 msg/s** | **61 µs** | Lettuce PUBLISH→SUBSCRIBE 端到端 |
+| 双节点跨节点广播 | **~14,000 msg/s** | **77 µs** | 节点 A → Redis → 节点 B |
+
+#### 选型建议
+
+| 维度 | 单机（默认） | 集群（`cluster.enable=true`） |
+| --- | --- | --- |
+| 适用场景 | ≤ 1 台服务器、≤ 25k 连接 | 多台服务器水平扩展 |
+| 广播延迟 | ~0.6 µs（纯内存） | ~77 µs（经 Redis） |
+| 吞吐上限 | ≥ 180 万 msg/s | ~14k msg/s 跨节点（Redis 瓶颈） |
+| 额外依赖 | 无 | Redis 7+ |
+| 故障影响 | 进程死 = 全断 | 一个节点死 = 仅该节点用户断 |
+
+#### 容量规划
+
+| 目标连接 | 节点数 | 推荐 Redis | 集群广播上限 |
+| --- | --- | --- | --- |
+| ≤ 25k | 1（单机） | 不需要 | ≥ 180 万/s |
+| 25k – 75k | 2–3 | Standalone / Sentinel | ~14k/s |
+| 75k – 250k | 4–10 | Sentinel（推荐） | ~14k/s（单主限制） |
+| > 250k | > 10 | 需 SPI 切换（NATS/mesh） | 超出 Redis Pub/Sub 范围 |
+
+#### 可插拔序列化
+
+集群模块**零 Jackson 依赖**，所有序列化均通过 SPI 可替换：
+
+```java
+@Bean
+public EnvelopeCodec envelopeCodec() { return new MyProtobufEnvelopeCodec(); }
+
+@Bean
+public MessagePayloadCodec messagePayloadCodec() { return new MyProtobufPayloadCodec(); }
 ```
 
 ### 生产部署建议
@@ -506,8 +632,8 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 
 ### 当前阶段
 
-- **当前推荐版本：`1.7.1`**（在 `1.7.0` 之上的审计驱动修复：CORS 通配符 + credentials 安全修复、`@MessageMapping(ON_CLOSE)` 在陈旧 channel 路径上的正确性修复、CompressorHandler 解析硬化、AES-GCM IV 长度校验、logback 1.2.13 pin 修复 CVE-2023-6378）
-- `1.7.0` 按四刀交付：Micrometer 指标扩展（连接/消息/广播/延迟分布，分 URI、线程池、allocator 内存 Gauge）、SLF4J MDC 结构化日志、Actuator `/actuator/health` 健康检查、可选 WebSocket 分片消息聚合，以及 6 项经审计的遗留缺陷修复——这些能力在 `1.7.1` 中完整保留，全部向后兼容
+- **当前推荐版本：`1.8.0`**（WebSocket 集群支持：Redis Pub/Sub 跨节点广播/单播 + 5 层 SPI 可插拔架构 + 282 个测试全绿）
+- `1.7.0` 按四刀交付：Micrometer 指标扩展（连接/消息/广播/延迟分布，分 URI、线程池、allocator 内存 Gauge）、SLF4J MDC 结构化日志、Actuator `/actuator/health` 健康检查、可选 WebSocket 分片消息聚合，以及 6 项经审计的遗留缺陷修复——这些能力在 `1.8.0` 中完整保留，全部向后兼容
 - P0 至 P7 全部里程碑已完成；其后依次推进性能（1.6.x）、安全稳定性（1.6.2）、可观测性（1.7.0）加固
 - 下一步：`1.8.0` Redis Pub/Sub 集群支持；之后 `2.0.0` Spring Boot 3.x / Jakarta 迁移 + 企业安全版本
 
@@ -516,7 +642,8 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 - [API 使用指南](docs/api-guide.md) — 完整接入指南，含代码示例
 - [Netty 配置说明](docs/netty-configuration.md) — HTTP / TLS / 管理端点参考
 - [WebSocket 配置说明](docs/websocket-configuration.md) — WebSocket 运行时、加密、可观测性
-- [1.7.1 发布说明](docs/release-notes-1.7.1.md) — 当前推荐版本
+- [1.8.0 发布说明](docs/release-notes-1.8.0.md) — 当前推荐版本（集群）
+- [1.7.1 发布说明](docs/release-notes-1.7.1.md)
 - [1.7.0 发布说明](docs/release-notes-1.7.0.md)
 - [开发计划与阶段状态](docs/development-plan.md) — 路线图（1.8.0 集群、2.0.0 Spring Boot 3.x）
 - [集群方案设计（1.8.0 预览）](docs/cluster-design.md) — Redis Pub/Sub 集群架构

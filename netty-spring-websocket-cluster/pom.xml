@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <packaging>jar</packaging>
+
+    <parent>
+        <groupId>io.github.berrywang1996</groupId>
+        <artifactId>netty-spring-parent</artifactId>
+        <version>1.8.0</version>
+    </parent>
+
+    <artifactId>netty-spring-websocket-cluster</artifactId>
+
+    <name>netty-spring-websocket-cluster</name>
+    <description>
+        WebSocket cluster support for netty-spring: ClusterBroker / SessionRegistry SPI,
+        node lifecycle management, Redis Pub/Sub transport implementation, and distributed
+        session routing. Only activated when server.netty.websocket.cluster.enable=true;
+        default is single-node mode with zero cluster overhead.
+    </description>
+    <url>https://github.com/BerryWang1996/netty-spring</url>
+
+    <developers>
+        <developer>
+            <name>wangbor</name>
+            <email>wangbor@yeah.net</email>
+            <url>https://github.com/BerryWang1996</url>
+        </developer>
+    </developers>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <dependencies>
+
+        <!-- netty-spring-websocket: provides MessageSender, MessageSession, etc. -->
+        <dependency>
+            <groupId>io.github.berrywang1996</groupId>
+            <artifactId>netty-spring-websocket</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Redis client (optional — only needed when using the Redis transport impl) -->
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- SLF4J for logging -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+</project>

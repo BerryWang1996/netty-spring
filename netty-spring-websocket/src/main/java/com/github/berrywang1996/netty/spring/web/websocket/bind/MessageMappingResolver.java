@@ -26,6 +26,7 @@ import com.github.berrywang1996.netty.spring.web.util.MdcUtil;
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.CloseReason;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
+import com.github.berrywang1996.netty.spring.web.websocket.context.ClusterSessionHook;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
 import com.github.berrywang1996.netty.spring.web.websocket.context.WebSocketEventRecorder;
 import com.github.berrywang1996.netty.spring.web.websocket.context.WebSocketEventStats;
@@ -147,6 +148,9 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
 
     /** Optional interceptor invoked before the WebSocket handshake completes. */
     private volatile WebSocketHandshakeInterceptor handshakeInterceptor;
+
+    /** Optional cluster hook for distributed session registry integration. Null in single-node mode. */
+    private volatile ClusterSessionHook clusterSessionHook;
 
     /**
      * Creates a resolver with a direct object reference and no WebSocket properties.
@@ -1382,6 +1386,18 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         sessionMap.put(session.getSessionId(), session);
         session.getChannelHandlerContext().channel().attr(ServiceHandler.REQUEST_IN_CHANNEL).set(session.getFirstRequest());
         session.getChannelHandlerContext().channel().attr(SESSION_ID_IN_CHANNEL).set(session.getSessionId());
+
+        // Notify cluster hook (if cluster mode is active) so the session is registered
+        // in the distributed registry and the URI's broadcast subscription is activated.
+        ClusterSessionHook hook = this.clusterSessionHook;
+        if (hook != null) {
+            try {
+                hook.onSessionRegistered(session, getUrl());
+            } catch (Exception e) {
+                log.warn("Cluster session hook onSessionRegistered failed for session {}",
+                        session.getSessionId(), e);
+            }
+        }
     }
 
     private void startHeartbeat(MessageSession session) {
@@ -1468,6 +1484,18 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         }
         clearChannelAttributes(session.getChannelHandlerContext());
         sessionMap.remove(session.getSessionId(), session);
+
+        // Notify cluster hook (if cluster mode is active) so the session is deregistered
+        // from the distributed registry.
+        ClusterSessionHook hook = this.clusterSessionHook;
+        if (hook != null) {
+            try {
+                hook.onSessionRemoved(session, getUrl());
+            } catch (Exception e) {
+                log.warn("Cluster session hook onSessionRemoved failed for session {}",
+                        session.getSessionId(), e);
+            }
+        }
     }
 
     private void clearChannelAttributes(ChannelHandlerContext ctx) {
@@ -1512,6 +1540,18 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
      */
     public void setHandshakeInterceptor(WebSocketHandshakeInterceptor interceptor) {
         this.handshakeInterceptor = interceptor;
+    }
+
+    /**
+     * Sets the optional cluster session hook for distributed session registry integration.
+     * When non-null, the resolver calls {@link ClusterSessionHook#onSessionRegistered}
+     * after local session registration and {@link ClusterSessionHook#onSessionRemoved}
+     * after local session removal.
+     *
+     * @param hook the cluster hook, or {@code null} to disable (single-node mode)
+     */
+    public void setClusterSessionHook(ClusterSessionHook hook) {
+        this.clusterSessionHook = hook;
     }
 
     private boolean closeSession(MessageSession session, CloseWebSocketFrame closeFrame, boolean notifyClose,

@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <packaging>jar</packaging>
+
+    <parent>
+        <groupId>io.github.berrywang1996</groupId>
+        <artifactId>netty-spring-parent</artifactId>
+        <version>1.8.0</version>
+    </parent>
+
+    <artifactId>netty-websocket-cluster-spring-boot-starter</artifactId>
+
+    <name>netty-websocket-cluster-spring-boot-starter</name>
+    <description>
+        Spring Boot starter that activates netty-spring WebSocket cluster support. Adds
+        Redis-backed cross-node broadcast, unicast routing, and distributed session registry.
+        Only activated when server.netty.websocket.cluster.enable=true; default is
+        single-node mode — adding this starter without the config flag has zero effect.
+    </description>
+    <url>https://github.com/BerryWang1996/netty-spring</url>
+
+    <developers>
+        <developer>
+            <name>wangbor</name>
+            <email>wangbor@yeah.net</email>
+            <url>https://github.com/BerryWang1996</url>
+        </developer>
+    </developers>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <dependencies>
+
+        <!-- The full-stack starter (HTTP + WebSocket) — cluster extends it -->
+        <dependency>
+            <groupId>io.github.berrywang1996</groupId>
+            <artifactId>netty-web-spring-boot-starter</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- WebSocket cluster module (SPI + Redis impl) -->
+        <dependency>
+            <groupId>io.github.berrywang1996</groupId>
+            <artifactId>netty-spring-websocket-cluster</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Lettuce is needed at runtime for the default Redis transport -->
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+        </dependency>
+
+        <!-- Lombok (for @Slf4j in auto-configuration) -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+</project>

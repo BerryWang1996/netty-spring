@@ -8,7 +8,7 @@
 
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-spring-parent</artifactId>
-    <version>1.7.1</version>
+    <version>1.8.0</version>
 
     <name>netty-spring-parent</name>
     <description>
@@ -21,10 +21,12 @@
         <module>netty-spring-web</module>
         <module>netty-spring-webmvc</module>
         <module>netty-spring-websocket</module>
+        <module>netty-spring-websocket-cluster</module>
         <module>netty-spring-boot-autoconfigure</module>
         <module>netty-web-spring-boot-starter</module>
         <module>netty-webmvc-spring-boot-starter</module>
         <module>netty-websocket-spring-boot-starter</module>
+        <module>netty-websocket-cluster-spring-boot-starter</module>
         <module>demo-netty-web-spring-boot-starter</module>
     </modules>
 

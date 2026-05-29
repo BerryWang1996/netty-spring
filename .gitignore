@@ -43,3 +43,6 @@ build/
 application.log
 application.log*
 /log/
+
+stress-test
+scripts
