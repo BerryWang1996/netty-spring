@@ -498,6 +498,11 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     /**
      * Gracefully shuts down this resolver by closing all active sessions with a
      * {@link CloseReason#SERVER_SHUTDOWN} close frame.
+     *
+     * <p>Lifecycle callbacks ({@code ON_CLOSE}) are executed inline on the caller's thread
+     * to guarantee that user-defined close handlers complete before the method returns.
+     * This prevents the race where the handler thread pool is shut down (by the caller)
+     * before asynchronously-dispatched lifecycle tasks have had a chance to execute.
      */
     @Override
     public void shutdown() {
@@ -507,7 +512,23 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         List<MessageSession> sessions = new ArrayList<>(sessionMap.values());
         log.info("Shutting down websocket resolver {} with {} active sessions.", getUrl(), sessions.size());
         for (MessageSession session : sessions) {
-            shutdownSession(session);
+            shutdownSessionInline(session);
+        }
+    }
+
+    /**
+     * Closes a session during server shutdown, running the lifecycle inline on the caller's
+     * thread instead of dispatching through the handler pool.
+     */
+    private void shutdownSessionInline(MessageSession session) {
+        if (session == null || !session.startClosing()) {
+            return;
+        }
+        eventRecorder.recordClose(CloseReason.SERVER_SHUTDOWN);
+        try {
+            doShutdownClose(session);
+        } catch (Exception e) {
+            log.warn("Failed to execute shutdown close for session {}.", session.getSessionId(), e);
         }
     }
 
@@ -638,7 +659,14 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
 
     private ChannelFuture doHandshake(ChannelHandlerContext ctx, FullHttpRequest request) {
         String protocol = ctx.pipeline().get(SslHandler.class) == null ? "ws://" : "wss://";
-        String wsUrl = protocol + request.headers().get(HttpHeaderNames.HOST) + request.uri();
+        String host = request.headers().get(HttpHeaderNames.HOST);
+        if (host == null || !isValidHostHeader(host)) {
+            log.warn("WS handshake rejected: invalid or missing Host header. uri={}", request.uri());
+            getHttpRuntimeRecorder().recordWebSocketHandshakeRejected();
+            sendHttpResponse(ctx, request, new DefaultFullHttpResponse(HTTP_1_1, HttpResponseStatus.BAD_REQUEST));
+            return null;
+        }
+        String wsUrl = protocol + host + request.uri();
         WebSocketServerHandshakerFactory wsFactory = new WebSocketServerHandshakerFactory(
                 wsUrl,
                 null,
@@ -1018,13 +1046,16 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (session == null) {
             return false;
         }
+        // Atomically transition to closing state BEFORE checking channel activity.
+        // This eliminates the TOCTOU race where concurrent calls could both observe
+        // isActive()=true and then race on startClosing() with divergent code paths.
+        if (!session.startClosing()) {
+            return false;
+        }
+        eventRecorder.recordClose(CloseReason.API_CLOSE);
+
         if (!session.getChannelHandlerContext().channel().isActive()) {
-            // Channel already inactive: still run the close lifecycle for proper cleanup
-            // so that user-defined onClose handlers are invoked.
-            if (!session.startClosing()) {
-                return false;
-            }
-            eventRecorder.recordClose(CloseReason.API_CLOSE);
+            // Channel already inactive: run close lifecycle inline for proper cleanup
             removeSession(session);
             try {
                 notifyCloseLifecycle(null, session);
@@ -1033,12 +1064,19 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             }
             return true;
         }
+
+        // Channel is active: send close frame and run lifecycle
         CloseWebSocketFrame closeFrame = new CloseWebSocketFrame(statusCode, reasonText == null ? "" : reasonText);
         try {
-            return closeSession(session, closeFrame, true, CloseReason.API_CLOSE);
+            try {
+                notifyCloseLifecycle(closeFrame, session);
+            } finally {
+                cleanupClosedSession(session, closeFrame);
+            }
         } finally {
             ReferenceCountUtil.release(closeFrame);
         }
+        return true;
     }
 
     private Runnable tryAcquireConnectionSlot(ChannelHandlerContext ctx, FullHttpRequest request) {
@@ -1682,6 +1720,26 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         return new IllegalStateException("Cannot access websocket " + messageType + " handler " + method
                 + ". Action: make the @MessageMapping method public, or move it to a public Spring component.",
                 cause);
+    }
+
+    /**
+     * Validates that the HTTP Host header does not contain characters that could be
+     * used for cache poisoning or request smuggling (CRLF, NUL, leading/trailing whitespace).
+     *
+     * @param host the Host header value to validate
+     * @return {@code true} if the value is safe to use in URL construction
+     */
+    private static boolean isValidHostHeader(String host) {
+        if (host.isEmpty() || host.trim().isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < host.length(); i++) {
+            char c = host.charAt(i);
+            if (c == '\r' || c == '\n' || c == '\0') {
+                return false;
+            }
+        }
+        return true;
     }
 
     private CloseWebSocketFrame newShutdownCloseFrame() {

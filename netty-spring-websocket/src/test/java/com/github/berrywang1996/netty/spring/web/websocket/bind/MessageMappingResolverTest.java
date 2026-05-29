@@ -21,6 +21,7 @@ import io.netty.channel.ChannelOutboundHandlerAdapter;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.http.DefaultFullHttpRequest;
+import io.netty.handler.codec.http.DefaultHttpHeaders;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpHeaderNames;
@@ -1379,6 +1380,159 @@ class MessageMappingResolverTest {
         } finally {
             request.release();
             resolver.onChannelInactive(testChannel.ctx);
+            testChannel.finish();
+        }
+    }
+
+    // ---- v1.7.0 Fix #1: shutdown runs onClose lifecycle inline ----
+
+    @Test
+    void shutdownRunsOnCloseLifecycleInline() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        methods.put(MessageType.ON_CLOSE, method(endpoint, "onClose", CloseWebSocketFrame.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        assertEquals(0, endpoint.closeCount);
+
+        // shutdown() should call onClose synchronously (inline) before returning
+        resolver.shutdown();
+        drainChannel(testChannel.channel);
+
+        // onClose must have been called by the time shutdown() returns
+        assertEquals(1, endpoint.closeCount);
+        assertTrue(resolver.getSessionMap().isEmpty());
+        testChannel.finish();
+    }
+
+    // ---- v1.7.0 Fix #3: closeSession TOCTOU race ----
+
+    @Test
+    void closeSessionWorksForActiveChannel() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        methods.put(MessageType.ON_CLOSE, method(endpoint, "onClose", CloseWebSocketFrame.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        WebSocketEventRecorder recorder = new WebSocketEventRecorder();
+        resolver.setEventRecorder(recorder);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        String sessionId = testChannel.channel.attr(ServiceHandler.SESSION_ID_IN_CHANNEL).get();
+        assertNotNull(sessionId);
+
+        boolean closed = resolver.closeSession(sessionId, 1000, "normal");
+        drainChannel(testChannel.channel);
+
+        assertTrue(closed);
+        assertEquals(1, endpoint.closeCount);
+        assertTrue(resolver.getSessionMap().isEmpty());
+        assertEquals(1, recorder.getStats().getCloseCount(CloseReason.API_CLOSE));
+        testChannel.finish();
+    }
+
+    @Test
+    void closeSessionReturnsFalseForUnknownSessionId() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        MessageMappingResolver resolver = new MessageMappingResolver(
+                "/ws/test", new EnumMap<>(MessageType.class), endpoint);
+        assertFalse(resolver.closeSession("nonexistent", 1000, "bye"));
+        assertFalse(resolver.closeSession(null, 1000, "bye"));
+        assertFalse(resolver.closeSession("", 1000, "bye"));
+    }
+
+    // ---- v1.7.0 Fix #4: Host header validation ----
+
+    @Test
+    void rejectsHandshakeWithCrlfInHostHeader() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        TestChannel testChannel = new TestChannel();
+
+        // Use DefaultHttpHeaders(false) to disable Netty's built-in header validation,
+        // allowing the CRLF-injected Host value to reach our resolver's own validation.
+        DefaultFullHttpRequest request = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, GET, "/ws/test",
+                Unpooled.EMPTY_BUFFER, new DefaultHttpHeaders(false), new DefaultHttpHeaders(false));
+        request.headers().set(HttpHeaderNames.HOST, "localhost\r\nX-Injected: true");
+        request.headers().set(HttpHeaderNames.UPGRADE, "websocket");
+        request.headers().set(HttpHeaderNames.CONNECTION, "Upgrade");
+        request.headers().set(HttpHeaderNames.SEC_WEBSOCKET_VERSION, "13");
+        request.headers().set(HttpHeaderNames.SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==");
+
+        resolver.resolve(testChannel.ctx, request);
+
+        try {
+            // No session should be registered — CRLF Host must be rejected
+            assertTrue(resolver.getSessionMap().isEmpty());
+            assertEquals(0, endpoint.connectedCount);
+            // The rejection response is written via ctx.channel().writeAndFlush() in doHandshake(),
+            // which routes through HttpServerCodec and arrives as encoded ByteBuf.
+            Object outbound = testChannel.channel.readOutbound();
+            assertNotNull(outbound, "A rejection response should be written");
+            if (outbound instanceof ByteBuf) {
+                String encoded = ((ByteBuf) outbound).toString(CharsetUtil.UTF_8);
+                assertTrue(encoded.contains("400"), "Encoded response should contain 400 status");
+            } else if (outbound instanceof FullHttpResponse) {
+                assertEquals(HttpResponseStatus.BAD_REQUEST, ((FullHttpResponse) outbound).status());
+            }
+            ReferenceCountUtil.release(outbound);
+        } finally {
+            request.release();
+            testChannel.finish();
+        }
+    }
+
+    @Test
+    void rejectsHandshakeWithMissingHostHeader() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        TestChannel testChannel = new TestChannel();
+
+        DefaultFullHttpRequest request = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, GET, "/ws/test");
+        // Deliberately omit Host header
+        request.headers().set(HttpHeaderNames.UPGRADE, "websocket");
+        request.headers().set(HttpHeaderNames.CONNECTION, "Upgrade");
+        request.headers().set(HttpHeaderNames.SEC_WEBSOCKET_VERSION, "13");
+        request.headers().set(HttpHeaderNames.SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==");
+
+        resolver.resolve(testChannel.ctx, request);
+
+        try {
+            // No session should be registered — missing Host must be rejected
+            assertTrue(resolver.getSessionMap().isEmpty());
+            // The rejection response is written via ctx.channel().writeAndFlush() in doHandshake(),
+            // which routes through HttpServerCodec and arrives as encoded ByteBuf.
+            Object outbound = testChannel.channel.readOutbound();
+            assertNotNull(outbound, "A rejection response should be written");
+            if (outbound instanceof ByteBuf) {
+                String encoded = ((ByteBuf) outbound).toString(CharsetUtil.UTF_8);
+                assertTrue(encoded.contains("400"), "Encoded response should contain 400 status");
+            } else if (outbound instanceof FullHttpResponse) {
+                assertEquals(HttpResponseStatus.BAD_REQUEST, ((FullHttpResponse) outbound).status());
+            }
+            ReferenceCountUtil.release(outbound);
+        } finally {
+            request.release();
             testChannel.finish();
         }
     }

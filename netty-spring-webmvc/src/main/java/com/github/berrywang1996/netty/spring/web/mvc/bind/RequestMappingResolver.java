@@ -909,12 +909,8 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
             // Override status code from ResponseEntity
             response.setStatus(HttpResponseStatus.valueOf(responseEntity.getStatusCode()));
 
-            // Apply ResponseEntity custom headers
-            for (Map.Entry<String, List<String>> headerEntry : responseEntity.getHeaders().entrySet()) {
-                for (String headerValue : headerEntry.getValue()) {
-                    response.headers().add(headerEntry.getKey(), headerValue);
-                }
-            }
+            // Apply ResponseEntity custom headers (sanitized against CRLF injection)
+            applyEntityHeaders(response, responseEntity.getHeaders());
         } else {
             // Standard return value — use view handler directly
             if (result == null) {
@@ -1115,12 +1111,15 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
     }
 
     /**
-     * Applies ResponseEntity headers to an HttpResponse.
+     * Applies ResponseEntity headers to an HttpResponse, sanitizing values
+     * to prevent HTTP header injection via CRLF characters.
      */
     private void applyEntityHeaders(HttpResponse response, Map<String, List<String>> headers) {
         for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
             for (String value : entry.getValue()) {
-                response.headers().add(entry.getKey(), value);
+                response.headers().add(
+                        sanitizeHeaderValue(entry.getKey()),
+                        sanitizeHeaderValue(value));
             }
         }
     }
@@ -1147,10 +1146,13 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         }
 
         // Merge custom response headers set during handler execution.
-        // setAll() replaces all existing values for each header name in the source,
-        // so user-defined headers intentionally override auto-generated ones.
+        // Iterate and sanitize each header to prevent CRLF injection from user-supplied values.
         if (requestContext.getResponseHeaders() != null) {
-            response.headers().setAll(requestContext.getResponseHeaders());
+            for (Map.Entry<String, String> header : requestContext.getResponseHeaders()) {
+                response.headers().set(
+                        sanitizeHeaderValue(header.getKey()),
+                        sanitizeHeaderValue(header.getValue()));
+            }
         }
     }
 
@@ -1298,6 +1300,21 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         if (crossOrigin.maxAge() >= 0) {
             response.headers().set("Access-Control-Max-Age", String.valueOf(crossOrigin.maxAge()));
         }
+    }
+
+    // ----- Header sanitization -----
+
+    /**
+     * Strips CRLF and NUL characters from an HTTP header value to prevent header injection.
+     *
+     * @param value the header value to sanitize (may be {@code null})
+     * @return the sanitized value, or {@code null} if input was null
+     */
+    private static String sanitizeHeaderValue(String value) {
+        if (value == null) {
+            return null;
+        }
+        return value.replace("\r", "").replace("\n", "").replace("\0", "");
     }
 
     // ----- Content negotiation support -----

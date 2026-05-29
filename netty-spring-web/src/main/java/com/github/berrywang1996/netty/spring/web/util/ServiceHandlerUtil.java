@@ -53,8 +53,11 @@ public class ServiceHandlerUtil {
     /** Default cache duration in seconds for static file responses. */
     public static final int HTTP_CACHE_SECONDS = 60;
 
-    /** Shared MIME type map for determining content types from file extensions. */
-    public static final MimetypesFileTypeMap MIME_TYPES_MAP = new MimetypesFileTypeMap();
+    /**
+     * Shared MIME type map for determining content types from file extensions.
+     * Private to prevent external mutation of the shared instance.
+     */
+    private static final MimetypesFileTypeMap MIME_TYPES_MAP = new MimetypesFileTypeMap();
 
     /** Pre-built formatter for HTTP date headers in RFC 1123 format. */
     private static final DateTimeFormatter HTTP_DATE_FORMATTER =
@@ -186,6 +189,16 @@ public class ServiceHandlerUtil {
      */
     public static void setContentTypeHeader(HttpResponse response, File file) {
         response.headers().set(HttpHeaderNames.CONTENT_TYPE, MIME_TYPES_MAP.getContentType(file));
+    }
+
+    /**
+     * Returns the MIME content type for the given file based on its extension.
+     *
+     * @param file the file whose content type should be determined
+     * @return the MIME type string (e.g. "text/html", "application/json")
+     */
+    public static String getContentType(File file) {
+        return MIME_TYPES_MAP.getContentType(file);
     }
 
     /**

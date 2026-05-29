@@ -86,6 +86,26 @@ class ServiceHandlerUtilErrorResponseTest {
         request.release();
     }
 
+    // ---- v1.7.0 Fix #6: MimetypesFileTypeMap encapsulation ----
+
+    @Test
+    void getContentTypeReturnsNonNullForKnownExtensions() {
+        java.io.File htmlFile = new java.io.File("test.html");
+        String contentType = ServiceHandlerUtil.getContentType(htmlFile);
+        assertNotNull(contentType);
+        // MIME type should contain "text/html" or at least "text/"
+        assertTrue(contentType.contains("text/"), "Expected text/* for .html, got: " + contentType);
+    }
+
+    @Test
+    void getContentTypeReturnsOctetStreamForUnknownExtension() {
+        java.io.File unknownFile = new java.io.File("test.xyz12345");
+        String contentType = ServiceHandlerUtil.getContentType(unknownFile);
+        assertNotNull(contentType);
+        // Unknown extensions typically map to application/octet-stream
+        assertEquals("application/octet-stream", contentType);
+    }
+
     @Test
     void parseRequestParametersFromGetWithNoParams() {
         io.netty.handler.codec.http.DefaultFullHttpRequest request =

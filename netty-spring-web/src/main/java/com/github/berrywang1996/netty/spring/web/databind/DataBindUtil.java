@@ -229,60 +229,61 @@ public class DataBindUtil {
         BeanInfo beanInfo = getBeanInfo(target.getClass());
         PropertyDescriptor[] propertyDescriptors = beanInfo.getPropertyDescriptors();
 
+        // Only match the first key in the chain against property descriptors.
+        // For a key path like "address.city", we match "address" on the current target
+        // and recurse into the child object with the remaining keys ["city"].
+        String firstKey = keys.getFirst();
+        String expectedSetter = "set" + firstKey.substring(0, 1).toUpperCase() + firstKey.substring(1);
+
         for (PropertyDescriptor propertyDescriptor : propertyDescriptors) {
             Method writeMethod = propertyDescriptor.getWriteMethod();
-            if (writeMethod == null) {
+            if (writeMethod == null || !expectedSetter.equals(writeMethod.getName())) {
                 continue;
             }
-            for (String key : keys) {
-                // Match the setter method name against the current key
-                if (("set" + key.substring(0, 1).toUpperCase() + key.substring(1)).equals(writeMethod.getName())) {
-                    Class<?>[] parameterTypes = writeMethod.getParameterTypes();
-                    if (parameterTypes.length == 0) {
-                        continue;
-                    }
-                    Class parameterType = parameterTypes[0];
-                    if (keys.size() <= 2) {
-                        // Leaf property: parse and set the value directly
-                        try {
-                            if (parameterType == Date.class) {
-                                // Use @DateFormat annotation pattern if present, otherwise default
-                                String parseDatePattern;
-                                if (writeMethod.isAnnotationPresent(DATE_FORMAT_ANNOTATION)) {
-                                    parseDatePattern = writeMethod.getAnnotation(DATE_FORMAT_ANNOTATION).pattern();
-                                } else {
-                                    parseDatePattern = DEFAULT_DATEFORMAT_PATTERN;
-                                }
-                                writeMethod.invoke(target, parseStringToDate(value, parseDatePattern));
-                            } else {
-                                writeMethod.invoke(target, parseStringToBasicType(value, parameterType));
-                            }
-
-                        } catch (IllegalAccessException | InvocationTargetException e) {
-                            log.error("Failed to set property '{}' on {}", key, target.getClass().getSimpleName(), e);
+            Class<?>[] parameterTypes = writeMethod.getParameterTypes();
+            if (parameterTypes.length == 0) {
+                continue;
+            }
+            Class parameterType = parameterTypes[0];
+            if (keys.size() == 1) {
+                // Leaf property: parse and set the value directly
+                try {
+                    if (parameterType == Date.class) {
+                        // Use @DateFormat annotation pattern if present, otherwise default
+                        String parseDatePattern;
+                        if (writeMethod.isAnnotationPresent(DATE_FORMAT_ANNOTATION)) {
+                            parseDatePattern = writeMethod.getAnnotation(DATE_FORMAT_ANNOTATION).pattern();
+                        } else {
+                            parseDatePattern = DEFAULT_DATEFORMAT_PATTERN;
                         }
+                        writeMethod.invoke(target, parseStringToDate(value, parseDatePattern));
                     } else {
-                        // Nested property: reuse existing child or create a new one
-                        try {
-                            Method readMethod = propertyDescriptor.getReadMethod();
-                            Object childTarget = readMethod != null ? readMethod.invoke(target) : null;
-                            if (childTarget == null) {
-                                childTarget = ClassUtil.newInstance(parameterTypes[0]);
-                                if (childTarget == null) {
-                                    continue;
-                                }
-                                writeMethod.invoke(target, childTarget);
-                            }
-                            // Remove the first key and recurse into the child object
-                            LinkedList<String> newKeys = new LinkedList<>(keys);
-                            newKeys.poll();
-                            setObjectProperties(childTarget, newKeys, value);
-                        } catch (IllegalAccessException | InvocationTargetException e) {
-                            log.error("Failed to set nested property '{}' on {}", key, target.getClass().getSimpleName(), e);
-                        }
+                        writeMethod.invoke(target, parseStringToBasicType(value, parameterType));
                     }
+                } catch (IllegalAccessException | InvocationTargetException e) {
+                    log.error("Failed to set property '{}' on {}", firstKey, target.getClass().getSimpleName(), e);
+                }
+            } else {
+                // Nested property: reuse existing child or create a new one
+                try {
+                    Method readMethod = propertyDescriptor.getReadMethod();
+                    Object childTarget = readMethod != null ? readMethod.invoke(target) : null;
+                    if (childTarget == null) {
+                        childTarget = ClassUtil.newInstance(parameterTypes[0]);
+                        if (childTarget == null) {
+                            continue;
+                        }
+                        writeMethod.invoke(target, childTarget);
+                    }
+                    // Remove the first key and recurse into the child object
+                    LinkedList<String> newKeys = new LinkedList<>(keys);
+                    newKeys.poll();
+                    setObjectProperties(childTarget, newKeys, value);
+                } catch (IllegalAccessException | InvocationTargetException e) {
+                    log.error("Failed to set nested property '{}' on {}", firstKey, target.getClass().getSimpleName(), e);
                 }
             }
+            break; // Found matching property — no need to check remaining descriptors
         }
 
     }
