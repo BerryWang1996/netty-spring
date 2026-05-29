@@ -242,4 +242,48 @@ class NettyWebSocketMeterBinderTest {
         assertNotNull(connectionTimer);
         assertEquals(1, connectionTimer.count());
     }
+
+    @Test
+    void distributionMetricsRoutedToAllBoundRegistries() {
+        // A single binder bound to two distinct registries must route distribution
+        // metrics to BOTH, not just the most recently bound one.
+        SimpleMeterRegistry registry2 = new SimpleMeterRegistry();
+        NettyWebSocketMeterBinder binder = new NettyWebSocketMeterBinder(bootstrap);
+        binder.bindTo(registry);
+        binder.bindTo(registry2);
+
+        recorder.recordMessageSize(2048);
+        recorder.recordHandlerLatency(TimeUnit.MILLISECONDS.toNanos(10));
+        recorder.recordCloseWithDuration(CloseReason.CLIENT_CLOSE, TimeUnit.SECONDS.toNanos(5));
+
+        DistributionSummary size1 = registry.find("netty.websocket.message.size").summary();
+        DistributionSummary size2 = registry2.find("netty.websocket.message.size").summary();
+        assertNotNull(size1);
+        assertNotNull(size2);
+        assertEquals(1, size1.count());
+        assertEquals(1, size2.count());
+        assertEquals(2048.0, size1.totalAmount(), 0.01);
+        assertEquals(2048.0, size2.totalAmount(), 0.01);
+
+        assertEquals(1, registry.find("netty.websocket.handler.latency").timer().count());
+        assertEquals(1, registry2.find("netty.websocket.handler.latency").timer().count());
+
+        assertEquals(1, registry.find("netty.websocket.connection.duration")
+                .tag("reason", "client_close").timer().count());
+        assertEquals(1, registry2.find("netty.websocket.connection.duration")
+                .tag("reason", "client_close").timer().count());
+    }
+
+    @Test
+    void reBindingSameRegistryDoesNotDoubleCountDistributionMetrics() {
+        NettyWebSocketMeterBinder binder = new NettyWebSocketMeterBinder(bootstrap);
+        binder.bindTo(registry);
+        binder.bindTo(registry); // duplicate bind on the same registry must be ignored
+
+        recorder.recordMessageSize(100);
+
+        DistributionSummary size = registry.find("netty.websocket.message.size").summary();
+        assertNotNull(size);
+        assertEquals(1, size.count(), "duplicate bindTo on the same registry must not double-count");
+    }
 }

@@ -4,6 +4,8 @@ import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitter;
 import com.github.berrywang1996.netty.spring.web.context.HttpRuntimeRecorder;
 import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
+import com.github.berrywang1996.netty.spring.web.util.MdcUtil;
+import org.slf4j.MDC;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.CloseReason;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
@@ -1594,9 +1596,12 @@ class MessageMappingResolverTest {
             assertEquals(1, endpoint.connectedCount);
             assertEquals(1, resolver.getSessionMap().size());
             // The WebSocketFrameAggregator should have been added to the pipeline
-            assertNotNull(testChannel.channel.pipeline().get("wsFrameAggregator"),
+            io.netty.channel.ChannelHandler aggregator = testChannel.channel.pipeline().get("wsFrameAggregator");
+            assertNotNull(aggregator,
                     "WebSocketFrameAggregator should be in the pipeline when maxFrameAggregationBufferSize > 0");
-            assertTrue(testChannel.channel.pipeline().get("wsFrameAggregator") instanceof WebSocketFrameAggregator);
+            assertTrue(aggregator instanceof WebSocketFrameAggregator);
+            // The configured buffer size must be wired into the aggregator's maxContentLength
+            assertEquals(65536, ((WebSocketFrameAggregator) aggregator).maxContentLength());
         } finally {
             request.release();
             resolver.onChannelInactive(testChannel.ctx);
@@ -1688,6 +1693,40 @@ class MessageMappingResolverTest {
             resolver.onChannelInactive(testChannel.ctx);
             testChannel.finish();
         }
+    }
+
+    // ---- v1.7.0 第三刀: MDC context for pool-dispatched lifecycle callbacks ----
+
+    @Test
+    void lifecycleCallbacksRunWithSessionMdcContext() throws Exception {
+        RecordingEndpoint endpoint = new RecordingEndpoint();
+        Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
+        methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
+        methods.put(MessageType.ON_CLOSE, method(endpoint, "onClose", CloseWebSocketFrame.class, MessageSession.class));
+        MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        TestChannel testChannel = new TestChannel();
+        FullHttpRequest request = websocketRequest("/ws/test");
+
+        resolver.resolve(testChannel.ctx, request);
+        Object handshakeResponse = testChannel.channel.readOutbound();
+        ReferenceCountUtil.release(handshakeResponse);
+        drainChannel(testChannel.channel);
+        request.release();
+
+        String sessionId = testChannel.channel.attr(ServiceHandler.SESSION_ID_IN_CHANNEL).get();
+        assertNotNull(sessionId);
+
+        // Channel-inactive close runs the onClose lifecycle via the handler-pool dispatch path,
+        // which must apply the WebSocket MDC context (session id) around the callback.
+        resolver.onChannelInactive(testChannel.ctx);
+
+        assertEquals(1, endpoint.closeCount);
+        assertTrue(endpoint.lastCloseMdcSessionIdCaptured, "onClose should have run");
+        assertEquals(sessionId, endpoint.lastCloseMdcSessionId,
+                "MDC sessionId must be set during the pool-dispatched onClose lifecycle callback");
+        // MDC must be cleared after the lifecycle task completes (no leak on the reused thread)
+        assertNull(MDC.get(MdcUtil.KEY_SESSION_ID), "MDC must be cleared after the lifecycle task");
+        testChannel.finish();
     }
 
     private static Method method(Object target, String methodName, Class<?>... parameterTypes) throws Exception {
@@ -1813,6 +1852,8 @@ class MessageMappingResolverTest {
         private String lastBinaryPayloadFromBytes;
         private TextJsonPayload lastJsonPayload;
         private MessageSession lastMessageSession;
+        private boolean lastCloseMdcSessionIdCaptured;
+        private String lastCloseMdcSessionId;
 
         public Boolean onHandshake(HttpRequest request) {
             if (throwOnHandshake) {
@@ -1827,6 +1868,8 @@ class MessageMappingResolverTest {
 
         public void onClose(CloseWebSocketFrame frame, MessageSession session) {
             closeCount++;
+            lastCloseMdcSessionId = MDC.get(MdcUtil.KEY_SESSION_ID);
+            lastCloseMdcSessionIdCaptured = true;
             if (throwOnClose) {
                 throw new IllegalStateException("close boom");
             }

@@ -215,9 +215,10 @@ public class DataBindUtil {
     /**
      * Recursively sets properties on the target object using a chain of dot-separated keys.
      *
-     * <p>For leaf properties (keys.size() <= 2), the value is parsed and set directly.
-     * For nested properties (keys.size() > 2), a child object is created if needed
-     * and the remaining keys are applied recursively.
+     * <p>Only the first key in the chain is matched against the current target's
+     * properties. For a leaf property (keys.size() == 1), the value is parsed and set
+     * directly. For a nested property (keys.size() > 1), a child object is created if
+     * needed and the remaining keys are applied recursively to that child.
      *
      * @param <T>    the target type
      * @param target the object to set properties on

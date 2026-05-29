@@ -25,13 +25,13 @@ package com.github.berrywang1996.netty.spring.web.websocket.context;
  * autoconfigure module provides a Micrometer-backed implementation that
  * records observations into Timer and DistributionSummary meters.
  *
- * <p>When no callback is set (the default), these distribution metrics
+ * <p>When no callback is registered (the default), these distribution metrics
  * are silently skipped; the atomic-counter-based metrics in
  * {@link WebSocketEventRecorder} continue to work independently.
  *
  * @author berrywang1996
  * @since V1.7.0
- * @see WebSocketEventRecorder#setMetricsCallback(WebSocketMetricsCallback)
+ * @see WebSocketEventRecorder#addMetricsCallback(WebSocketMetricsCallback)
  */
 public interface WebSocketMetricsCallback {
 

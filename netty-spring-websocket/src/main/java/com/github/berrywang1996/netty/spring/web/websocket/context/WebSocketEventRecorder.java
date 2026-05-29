@@ -20,7 +20,9 @@ import com.github.berrywang1996.netty.spring.web.websocket.consts.CloseReason;
 
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -115,19 +117,26 @@ public final class WebSocketEventRecorder {
     // ---- Metrics callback for distribution-based observations (Timer, Summary) ----
 
     /**
-     * Optional callback for recording distribution metrics that require event-time
+     * Optional callbacks for recording distribution metrics that require event-time
      * observation (connection duration, message size, broadcast fanout, handler latency).
-     * When {@code null}, these metrics are silently skipped.
+     *
+     * <p>A list is used so that distribution metrics are routed to <em>every</em> bound
+     * meter registry: the Micrometer bridge registers one callback per distinct registry.
+     * When empty, these metrics are silently skipped.
      */
-    private volatile WebSocketMetricsCallback metricsCallback;
+    private final List<WebSocketMetricsCallback> metricsCallbacks = new CopyOnWriteArrayList<>();
 
     /**
-     * Sets the metrics callback for distribution-based observations.
+     * Registers a metrics callback for distribution-based observations. Multiple callbacks
+     * may be registered (typically one per target meter registry); each receives every
+     * distribution event.
      *
-     * @param callback the callback to invoke on distribution metric events, or {@code null} to disable
+     * @param callback the callback to invoke on distribution metric events; {@code null} is ignored
      */
-    public void setMetricsCallback(WebSocketMetricsCallback callback) {
-        this.metricsCallback = callback;
+    public void addMetricsCallback(WebSocketMetricsCallback callback) {
+        if (callback != null) {
+            metricsCallbacks.add(callback);
+        }
     }
 
     // ---- Close events ----
@@ -155,9 +164,13 @@ public final class WebSocketEventRecorder {
      */
     public void recordCloseWithDuration(CloseReason reason, long durationNanos) {
         recordClose(reason);
-        WebSocketMetricsCallback cb = this.metricsCallback;
-        if (cb != null && reason != null) {
-            cb.recordConnectionDuration(reason.getTag(), durationNanos);
+        if (!enabled || reason == null) {
+            return;
+        }
+        List<WebSocketMetricsCallback> callbacks = this.metricsCallbacks;
+        String reasonTag = reason.getTag();
+        for (int i = 0, n = callbacks.size(); i < n; i++) {
+            callbacks.get(i).recordConnectionDuration(reasonTag, durationNanos);
         }
     }
 
@@ -169,9 +182,12 @@ public final class WebSocketEventRecorder {
      * @param bytes the message payload size in bytes
      */
     public void recordMessageSize(int bytes) {
-        WebSocketMetricsCallback cb = this.metricsCallback;
-        if (cb != null) {
-            cb.recordMessageSize(bytes);
+        if (!enabled) {
+            return;
+        }
+        List<WebSocketMetricsCallback> callbacks = this.metricsCallbacks;
+        for (int i = 0, n = callbacks.size(); i < n; i++) {
+            callbacks.get(i).recordMessageSize(bytes);
         }
     }
 
@@ -181,9 +197,12 @@ public final class WebSocketEventRecorder {
      * @param sessionCount the number of sessions targeted
      */
     public void recordBroadcastFanout(int sessionCount) {
-        WebSocketMetricsCallback cb = this.metricsCallback;
-        if (cb != null) {
-            cb.recordBroadcastFanout(sessionCount);
+        if (!enabled) {
+            return;
+        }
+        List<WebSocketMetricsCallback> callbacks = this.metricsCallbacks;
+        for (int i = 0, n = callbacks.size(); i < n; i++) {
+            callbacks.get(i).recordBroadcastFanout(sessionCount);
         }
     }
 
@@ -193,9 +212,12 @@ public final class WebSocketEventRecorder {
      * @param latencyNanos the handler execution time in nanoseconds
      */
     public void recordHandlerLatency(long latencyNanos) {
-        WebSocketMetricsCallback cb = this.metricsCallback;
-        if (cb != null) {
-            cb.recordHandlerLatency(latencyNanos);
+        if (!enabled) {
+            return;
+        }
+        List<WebSocketMetricsCallback> callbacks = this.metricsCallbacks;
+        for (int i = 0, n = callbacks.size(); i < n; i++) {
+            callbacks.get(i).recordHandlerLatency(latencyNanos);
         }
     }
 

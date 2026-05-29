@@ -22,6 +22,7 @@ import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitter;
 import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitterAware;
 import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
+import com.github.berrywang1996.netty.spring.web.util.MdcUtil;
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.CloseReason;
 import com.github.berrywang1996.netty.spring.web.websocket.consts.MessageType;
@@ -1343,10 +1344,19 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (maxAggBufSize <= 0) {
             return;
         }
-        ctx.pipeline().addBefore(ctx.name(), "wsFrameAggregator",
-                new WebSocketFrameAggregator(maxAggBufSize));
-        log.debug("Added WebSocketFrameAggregator with maxContentLength={} to pipeline for channel {}",
-                maxAggBufSize, ctx.channel().id());
+        // Guard the pipeline mutation: if it fails (e.g. the channel was torn down right
+        // after the handshake completed, so this handler is already removed), log and
+        // continue so that session registration and the connection-limit permit are not
+        // leaked. Aggregation is best-effort; without it, fragmented frames are discarded.
+        try {
+            ctx.pipeline().addBefore(ctx.name(), "wsFrameAggregator",
+                    new WebSocketFrameAggregator(maxAggBufSize));
+            log.debug("Added WebSocketFrameAggregator with maxContentLength={} to pipeline for channel {}",
+                    maxAggBufSize, ctx.channel().id());
+        } catch (RuntimeException e) {
+            log.warn("Failed to add WebSocketFrameAggregator to pipeline for channel {}; "
+                    + "fragmented messages will not be aggregated.", ctx.channel().id(), e);
+        }
     }
 
     private boolean rejectWithHttp(ChannelHandlerContext ctx, FullHttpRequest req, HttpResponseStatus status, String msg) {
@@ -1737,19 +1747,49 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
                                        Runnable task,
                                        Runnable rejectedTask) {
         HandlerSubmitter submitter = this.handlerSubmitter;
+        Runnable mdcTask = wrapWithMdc(session, task);
         if (submitter == null) {
-            task.run();
+            mdcTask.run();
             return;
         }
         try {
-            submitter.submitHandle(task);
+            submitter.submitHandle(mdcTask);
         } catch (RejectedExecutionException e) {
             log.warn("Reject websocket lifecycle task {}. sessionId={}, reason={}",
                     taskName,
                     session == null ? null : session.getSessionId(),
                     e.getMessage());
-            rejectedTask.run();
+            wrapWithMdc(session, rejectedTask).run();
         }
+    }
+
+    /**
+     * Wraps a WebSocket lifecycle task so that the SLF4J MDC carries the session
+     * context (session id, URI, remote address) for the duration of the task and is
+     * always cleared afterwards. Lifecycle callbacks ({@code @OnConnected},
+     * {@code @OnClose}, error and heartbeat handlers) run on the handler pool outside
+     * the per-frame MDC scope, so without this wrapping their logs would lack context.
+     *
+     * @param session  the session the task belongs to; if {@code null} the task is returned unwrapped
+     * @param delegate the lifecycle task to wrap
+     * @return a Runnable that applies and clears MDC around {@code delegate}
+     */
+    private Runnable wrapWithMdc(final MessageSession session, final Runnable delegate) {
+        if (session == null) {
+            return delegate;
+        }
+        return new Runnable() {
+            @Override
+            public void run() {
+                MdcUtil.setWebSocketContext(session.getSessionId(), session.getUri(),
+                        session.getChannelHandlerContext());
+                try {
+                    delegate.run();
+                } finally {
+                    MdcUtil.clear();
+                }
+            }
+        };
     }
 
     private Exception extractException(Throwable throwable) {

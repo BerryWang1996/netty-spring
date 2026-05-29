@@ -372,7 +372,8 @@ public final class NettyServerBootstrap {
         if (startupProperties == null) {
             return -1;
         }
-        return startupProperties.getPort();
+        Integer port = startupProperties.getPort();
+        return port == null ? -1 : port;
     }
 
     /** Invokes all registered stop listeners, logging but not propagating individual failures. */

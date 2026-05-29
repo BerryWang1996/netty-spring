@@ -29,7 +29,11 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.binder.MeterBinder;
 
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -60,6 +64,14 @@ public class NettyWebSocketMeterBinder implements MeterBinder {
 
     /** The server bootstrap that holds the WebSocket mapping resolvers and event recorder. */
     private final NettyServerBootstrap bootstrap;
+
+    /**
+     * Registries already bound by this binder, tracked by identity so that a repeated
+     * {@link #bindTo(MeterRegistry)} for the same registry does not register duplicate
+     * meters or add a duplicate distribution-metrics callback.
+     */
+    private final Set<MeterRegistry> boundRegistries =
+            Collections.newSetFromMap(new IdentityHashMap<MeterRegistry, Boolean>());
 
     /**
      * Constructs a new binder that reads WebSocket runtime counters from the given bootstrap.
@@ -93,6 +105,14 @@ public class NettyWebSocketMeterBinder implements MeterBinder {
         WebSocketEventRecorder recorder = findEventRecorder(wsMap);
         if (recorder == null) {
             return;
+        }
+
+        // Guard against binding the same registry twice (e.g. a re-bind): re-registering
+        // meters is idempotent, but adding the distribution callback again would double-count.
+        synchronized (boundRegistries) {
+            if (!boundRegistries.add(registry)) {
+                return;
+            }
         }
 
         // ---- Handshake counters ----
@@ -174,8 +194,10 @@ public class NettyWebSocketMeterBinder implements MeterBinder {
                 .description("Handler method invocation latency")
                 .register(registry);
 
-        // Wire the callback to the shared recorder for push-model metrics
-        recorder.setMetricsCallback(new MicrometerMetricsCallback(
+        // Wire a per-registry callback to the shared recorder for push-model metrics.
+        // One callback is added per distinct registry so distribution metrics are routed
+        // to every bound registry rather than only the most recently bound one.
+        recorder.addMetricsCallback(new MicrometerMetricsCallback(
                 registry, messageSizeSummary, broadcastFanoutSummary, handlerLatencyTimer));
     }
 
@@ -211,28 +233,43 @@ public class NettyWebSocketMeterBinder implements MeterBinder {
      */
     private static class MicrometerMetricsCallback implements WebSocketMetricsCallback {
 
-        private final MeterRegistry registry;
         private final DistributionSummary messageSizeSummary;
         private final DistributionSummary broadcastFanoutSummary;
         private final Timer handlerLatencyTimer;
+        /** Connection-duration timers pre-created per close-reason tag (read-only after construction). */
+        private final Map<String, Timer> connectionDurationTimers;
+        private final Timer unknownConnectionDurationTimer;
 
         MicrometerMetricsCallback(MeterRegistry registry,
                                   DistributionSummary messageSizeSummary,
                                   DistributionSummary broadcastFanoutSummary,
                                   Timer handlerLatencyTimer) {
-            this.registry = registry;
             this.messageSizeSummary = messageSizeSummary;
             this.broadcastFanoutSummary = broadcastFanoutSummary;
             this.handlerLatencyTimer = handlerLatencyTimer;
+            // Pre-create one connection-duration Timer per close reason so the hot close
+            // path is a map lookup instead of a builder allocation + registry lookup.
+            Map<String, Timer> timers = new HashMap<>();
+            for (CloseReason reason : CloseReason.values()) {
+                timers.put(reason.getTag(), buildConnectionDurationTimer(registry, reason.getTag()));
+            }
+            this.connectionDurationTimers = timers;
+            this.unknownConnectionDurationTimer = buildConnectionDurationTimer(registry, "unknown");
+        }
+
+        private static Timer buildConnectionDurationTimer(MeterRegistry registry, String reasonTag) {
+            return Timer.builder("netty.websocket.connection.duration")
+                    .tag("reason", reasonTag)
+                    .description("WebSocket connection duration from handshake to close")
+                    .register(registry);
         }
 
         @Override
         public void recordConnectionDuration(String closeReason, long durationNanos) {
-            Timer.builder("netty.websocket.connection.duration")
-                    .tag("reason", closeReason != null ? closeReason : "unknown")
-                    .description("WebSocket connection duration from handshake to close")
-                    .register(registry)
-                    .record(durationNanos, TimeUnit.NANOSECONDS);
+            Timer timer = closeReason == null
+                    ? unknownConnectionDurationTimer
+                    : connectionDurationTimers.getOrDefault(closeReason, unknownConnectionDurationTimer);
+            timer.record(durationNanos, TimeUnit.NANOSECONDS);
         }
 
         @Override
