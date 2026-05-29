@@ -1,17 +1,19 @@
 # 开发计划与阶段状态
 
-更新时间：2026-05-28
+更新时间：2026-05-29
 
 ## 当前结论
 
 - **`1.4.0` 已作为 P7 Demo 与文档产品化版本发布**（tag `v1.4.0`）。聊天室 demo、API 使用指南（12 章节）、Starter 集成测试增强均已完成。
 - `P0` 至 `P7` 全部阶段已完成，项目从"功能建设期"完成"质量深化与产品化"阶段。
 - `1.3.1` 已修复所有遗留代码质量问题：`e.printStackTrace()` → SLF4J、`SimpleDateFormat` → `DateTimeFormatter`、HTTP 错误响应结构化、`ObjectMapper` 单例化、webmvc 测试覆盖补齐。
-- 下一步：**`2.0.0` 远期规划**（Spring Boot 3.x / Jakarta namespace 迁移 + 企业安全版本）。
+- `1.5.x`–`1.7.0` 持续推进性能优化、安全稳定性修复与可观测性增强（详见"当前发版判断"与版本一览表）。
+- 下一步：**`1.8.0`** Redis Pub/Sub 集群支持（中期），之后 **`2.0.0`** 远期规划（Spring Boot 3.x / Jakarta namespace 迁移 + 企业安全版本）。
 
 ## 当前发版判断
 
-- **`1.6.2`（当前推荐版本）**：安全与稳定性修复版本。修复 22 个 bug（10 HIGH / 10 MEDIUM / 2 LOW），含 CRLF 注入防护、TLS 默认安全协议、HTTP keep-alive 合规和 WebSocket 会话生命周期修复。
+- **`1.7.0`（当前推荐版本）**：可观测性增强 + 遗留缺陷深度修复 + WebSocket 分片消息支持。按"四刀"落地 Micrometer 指标扩展、结构化日志（MDC）、Actuator 健康检查和分片消息聚合，并修复 v1.6.2 审计的 6 个遗留缺陷；发布前另经 4 轮审计 + 对抗式验证修复多 MeterRegistry 路由等问题。详见 `docs/release-notes-1.7.0.md`。全部向后兼容。
+- `1.6.2`：安全与稳定性修复版本。修复 22 个 bug（10 HIGH / 10 MEDIUM / 2 LOW），含 CRLF 注入防护、TLS 默认安全协议、HTTP keep-alive 合规和 WebSocket 会话生命周期修复。
 - `1.6.1`：广播优化后首批关键 bug 修复（ByteBuf 泄漏、生命周期、数据绑定）。
 - `1.6.0`：Phase 1 广播性能优化（EventLoop-direct 投递、零拷贝序列化、FlushConsolidation、WriteBufferWaterMark 背压）。
 - `1.5.1`：压测基线版本，含压测套件和分析。
@@ -603,15 +605,22 @@ P4.1 首批已完成：
 | `1.5.1` | 压测基线版 | 性能分析 |
 | `1.6.0` | 广播性能优化版 | Phase 1 |
 | `1.6.1` | 关键 bug 修复版 | Round 1 |
-| `1.6.2` | **安全与稳定性修复版** | **Round 2-4（当前推荐版本）** |
+| `1.6.2` | 安全与稳定性修复版 | Round 2-4 |
+| `1.7.0` | **可观测性增强与深度修复版** | **四刀 + 发布前审计（当前推荐版本）** |
 
 后续版本规划：
 
-- **`1.7.0`（下一版本）**：可观测性增强 + 遗留缺陷深度修复 + WebSocket 分片消息支持。详见下方 `1.7.0` 规划。
-- **`1.8.0`（中期）**：Redis Pub/Sub 集群支持（Phase 3），实现跨节点广播、分布式会话管理和弹性扩缩容。
+- **`1.8.0`（下一版本）**：Redis Pub/Sub 集群支持（Phase 3），实现跨节点广播、分布式会话管理和弹性扩缩容。
 - **`2.0.0`（远期）**：Spring Boot 3.x / Jakarta namespace 迁移 + 企业安全版本（Dependency-Check/Dependabot 闭环、标准鉴权/CORS/TLS 策略）。
 
-## `1.7.0` 可观测性增强与深度修复版本规划（下一版本）
+## `1.7.0` 可观测性增强与深度修复版本规划（✅ 已发布，tag `v1.7.0`）
+
+> 四刀全部完成并发布，发布说明见 `docs/release-notes-1.7.0.md`。下方为原始规划，保留作为设计记录。实现与规划的差异：
+> - 指标命名采用 `netty.websocket.*`（如 `netty.websocket.sessions.active` / `.connection.duration` / `.message.size` / `.broadcast.fanout` / `.handler.latency`），而非规划草案中的 `netty.ws.*`。
+> - 线程池/内存指标以 `HandlerRuntimeStats` 自定义 Gauge + `PooledByteBufAllocator` Gauge 实现，未使用 `ExecutorServiceMetrics.monitor()`。
+> - 健康检查为 `NettyServerHealthIndicator`（覆盖端口/线程池/连接许可），未单独拆出 `NettyWebSocketHealthIndicator`。
+> - 分片聚合缓冲区 `server.netty.websocket.max-frame-aggregation-buffer-size` **默认 0（禁用）** 以保持向后兼容，而非规划草案的默认 64KB；启用后保留 `ContinuationWebSocketFrame` 告警以提示未聚合路径。
+> - 发布前 4 轮审计 + 对抗式验证额外修复：多 MeterRegistry 指标路由、连接时长 Timer 预创建、聚合器插入兜底、`getPort()` 空安全。
 
 目标：补齐 v1.6 roadmap Phase 2 可观测性体系，同时修复 v1.6.2 审计中发现的遗留缺陷。
 
