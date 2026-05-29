@@ -13,11 +13,11 @@ A Spring Boot integration for Netty, providing HTTP MVC and WebSocket capabiliti
 ### Features
 
 - **HTTP MVC** — `@RequestMapping`, `@GetMapping`, `@PostMapping`, `@PathVariable`, `@RequestParam`, `@ResponseBody`, `@RestController`
-- **WebSocket** — `@MessageMapping` lifecycle (handshake, connect, message, close, error), JSON auto-binding, binary support
+- **WebSocket** — `@MessageMapping` lifecycle (handshake, connect, message, close, error), JSON auto-binding, binary support, optional fragmented-message aggregation
 - **MessageSender API** — broadcast, unicast, session management, JSON/text/binary convenience methods
 - **Application-layer encryption** — pluggable AES-GCM crypto for WebSocket frames, URI/session-level policy control
 - **Handshake authentication** — `WebSocketHandshakeInterceptor` extension point with Origin whitelisting
-- **Observability** — built-in `/netty/health` and `/netty/status` endpoints, Micrometer/Actuator metrics bridge
+- **Observability** — built-in `/netty/health` and `/netty/status` endpoints, Micrometer metrics (connection/message/broadcast/latency distributions), Actuator `/actuator/health` indicator, and SLF4J MDC structured logging
 - **Production-ready** — heartbeat, idle timeout, connection limits, thread pool tuning, TLS/SSL, GZIP compression
 
 ### Modules
@@ -49,7 +49,7 @@ A Spring Boot integration for Netty, providing HTTP MVC and WebSocket capabiliti
 <dependency>
     <groupId>com.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
-    <version>1.4.0</version>
+    <version>1.7.0</version>
 </dependency>
 ```
 
@@ -114,10 +114,21 @@ Add `spring-boot-starter-actuator` to your project. Netty metrics are automatica
 - `netty.websocket.handshakes.total/success/rejected` — Handshake counters
 - `netty.websocket.messages.received/sent` — Message counters
 - `netty.websocket.sessions.closed` (tagged by `reason`) — Close counters (15 close reasons)
-- `netty.websocket.sessions.active` — Active session gauge
-- `netty.http.response.write.failures` — HTTP failure path counters
+- `netty.websocket.sessions.active` + `.uri` (tagged by `uri`) — Active session gauges
+- `netty.websocket.connection.duration` / `.message.size` / `.broadcast.fanout` / `.handler.latency` — Distribution metrics *(v1.7.0)*
+- HTTP failure counters + handler thread-pool & Netty allocator gauges *(v1.7.0)*
 
-No extra configuration needed — the metrics bridge activates automatically when `micrometer-core` is on the classpath.
+Distribution metrics are routed to every bound registry, so they work with a `CompositeMeterRegistry`. No extra configuration needed — the bridge activates automatically when `micrometer-core` is on the classpath.
+
+#### Actuator Health & Structured Logging *(v1.7.0)*
+
+With `spring-boot-actuator` present, `/actuator/health` reports a `NettyServerHealthIndicator` (port, thread pool, connection permits — `UP`/`DOWN`).
+
+Handler and WebSocket lifecycle code populates SLF4J **MDC** (`netty.requestId`, `netty.sessionId`, `netty.uri`, `netty.remoteAddr`). Add them to your log pattern — no code changes needed:
+
+```
+%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} [%X{netty.requestId}] [%X{netty.sessionId}] - %msg%n
+```
 
 ### Production Deployment
 
@@ -212,26 +223,25 @@ The interceptor runs after Origin check but before `@MessageMapping(ON_HANDSHAKE
 | `server.netty.management.enable` | `false` | Enable built-in health/status endpoints |
 | `server.netty.websocket.allowed-origins` | (all) | Origin whitelist (comma-separated) |
 | `server.netty.websocket.max-connections` | `0` (unlimited) | Max WebSocket connections |
+| `server.netty.websocket.max-frame-aggregation-buffer-size` | `0` (disabled) | Aggregate fragmented frames up to N bytes (v1.7.0) |
 | `server.netty.websocket.heartbeat-interval-seconds` | `0` (disabled) | Server ping interval |
 
 Full configuration reference: [API Usage Guide](docs/api-guide.md#10-configuration-reference)
 
 ### Current Status
 
-- **Current recommended version: `1.4.0`** (P7 Demo & Documentation Productization)
-- Milestones P0 through P7 are all complete
-- `1.4.0` delivers: chat room demo, API usage guide (12 sections), enhanced Starter integration tests
-- Next: `2.0.0` Spring Boot 3.x / Jakarta namespace migration + enterprise security
+- **Current recommended version: `1.7.0`** (Observability + deep fixes + WebSocket fragmentation)
+- `1.7.0` delivers, across four work streams: Micrometer metrics expansion (connection/message/broadcast/latency distributions, per-URI & thread-pool & allocator gauges), SLF4J MDC structured logging, an Actuator `/actuator/health` indicator, optional WebSocket fragmented-message aggregation, and 6 audited legacy defect fixes — all backward compatible
+- Milestones P0 through P7 are all complete; performance (1.6.x), security/stability (1.6.2) and observability (1.7.0) hardening followed
+- Next: `1.8.0` Redis Pub/Sub clustering; later `2.0.0` Spring Boot 3.x / Jakarta migration + enterprise security
 
 ### Documentation
 
 - [API Usage Guide](docs/api-guide.md) — Complete integration guide with code examples
+- [Release Notes - 1.7.0](docs/release-notes-1.7.0.md)
+- [Release Notes - 1.6.2](docs/release-notes-1.6.2.md)
 - [Release Notes - 1.4.0](docs/release-notes-1.4.0.md)
 - [Release Notes - 1.3.1](docs/release-notes-1.3.1.md)
-- [Release Notes - 1.3.0](docs/release-notes-1.3.0.md)
-- [Release Notes - 1.2.3](docs/release-notes-1.2.3.md)
-- [Release Notes - 1.2.2](docs/release-notes-1.2.2.md)
-- [Release Notes - 1.2.1](docs/release-notes-1.2.1.md)
 - [Development Plan](docs/development-plan.md)
 - [Release Checklist](docs/release-checklist.md)
 - [Netty Configuration](docs/netty-configuration.md)
@@ -267,11 +277,11 @@ Verified on `GraalVM JDK 17.0.11` + `Apache Maven 3.9.9`. CI workflow runs full 
 ### 核心能力
 
 - **HTTP MVC** — `@RequestMapping`、`@GetMapping`、`@PostMapping`、`@PathVariable`、`@RequestParam`、`@ResponseBody`、`@RestController`
-- **WebSocket** — `@MessageMapping` 生命周期（握手、连接、消息、关闭、错误），JSON 自动绑定，二进制消息支持
+- **WebSocket** — `@MessageMapping` 生命周期（握手、连接、消息、关闭、错误），JSON 自动绑定，二进制消息支持，可选分片消息聚合
 - **MessageSender API** — 广播、单播、会话管理，JSON/文本/二进制便捷方法
 - **应用层加密** — 可插拔 AES-GCM WebSocket 帧加密，支持 URI/会话级别策略控制
 - **握手鉴权** — `WebSocketHandshakeInterceptor` 扩展点 + Origin 白名单
-- **可观测性** — 内置 `/netty/health` 和 `/netty/status` 端点，Micrometer/Actuator 指标桥接
+- **可观测性** — 内置 `/netty/health` 和 `/netty/status` 端点，Micrometer 指标（连接/消息/广播/延迟分布）、Actuator `/actuator/health` 健康检查、SLF4J MDC 结构化日志
 - **生产就绪** — 心跳检测、空闲超时、连接数限制、线程池调优、TLS/SSL、GZIP 压缩
 
 ### 模块概览
@@ -303,7 +313,7 @@ Verified on `GraalVM JDK 17.0.11` + `Apache Maven 3.9.9`. CI workflow runs full 
 <dependency>
     <groupId>com.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
-    <version>1.4.0</version>
+    <version>1.7.0</version>
 </dependency>
 ```
 
@@ -370,10 +380,21 @@ server.netty.management.enable=true
 - `netty.websocket.handshakes.total/success/rejected` — 握手计数
 - `netty.websocket.messages.received/sent` — 消息收发计数
 - `netty.websocket.sessions.closed`（按 `reason` 标签分维度）— 关闭计数（15 种关闭原因）
-- `netty.websocket.sessions.active` — 活跃 session 数
-- `netty.http.response.write.failures` — HTTP 失败路径计数
+- `netty.websocket.sessions.active` + `.uri`（按 `uri` 标签）— 活跃 session 数 Gauge
+- `netty.websocket.connection.duration` / `.message.size` / `.broadcast.fanout` / `.handler.latency` — 分布指标 *(1.7.0)*
+- HTTP 失败计数 + handler 线程池 & Netty allocator 内存 Gauge *(1.7.0)*
 
-无需额外配置——当 classpath 中存在 `micrometer-core` 时，指标桥接自动激活。
+分布指标会写入每个已绑定的 registry，可与 `CompositeMeterRegistry` 共存。无需额外配置——当 classpath 中存在 `micrometer-core` 时，桥接自动激活。
+
+#### Actuator 健康检查与结构化日志 *(1.7.0)*
+
+引入 `spring-boot-actuator` 后，`/actuator/health` 会包含 `NettyServerHealthIndicator`（端口、线程池、连接许可——`UP`/`DOWN`）。
+
+handler 与 WebSocket 生命周期会写入 SLF4J **MDC**（`netty.requestId`、`netty.sessionId`、`netty.uri`、`netty.remoteAddr`）。在日志 pattern 中引用即可，无需改业务代码：
+
+```
+%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} [%X{netty.requestId}] [%X{netty.sessionId}] - %msg%n
+```
 
 ### 生产部署建议
 
@@ -468,26 +489,25 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 | `server.netty.management.enable` | `false` | 启用内置 health/status 端点 |
 | `server.netty.websocket.allowed-origins` | （全部放行） | Origin 白名单（逗号分隔） |
 | `server.netty.websocket.max-connections` | `0`（不限） | 最大 WebSocket 连接数 |
+| `server.netty.websocket.max-frame-aggregation-buffer-size` | `0`（禁用） | 分片帧聚合缓冲区上限，单位字节（1.7.0） |
 | `server.netty.websocket.heartbeat-interval-seconds` | `0`（禁用） | 服务端 ping 间隔 |
 
 完整配置参考：[API 使用指南](docs/api-guide.md#10-configuration-reference)
 
 ### 当前阶段
 
-- **当前推荐版本：`1.4.0`**（P7 Demo 与文档产品化版本）
-- P0 至 P7 全部里程碑已完成
-- `1.4.0` 交付：聊天室 demo、API 使用指南（12 章节）、Starter 集成测试增强
-- 下一步：`2.0.0` Spring Boot 3.x / Jakarta namespace 迁移 + 企业安全版本
+- **当前推荐版本：`1.7.0`**（可观测性增强 + 深度修复 + WebSocket 分片消息支持）
+- `1.7.0` 按四刀交付：Micrometer 指标扩展（连接/消息/广播/延迟分布，分 URI、线程池、allocator 内存 Gauge）、SLF4J MDC 结构化日志、Actuator `/actuator/health` 健康检查、可选 WebSocket 分片消息聚合，以及 6 项经审计的遗留缺陷修复——全部向后兼容
+- P0 至 P7 全部里程碑已完成；其后依次推进性能（1.6.x）、安全稳定性（1.6.2）、可观测性（1.7.0）加固
+- 下一步：`1.8.0` Redis Pub/Sub 集群支持；之后 `2.0.0` Spring Boot 3.x / Jakarta 迁移 + 企业安全版本
 
 ### 文档
 
 - [API 使用指南](docs/api-guide.md) — 完整接入指南，含代码示例
+- [1.7.0 发布说明](docs/release-notes-1.7.0.md)
+- [1.6.2 发布说明](docs/release-notes-1.6.2.md)
 - [1.4.0 发布说明](docs/release-notes-1.4.0.md)
 - [1.3.1 发布说明](docs/release-notes-1.3.1.md)
-- [1.3.0 发布说明](docs/release-notes-1.3.0.md)
-- [1.2.3 发布说明](docs/release-notes-1.2.3.md)
-- [1.2.2 发布说明](docs/release-notes-1.2.2.md)
-- [1.2.1 发布说明](docs/release-notes-1.2.1.md)
 - [开发计划与阶段状态](docs/development-plan.md)
 - [版本发布检查清单](docs/release-checklist.md)
 - [Netty 配置说明](docs/netty-configuration.md)

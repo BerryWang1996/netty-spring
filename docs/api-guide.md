@@ -531,6 +531,8 @@ Add `spring-boot-starter-actuator` to your dependencies. Netty metrics are autom
 - `netty.http.static.rejected`
 - `netty.http.static.write.failures`
 - `netty.http.idle.closes`
+- Handler thread-pool gauges (pool size, active threads, queue depth, available permits, etc.) — *since V1.7.0*
+- Netty allocator memory gauges (used heap / used direct bytes) — *since V1.7.0*
 
 **WebSocket metrics:**
 
@@ -538,17 +540,53 @@ Add `spring-boot-starter-actuator` to your dependencies. Netty metrics are autom
 - `netty.websocket.messages.received` / `.sent`
 - `netty.websocket.sessions.closed` (tagged by `reason` — 15 close reasons)
 - `netty.websocket.sessions.active` (gauge)
+- `netty.websocket.sessions.active.uri` (gauge, tagged by `uri`) — *since V1.7.0*
 - `netty.websocket.mappings` (gauge)
+- `netty.websocket.connection.duration` (Timer, tagged by `reason`) — *since V1.7.0*
+- `netty.websocket.message.size` (DistributionSummary, bytes) — *since V1.7.0*
+- `netty.websocket.broadcast.fanout` (DistributionSummary, sessions per broadcast) — *since V1.7.0*
+- `netty.websocket.handler.latency` (Timer) — *since V1.7.0*
+
+Distribution metrics (duration / size / fanout / latency) are routed to every bound `MeterRegistry`, so they work correctly alongside a `CompositeMeterRegistry` or multiple registries.
+
+### Structured Logging (MDC) — *since V1.7.0*
+
+The framework populates SLF4J [MDC](http://www.slf4j.org/manual.html#mdc) for the duration of each request / WebSocket frame and clears it afterwards. Available keys:
+
+| MDC key | Set for | Value |
+| --- | --- | --- |
+| `netty.requestId` | HTTP requests | Generated UUID per request |
+| `netty.sessionId` | WebSocket frames & lifecycle callbacks | WebSocket session id |
+| `netty.uri` | both | Request URI / WebSocket mapping URI |
+| `netty.remoteAddr` | both | Client IP address |
+
+Include them in your logback/log4j2 pattern — no code changes required:
+
+```
+%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} [%X{netty.requestId}] [%X{netty.sessionId}] - %msg%n
+```
+
+WebSocket lifecycle callbacks (`@OnConnected`, `@OnClose`, heartbeat and error handlers) run on the handler pool but still carry the session MDC context.
+
+### Health Indicator — *since V1.7.0*
+
+When `spring-boot-actuator` is on the classpath, a `NettyServerHealthIndicator` is auto-registered and contributes to `/actuator/health`:
+
+- **UP** with details: bound port, handler pool size / active threads / queue size, connection permits available / limit.
+- **DOWN** with a reason when the server is not running.
+
+No configuration is required — it activates automatically when actuator is present.
 
 ### Example Actuator Setup
 
 ```properties
 # Actuator on a separate management port
 management.server.port=8081
-management.endpoints.web.exposure.include=metrics,health
+management.endpoints.web.exposure.include=metrics,health,prometheus
 ```
 
 Access metrics at: `http://localhost:8081/actuator/metrics/netty.websocket.sessions.active`
+Health at: `http://localhost:8081/actuator/health`
 
 ---
 
@@ -599,7 +637,8 @@ All properties use the `server.netty.*` prefix.
 | Property | Default | Description |
 | --- | --- | --- |
 | `websocket.max-connections` | `0` | Max connections (0 = unlimited) |
-| `websocket.max-frame-payload-length` | `0` | Max frame size (0 = default) |
+| `websocket.max-frame-payload-length` | `0` | Max single-frame size (0 = default 64KB) |
+| `websocket.max-frame-aggregation-buffer-size` | `0` | Aggregate fragmented frames up to N bytes (0 = disabled). *Since V1.7.0* |
 | `websocket.allowed-origins` | | Allowed origins (blank = all) |
 | `websocket.heartbeat-interval-seconds` | `0` | Server ping interval (0 = disabled) |
 | `websocket.heartbeat-timeout-seconds` | `0` | Inbound frame timeout (0 = disabled) |

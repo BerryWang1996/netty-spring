@@ -81,6 +81,14 @@ server:
 - MVC 响应和静态文件发送失败时会记录 warn 日志并关闭 channel，避免失败连接继续占用资源；同时可通过 `NettyServerBootstrap#getHttpRuntimeStats()` 读取 HTTP 响应写失败、静态文件拒绝/写失败、idle 关闭、WebSocket handshake/origin 拒绝等轻量运行时计数，并可通过 `NettyServerBootstrap#getWebSocketRuntimeStats()` 读取 WebSocket mapping 数和活跃 session 数。
 - 管理端点默认关闭；生产环境如需开启，建议仅在内网、网关保护或独立监听策略下暴露，并按实际运维规范配置 `health-path` / `status-path`。
 
+## 可观测性增强（Micrometer / Actuator / 结构化日志，`1.7.0`）
+
+内置 `/netty/status` 快照之外，`1.7.0` 提供与标准 Spring Boot 生态对接的可观测能力，均为可选依赖，缺失时自动跳过：
+
+- **Micrometer 指标**：classpath 存在 `micrometer-core` 时，HTTP 与 WebSocket 运行时计数自动桥接到 `MeterRegistry`。HTTP 侧新增 handler 线程池利用率/队列深度/许可数和 Netty allocator 堆内/堆外内存 Gauge；WebSocket 侧新增连接时长、消息大小、广播 fanout、handler 延迟等分布指标。完整指标清单见 [WebSocket 配置说明](websocket-configuration.md) 与 [API 使用指南](api-guide.md#9-metrics--monitoring)。
+- **Actuator 健康检查**：classpath 存在 `spring-boot-actuator` 时自动注册 `NettyServerHealthIndicator`，在 `/actuator/health` 暴露端口、线程池和连接许可状态（运行中 `UP` / 未运行 `DOWN`）。
+- **结构化日志（MDC）**：handler 入口与 WebSocket 生命周期回调自动注入 `netty.requestId`（HTTP）/ `netty.sessionId`（WebSocket）/ `netty.uri` / `netty.remoteAddr` 到 SLF4J MDC，处理完成后清理；在日志 pattern 中引用对应 `%X{...}` 即可使用，无需改动业务代码。
+
 ## 兼容策略
 
 - `server.netty.http.*` 是 `1.1.x` 起推荐使用的新命名空间。

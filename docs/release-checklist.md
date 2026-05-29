@@ -1,10 +1,10 @@
 # 版本发布检查清单
 
-更新时间：2026-05-26
+更新时间：2026-05-29
 
 ## 适用范围
 
-- 适用于 `1.0.x` 维护版本、`1.1.x` RC/正式版本、`1.2.x` WebSocket 产品能力版本发布。
+- 适用于 `1.0.x` 维护版本、`1.1.x` RC/正式版本、`1.2.x` WebSocket 产品能力版本，以及 `1.3.x`–`1.7.x` 的可观测性、性能、安全稳定性与功能增强版本发布。
 - 目标是保证发布动作可重复执行，而不是依赖一次性的人工记忆。
 - 当前计划暂时不把安全扫描和漏洞 triage 作为功能/稳定性版本发布阻塞项；企业安全发布另设更高门槛。
 
@@ -40,6 +40,21 @@
 - Dependency-Check / Dependabot 漏洞 triage。
 - 完整企业安全准入（CORS 策略、TLS 策略深化）。
 - 集群/分布式 session 方案和 WebSocket 子协议支持。
+
+## `1.7.0` 发布口径
+
+`1.7.0` 定位为可观测性增强 + 遗留缺陷深度修复 + WebSocket 分片消息支持版本，按"四刀"推进。已发布（tag `v1.7.0`）。
+
+完成确认项：
+
+- 全量 reactor `mvn test` 通过（9 个模块）。
+- 第一刀：v1.6.2 审计报告中 6 个遗留缺陷全部修复并有回归测试。
+- 第二刀：Micrometer 指标扩展（连接时长/消息大小/广播 fanout/handler 延迟分布、分 URI 活跃 session、handler 线程池与 Netty allocator 内存 Gauge），push 模型指标通过 `WebSocketMetricsCallback` 桥接。
+- 第三刀：SLF4J MDC 结构化日志（`netty.requestId` / `sessionId` / `uri` / `remoteAddr`）与 Actuator `NettyServerHealthIndicator`（`/actuator/health`）。
+- 第四刀：`server.netty.websocket.max-frame-aggregation-buffer-size` 控制的 `WebSocketFrameAggregator` 分片消息聚合，默认 0（禁用）保持向后兼容。
+- `micrometer-core` 与 `spring-boot-actuator` 均为 optional 依赖，缺失时自动退化，不影响无可观测依赖的应用。
+- 发布前完成 4 轮代码审计 + 1 轮对抗式验证，修复多 `MeterRegistry` 指标路由、连接时长 Timer 预创建、聚合器插入兜底、`getPort()` 空安全等问题；全部改动向后兼容。
+- 已补 `docs/release-notes-1.7.0.md`，并同步 README、`docs/api-guide.md`、`docs/netty-configuration.md`、`docs/websocket-configuration.md` 与开发计划至 `1.7.0` 状态。
 
 ## 发布前
 

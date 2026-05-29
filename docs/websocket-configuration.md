@@ -20,6 +20,7 @@ server:
       handler-permit-limit: 400
       max-connections: 2000
       max-frame-payload-length: 65536
+      max-frame-aggregation-buffer-size: 0
       allowed-origins: https://app.example.com,https://admin.example.com
       heartbeat-interval-seconds: 30
       heartbeat-timeout-seconds: 90
@@ -76,6 +77,9 @@ server:
 - `max-connections <= 0`：不限制连接数。
 - `max-frame-payload-length`：单个 websocket frame 最大 payload 大小。
 - `max-frame-payload-length <= 0`：回退到默认值 `65536`。
+- `max-frame-aggregation-buffer-size`（`1.7.0` 起）：分片消息（`ContinuationWebSocketFrame`）聚合缓冲区上限，单位字节。
+- `max-frame-aggregation-buffer-size <= 0`：默认值，禁用聚合；分片帧仍记录警告日志后丢弃（与 `1.6.x` 行为一致）。
+- `max-frame-aggregation-buffer-size > 0`：握手成功后在 pipeline 中插入 Netty `WebSocketFrameAggregator`，把分片帧自动组装为完整的 `TextWebSocketFrame` / `BinaryWebSocketFrame`；建议取值不小于 `max-frame-payload-length`，否则聚合后的完整帧会再次被单帧上限拒绝并关闭连接。
 - `allowed-origins`：允许握手的 `Origin` 白名单，支持逗号或空白分隔的精确值。
 - `allowed-origins` 为空：保持兼容，允许所有 Origin。
 - `allowed-origins=*`：显式允许所有 Origin，包括缺失 `Origin` 的请求。
@@ -173,3 +177,23 @@ server:
 - `NettyServerBootstrap#getWebSocketRuntimeStats()`：读取 WebSocket mapping 数和活跃 session 数；启用 `server.netty.management.enable=true` 后，`/netty/status` 也会包含同一份 `websocket` 快照。
 - `MessageSender#getRuntimeStats()`：读取 websocket 发送线程池、广播拒绝、caller-runs 回退、不可写 channel 策略命中和写失败计数。
 - Spring Boot Starter 场景下，推荐通过 `MessageSender#getRuntimeStats()` 获取发送侧快照；`MessageSenderSupport#getRuntimeStats()` 继续兼容。
+
+## Micrometer 指标（`1.7.0` 扩展）
+
+classpath 中存在 `micrometer-core` 时自动桥接到 `MeterRegistry`，无需额外配置。除既有 handshake / message / close 计数外，`1.7.0` 新增：
+
+- `netty.websocket.sessions.active.uri`（Gauge，按 `uri` 标签）：分 URI 的活跃 session 数。
+- `netty.websocket.connection.duration`（Timer，按 `reason` 标签）：连接从握手到关闭的时长。
+- `netty.websocket.message.size`（DistributionSummary，单位 bytes）：入站消息 payload 大小分布。
+- `netty.websocket.broadcast.fanout`（DistributionSummary）：单次广播投递的 session 数分布。
+- `netty.websocket.handler.latency`（Timer）：handler 方法执行耗时分布。
+
+duration / size / fanout / latency 为 push 模型指标，通过 `WebSocketMetricsCallback` 桥接，会同时写入每个已绑定的 `MeterRegistry`（与 `CompositeMeterRegistry` 或多 registry 共存时不会漏写或重复计数）。
+
+## 结构化日志（MDC，`1.7.0` 新增）
+
+handler 入口和 WebSocket 生命周期回调会在 SLF4J MDC 中注入 `netty.sessionId`、`netty.uri`、`netty.remoteAddr`（HTTP 请求为 `netty.requestId`），处理完成后清理。在 logback/log4j2 pattern 中引用对应 `%X{...}` 即可，无需改动业务代码。`@OnConnected` / `@OnClose` / 心跳 / 错误等在 handler 线程池上执行的回调同样携带会话 MDC 上下文。
+
+## 健康检查（Actuator，`1.7.0` 新增）
+
+引入 `spring-boot-actuator` 后自动注册 `NettyServerHealthIndicator`，在 `/actuator/health` 暴露：服务运行中为 `UP` 并附端口、handler 线程池大小/活跃/队列、连接许可可用/上限等明细；服务未运行为 `DOWN` 并说明原因。
