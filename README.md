@@ -238,15 +238,14 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#10-configurati
 ### Documentation
 
 - [API Usage Guide](docs/api-guide.md) — Complete integration guide with code examples
-- [Release Notes - 1.7.0](docs/release-notes-1.7.0.md)
-- [Release Notes - 1.6.2](docs/release-notes-1.6.2.md)
-- [Release Notes - 1.4.0](docs/release-notes-1.4.0.md)
-- [Release Notes - 1.3.1](docs/release-notes-1.3.1.md)
-- [Development Plan](docs/development-plan.md)
-- [Release Checklist](docs/release-checklist.md)
-- [Netty Configuration](docs/netty-configuration.md)
-- [WebSocket Configuration](docs/websocket-configuration.md)
-- [Dependency Governance](docs/dependency-governance.md)
+- [Netty Configuration](docs/netty-configuration.md) — HTTP / TLS / management endpoint reference
+- [WebSocket Configuration](docs/websocket-configuration.md) — WebSocket runtime, crypto, observability
+- [Release Notes - 1.7.0](docs/release-notes-1.7.0.md) — Current recommended version
+- [Development Plan](docs/development-plan.md) — Roadmap (1.8.0 cluster, 2.0.0 Spring Boot 3.x)
+- [Cluster Design (1.8.0 preview)](docs/cluster-design.md) — Redis Pub/Sub cluster architecture
+- [Release Checklist](docs/release-checklist.md) — Release process & gates
+- [Dependency Governance](docs/dependency-governance.md) — SBOM, vulnerability scanning
+- Older release notes: see `docs/release-notes-*.md`
 
 ### Testing
 
@@ -504,15 +503,14 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 ### 文档
 
 - [API 使用指南](docs/api-guide.md) — 完整接入指南，含代码示例
-- [1.7.0 发布说明](docs/release-notes-1.7.0.md)
-- [1.6.2 发布说明](docs/release-notes-1.6.2.md)
-- [1.4.0 发布说明](docs/release-notes-1.4.0.md)
-- [1.3.1 发布说明](docs/release-notes-1.3.1.md)
-- [开发计划与阶段状态](docs/development-plan.md)
-- [版本发布检查清单](docs/release-checklist.md)
-- [Netty 配置说明](docs/netty-configuration.md)
-- [WebSocket 配置说明](docs/websocket-configuration.md)
-- [依赖治理与供应链门禁](docs/dependency-governance.md)
+- [Netty 配置说明](docs/netty-configuration.md) — HTTP / TLS / 管理端点参考
+- [WebSocket 配置说明](docs/websocket-configuration.md) — WebSocket 运行时、加密、可观测性
+- [1.7.0 发布说明](docs/release-notes-1.7.0.md) — 当前推荐版本
+- [开发计划与阶段状态](docs/development-plan.md) — 路线图（1.8.0 集群、2.0.0 Spring Boot 3.x）
+- [集群方案设计（1.8.0 预览）](docs/cluster-design.md) — Redis Pub/Sub 集群架构
+- [版本发布检查清单](docs/release-checklist.md) — 发布流程与门槛
+- [依赖治理与供应链门禁](docs/dependency-governance.md) — SBOM、漏洞扫描
+- 历史发布说明：见 `docs/release-notes-*.md`
 
 ### 验证
 

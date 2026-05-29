@@ -1,6 +1,6 @@
 # netty-spring API Usage Guide
 
-> Version: 1.4.0 | Updated: 2026-05-27
+> Version: 1.7.0 | Updated: 2026-05-29
 
 This guide walks through the most common integration scenarios for `netty-spring`. Each section is self-contained — jump directly to the scenario that matches your use case.
 
@@ -41,7 +41,7 @@ All starters share the `server.netty.*` configuration namespace and auto-configu
 <dependency>
     <groupId>com.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
-    <version>1.4.0</version>
+    <version>1.7.0</version>
 </dependency>
 ```
 
