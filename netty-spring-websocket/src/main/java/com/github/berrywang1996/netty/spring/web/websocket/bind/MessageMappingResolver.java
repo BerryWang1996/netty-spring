@@ -391,8 +391,11 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             }
             session.recordInboundActivity();
             eventRecorder.recordMessageReceived();
+            eventRecorder.recordMessageSize(frame.content().readableBytes());
 
+            long handlerStart = System.nanoTime();
             handleInboundFrame(frame, session);
+            eventRecorder.recordHandlerLatency(System.nanoTime() - handlerStart);
         }
     }
 
@@ -454,7 +457,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (!session.startClosing()) {
             return;
         }
-        eventRecorder.recordClose(CloseReason.CHANNEL_INACTIVE);
+        recordSessionClose(CloseReason.CHANNEL_INACTIVE, session);
         dispatchInactiveCloseLifecycle(session);
     }
 
@@ -480,7 +483,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (session == null || !session.startClosing()) {
             return;
         }
-        eventRecorder.recordClose(reason);
+        recordSessionClose(reason, session);
         removeSession(session);
         dispatchLifecycleTask("transportError", session, new Runnable() {
             @Override
@@ -524,7 +527,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (session == null || !session.startClosing()) {
             return;
         }
-        eventRecorder.recordClose(CloseReason.SERVER_SHUTDOWN);
+        recordSessionClose(CloseReason.SERVER_SHUTDOWN, session);
         try {
             doShutdownClose(session);
         } catch (Exception e) {
@@ -1052,7 +1055,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (!session.startClosing()) {
             return false;
         }
-        eventRecorder.recordClose(CloseReason.API_CLOSE);
+        recordSessionClose(CloseReason.API_CLOSE, session);
 
         if (!session.getChannelHandlerContext().channel().isActive()) {
             // Channel already inactive: run close lifecycle inline for proper cleanup
@@ -1281,6 +1284,16 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         return webSocketProperties.getCrypto();
     }
 
+    /**
+     * Records a session close event with connection duration for metrics.
+     *
+     * @param reason  the close reason
+     * @param session the session being closed
+     */
+    private void recordSessionClose(CloseReason reason, MessageSession session) {
+        eventRecorder.recordCloseWithDuration(reason, System.nanoTime() - session.getCreatedAtNanos());
+    }
+
     private void handleFrameTooLarge(MessageSession session, WebSocketFrame frame) {
         int frameLength = frame.content().readableBytes();
         int maxFramePayloadLength = resolveMaxFramePayloadLength();
@@ -1460,7 +1473,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (session == null || !session.startClosing()) {
             return false;
         }
-        eventRecorder.recordClose(reason);
+        recordSessionClose(reason, session);
         try {
             if (notifyClose) {
                 notifyCloseLifecycle(closeFrame, session);
@@ -1480,7 +1493,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     }
 
     private void handleHandshakeFailure(MessageSession pendingSession, Throwable throwable) {
-        eventRecorder.recordClose(CloseReason.HANDSHAKE_FAILURE);
+        recordSessionClose(CloseReason.HANDSHAKE_FAILURE, pendingSession);
         dispatchLifecycleTask("handshakeFailure", pendingSession, new Runnable() {
             @Override
             public void run() {
@@ -1595,7 +1608,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (session == null || !session.startClosing()) {
             return;
         }
-        eventRecorder.recordClose(CloseReason.SERVER_SHUTDOWN);
+        recordSessionClose(CloseReason.SERVER_SHUTDOWN, session);
         dispatchLifecycleTask("shutdownClose", session, new Runnable() {
             @Override
             public void run() {
@@ -1629,7 +1642,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (session == null || !session.startClosing()) {
             return;
         }
-        eventRecorder.recordClose(reason);
+        recordSessionClose(reason, session);
         removeSession(session);
         doCloseSessionOnTransportError(session, throwable);
     }
@@ -1647,7 +1660,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
         if (session == null || !session.startClosing()) {
             return;
         }
-        eventRecorder.recordClose(CloseReason.HEARTBEAT_TIMEOUT);
+        recordSessionClose(CloseReason.HEARTBEAT_TIMEOUT, session);
         removeSession(session);
         final IllegalStateException exception =
                 new IllegalStateException("WebSocket heartbeat timeout after " + idleMillis + " ms.");

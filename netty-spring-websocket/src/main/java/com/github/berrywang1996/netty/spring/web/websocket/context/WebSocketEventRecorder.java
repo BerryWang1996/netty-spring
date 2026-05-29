@@ -112,6 +112,24 @@ public final class WebSocketEventRecorder {
         increment(messagesSent);
     }
 
+    // ---- Metrics callback for distribution-based observations (Timer, Summary) ----
+
+    /**
+     * Optional callback for recording distribution metrics that require event-time
+     * observation (connection duration, message size, broadcast fanout, handler latency).
+     * When {@code null}, these metrics are silently skipped.
+     */
+    private volatile WebSocketMetricsCallback metricsCallback;
+
+    /**
+     * Sets the metrics callback for distribution-based observations.
+     *
+     * @param callback the callback to invoke on distribution metric events, or {@code null} to disable
+     */
+    public void setMetricsCallback(WebSocketMetricsCallback callback) {
+        this.metricsCallback = callback;
+    }
+
     // ---- Close events ----
 
     /**
@@ -126,6 +144,58 @@ public final class WebSocketEventRecorder {
         AtomicLong counter = closeCounters.get(reason);
         if (counter != null) {
             counter.incrementAndGet();
+        }
+    }
+
+    /**
+     * Records a session close event with connection duration for distribution metrics.
+     *
+     * @param reason        the close reason
+     * @param durationNanos the connection lifetime in nanoseconds
+     */
+    public void recordCloseWithDuration(CloseReason reason, long durationNanos) {
+        recordClose(reason);
+        WebSocketMetricsCallback cb = this.metricsCallback;
+        if (cb != null && reason != null) {
+            cb.recordConnectionDuration(reason.getTag(), durationNanos);
+        }
+    }
+
+    // ---- Distribution metric events ----
+
+    /**
+     * Records the size of an inbound WebSocket message for distribution metrics.
+     *
+     * @param bytes the message payload size in bytes
+     */
+    public void recordMessageSize(int bytes) {
+        WebSocketMetricsCallback cb = this.metricsCallback;
+        if (cb != null) {
+            cb.recordMessageSize(bytes);
+        }
+    }
+
+    /**
+     * Records the fan-out count of a broadcast operation.
+     *
+     * @param sessionCount the number of sessions targeted
+     */
+    public void recordBroadcastFanout(int sessionCount) {
+        WebSocketMetricsCallback cb = this.metricsCallback;
+        if (cb != null) {
+            cb.recordBroadcastFanout(sessionCount);
+        }
+    }
+
+    /**
+     * Records the latency of a handler method invocation.
+     *
+     * @param latencyNanos the handler execution time in nanoseconds
+     */
+    public void recordHandlerLatency(long latencyNanos) {
+        WebSocketMetricsCallback cb = this.metricsCallback;
+        if (cb != null) {
+            cb.recordHandlerLatency(latencyNanos);
         }
     }
 

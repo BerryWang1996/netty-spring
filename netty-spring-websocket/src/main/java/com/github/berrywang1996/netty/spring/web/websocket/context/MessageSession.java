@@ -65,6 +65,9 @@ public class MessageSession {
     /** CAS flag ensuring the heartbeat scheduler is started at most once. */
     private final AtomicBoolean heartbeatStarted = new AtomicBoolean(false);
 
+    /** High-resolution timestamp captured at session creation. Used for connection duration metrics. */
+    private final long createdAtNanos = System.nanoTime();
+
     /** Timestamp of the last inbound frame (data or pong). Used for idle detection. */
     private volatile long lastReadTimeMillis = System.currentTimeMillis();
 
@@ -283,6 +286,16 @@ public class MessageSession {
      */
     public long getLastPongTimeMillis() {
         return lastPongTimeMillis;
+    }
+
+    /**
+     * Returns the high-resolution timestamp captured at session creation.
+     * Use with {@code System.nanoTime()} to compute connection duration.
+     *
+     * @return the session creation time in nanoseconds (monotonic clock)
+     */
+    public long getCreatedAtNanos() {
+        return createdAtNanos;
     }
 
     /**

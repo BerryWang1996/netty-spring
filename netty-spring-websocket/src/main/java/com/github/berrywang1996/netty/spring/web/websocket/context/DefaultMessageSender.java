@@ -355,6 +355,13 @@ public class DefaultMessageSender implements MessageSender {
                 return;
             }
 
+            // Record broadcast fanout (number of sessions targeted)
+            int fanoutCount = 0;
+            for (List<SessionContext> group : groups.values()) {
+                fanoutCount += group.size();
+            }
+            resolver.getEventRecorder().recordBroadcastFanout(fanoutCount);
+
             // Step 3: Submit one task per EventLoop
             for (Map.Entry<EventLoop, List<SessionContext>> entry : groups.entrySet()) {
                 EventLoop eventLoop = entry.getKey();
@@ -498,12 +505,15 @@ public class DefaultMessageSender implements MessageSender {
     private void topicMessageLegacy(final MessageMappingResolver resolver,
                                     final AbstractMessage message) {
         Map<String, MessageSession> sessionMap = resolver.getSessionMap();
+        int fanoutCount = 0;
         for (final MessageSession session : sessionMap.values()) {
             if (!prepareSessionForBroadcast(resolver, session)) {
                 continue;
             }
             submitBroadcastTask(resolver, session, message);
+            fanoutCount++;
         }
+        resolver.getEventRecorder().recordBroadcastFanout(fanoutCount);
     }
 
     /**

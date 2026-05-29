@@ -18,8 +18,10 @@ package com.github.berrywang1996.netty.spring.boot.configure;
 
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
 import io.micrometer.core.instrument.FunctionCounter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.binder.MeterBinder;
+import io.netty.buffer.PooledByteBufAllocator;
 
 /**
  * Bridges {@link com.github.berrywang1996.netty.spring.web.context.HttpRuntimeRecorder}
@@ -33,6 +35,16 @@ import io.micrometer.core.instrument.binder.MeterBinder;
  *   <li>{@code netty.http.idle.closes} – idle connection closes (FunctionCounter)</li>
  *   <li>{@code netty.http.websocket.handshake.rejected} – WebSocket handshake rejects at HTTP level (FunctionCounter)</li>
  *   <li>{@code netty.http.websocket.origin.rejected} – WebSocket origin check rejections (FunctionCounter)</li>
+ *   <li>{@code netty.handler.pool.size} – current handler thread pool size (Gauge)</li>
+ *   <li>{@code netty.handler.pool.active} – active handler threads (Gauge)</li>
+ *   <li>{@code netty.handler.pool.core} – core handler pool size (Gauge)</li>
+ *   <li>{@code netty.handler.pool.max} – maximum handler pool size (Gauge)</li>
+ *   <li>{@code netty.handler.queue.size} – handler work queue depth (Gauge)</li>
+ *   <li>{@code netty.handler.queue.remaining} – handler work queue remaining capacity (Gauge)</li>
+ *   <li>{@code netty.handler.permits.available} – available admission permits (Gauge)</li>
+ *   <li>{@code netty.handler.permits.limit} – maximum admission permits (Gauge)</li>
+ *   <li>{@code netty.allocator.used.heap} – heap memory used by Netty allocator (Gauge)</li>
+ *   <li>{@code netty.allocator.used.direct} – direct memory used by Netty allocator (Gauge)</li>
  * </ul>
  *
  * @author berrywang1996
@@ -97,6 +109,60 @@ public class NettyHttpMeterBinder implements MeterBinder {
         FunctionCounter.builder("netty.http.websocket.origin.rejected", bootstrap,
                         b -> b.getHttpRuntimeStats().getWebSocketOriginRejectedCount())
                 .description("WebSocket origin check rejections")
+                .register(registry);
+
+        // ---- Handler thread pool gauges ----
+        Gauge.builder("netty.handler.pool.size", bootstrap,
+                        b -> b.getHandlerRuntimeStats().getExecutor().getPoolSize())
+                .description("Current handler thread pool size")
+                .register(registry);
+
+        Gauge.builder("netty.handler.pool.active", bootstrap,
+                        b -> b.getHandlerRuntimeStats().getExecutor().getActiveCount())
+                .description("Active handler threads")
+                .register(registry);
+
+        Gauge.builder("netty.handler.pool.core", bootstrap,
+                        b -> b.getHandlerRuntimeStats().getExecutor().getCorePoolSize())
+                .description("Core handler thread pool size")
+                .register(registry);
+
+        Gauge.builder("netty.handler.pool.max", bootstrap,
+                        b -> b.getHandlerRuntimeStats().getExecutor().getMaximumPoolSize())
+                .description("Maximum handler thread pool size")
+                .register(registry);
+
+        Gauge.builder("netty.handler.queue.size", bootstrap,
+                        b -> b.getHandlerRuntimeStats().getExecutor().getQueueSize())
+                .description("Handler work queue depth")
+                .register(registry);
+
+        Gauge.builder("netty.handler.queue.remaining", bootstrap,
+                        b -> b.getHandlerRuntimeStats().getExecutor().getQueueRemainingCapacity())
+                .description("Handler work queue remaining capacity")
+                .register(registry);
+
+        Gauge.builder("netty.handler.permits.available", bootstrap,
+                        b -> b.getHandlerRuntimeStats().getAvailablePermits())
+                .description("Available admission control permits")
+                .register(registry);
+
+        Gauge.builder("netty.handler.permits.limit", bootstrap,
+                        b -> b.getHandlerRuntimeStats().getPermitLimit())
+                .description("Maximum admission control permits")
+                .register(registry);
+
+        // ---- Netty pooled allocator memory gauges ----
+        Gauge.builder("netty.allocator.used.heap", PooledByteBufAllocator.DEFAULT,
+                        alloc -> alloc.metric().usedHeapMemory())
+                .baseUnit("bytes")
+                .description("Heap memory used by Netty pooled ByteBuf allocator")
+                .register(registry);
+
+        Gauge.builder("netty.allocator.used.direct", PooledByteBufAllocator.DEFAULT,
+                        alloc -> alloc.metric().usedDirectMemory())
+                .baseUnit("bytes")
+                .description("Direct memory used by Netty pooled ByteBuf allocator")
                 .register(registry);
     }
 }
