@@ -1,6 +1,6 @@
 # 依赖治理与供应链门禁
 
-更新时间：2026-04-27
+更新时间：2026-05-29
 
 ## 目标
 
@@ -9,13 +9,15 @@
 - 普通开发命令保持轻量，依赖扫描和 SBOM 生成只在显式 profile 下运行。
 - 当前功能/稳定性版本暂时不把 Dependency-Check 和 Dependabot triage 作为发布阻塞项；本文件记录的是后续安全轨道门槛。
 
-## Maven Profiles
-
 ## 版本一致性
 
 - 根 POM 显式导入 `io.netty:netty-bom:${netty.version}`，避免 Netty 子模块被 Spring Boot BOM 中较旧的版本覆盖，导致 Netty 组件混版。
 - Runtime 不再依赖 `netty-all`，只显式引入当前代码实际使用的 `netty-codec-http`、`netty-handler`、`netty-transport`、`netty-buffer` 和 `netty-common`，减少无关协议模块带来的漏洞面和扫描噪音。
 - Spring Boot 仍由 `org.springframework.boot:spring-boot-dependencies:${spring-boot.version}` 管理；如果后续升级 Spring Boot，需要重新确认 Netty BOM 覆盖顺序和 `mvn dependency:tree -Dincludes=io.netty` 输出。
+- **logback 1.2.13 显式 pin（自 `1.7.1` 起）**：Spring Boot 2.7.18 BOM 默认 logback 1.2.12 仍有 CVE-2023-6378（`SocketReceiver` / `SocketAppender` 序列化漏洞）。根 POM 的 `<dependencyManagement>` 在 `spring-boot-dependencies` 之前显式声明 `logback-classic:1.2.13` 与 `logback-core:1.2.13` 覆盖。
+- **Spring Boot OSS-EOL 说明**：Spring Boot `2.7.x` OSS 线已于 2023-11 停止维护；后续 `2.7.x` Enterprise 修复需付费。`netty-spring 1.x` 跟随 OSS 2.7.18，对单项 CVE 通过覆盖（如 logback）补救；完整迁移路径是 `2.0.0` 切换到 Spring Boot 3.x。
+
+## Maven Profiles
 
 ### 生成 SBOM
 

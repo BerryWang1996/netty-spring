@@ -1,6 +1,6 @@
 # netty-spring API Usage Guide
 
-> Version: 1.7.0 | Updated: 2026-05-29
+> Version: 1.7.1 | Updated: 2026-05-29
 
 This guide walks through the most common integration scenarios for `netty-spring`. Each section is self-contained — jump directly to the scenario that matches your use case.
 
@@ -41,7 +41,7 @@ All starters share the `server.netty.*` configuration namespace and auto-configu
 <dependency>
     <groupId>com.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
-    <version>1.7.0</version>
+    <version>1.7.1</version>
 </dependency>
 ```
 
@@ -421,15 +421,26 @@ The interceptor runs after Origin check but before `@MessageMapping(messageType 
 
 ### Using ON_HANDSHAKE Callback
 
-For simpler cases, use `@MessageMapping` with `ON_HANDSHAKE`:
+For simpler cases, use `@MessageMapping` with `ON_HANDSHAKE`. The callback fires
+before the session exists, so the framework injects the `HttpRequest` (the
+handshake request) rather than a `MessageSession`:
 
 ```java
+import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.QueryStringDecoder;
+
 @MessageMapping(value = "/ws/secure", messageType = MessageType.ON_HANDSHAKE)
-public boolean onHandshake(MessageSession session) {
-    String token = session.getQueryParam("token");
+public boolean onHandshake(HttpRequest request) {
+    QueryStringDecoder decoder = new QueryStringDecoder(request.uri());
+    List<String> tokens = decoder.parameters().get("token");
+    String token = (tokens == null || tokens.isEmpty()) ? null : tokens.get(0);
     return token != null && isValidToken(token);
 }
 ```
+
+Return `false` to reject the handshake (the client sees HTTP 403). For more
+sophisticated flows, prefer the `WebSocketHandshakeInterceptor` shown above,
+which offers a structured rejection reason.
 
 ### Origin Restriction
 
@@ -458,14 +469,18 @@ server.netty.websocket.crypto.key-provider=myKeyProvider
 ### Implement a Key Provider
 
 ```java
+import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
+
 @Bean("myKeyProvider")
 public MessageCryptoKeyProvider keyProvider() {
     return (keyId, session) -> {
         // In production, load keys from a secure key management service
         if ("my-key-2026".equals(keyId)) {
-            return mySecretKeyBytes;  // 16/24/32 bytes for AES-128/192/256
+            byte[] keyBytes = loadKeyBytes(keyId);   // 16/24/32 bytes for AES-128/192/256
+            return new SecretKeySpec(keyBytes, "AES");
         }
-        return null;
+        return null;   // unknown kid → signals "key not available", caller handles it
     };
 }
 ```
@@ -538,7 +553,7 @@ Add `spring-boot-starter-actuator` to your dependencies. Netty metrics are autom
 
 - `netty.websocket.handshakes.total` / `.success` / `.rejected`
 - `netty.websocket.messages.received` / `.sent`
-- `netty.websocket.sessions.closed` (tagged by `reason` — 15 close reasons)
+- `netty.websocket.sessions.closed` (tagged by `reason` — one series per `CloseReason` enum value)
 - `netty.websocket.sessions.active` (gauge)
 - `netty.websocket.sessions.active.uri` (gauge, tagged by `uri`) — *since V1.7.0*
 - `netty.websocket.mappings` (gauge)
@@ -645,20 +660,31 @@ All properties use the `server.netty.*` prefix.
 
 ### WebSocket Thread Pools
 
-| Property | Default | Description |
-| --- | --- | --- |
-| `websocket.core-pool-size` | `0` | Sender executor core threads |
-| `websocket.max-pool-size` | `0` | Sender executor max threads |
-| `websocket.handler-core-pool-size` | `0` | Handler executor core threads |
-| `websocket.handler-max-pool-size` | `0` | Handler executor max threads |
-| `websocket.handler-permit-limit` | `0` | Max concurrent handler tasks |
-
-### WebSocket Broadcast Policy
+Configuration values of `0` (the field initializer) mean *dynamic default* —
+the framework substitutes a value derived from CPU count at startup.
 
 | Property | Default | Description |
 | --- | --- | --- |
+| `websocket.core-pool-size` | `max(2, CPU)` | Sender executor core threads (set to `0` → dynamic) |
+| `websocket.max-pool-size` | `max(core, CPU*2)` | Sender executor max threads (set to `0` → dynamic) |
+| `websocket.keep-alive-time` | `60` | Sender thread idle TTL (seconds) |
+| `websocket.queue-capacity` | `0` | Sender queue capacity; `0` = `SynchronousQueue` |
+| `websocket.handler-core-pool-size` | `max(2, CPU)` | Handler executor core threads (set to `0` → dynamic) |
+| `websocket.handler-max-pool-size` | `max(core, CPU*2)` | Handler executor max threads (set to `0` → dynamic) |
+| `websocket.handler-keep-alive-time` | `5` | Handler thread idle TTL (seconds) |
+| `websocket.handler-queue-capacity` | `0` | Handler queue capacity; `0` = `SynchronousQueue` |
+| `websocket.handler-permit-limit` | `max*2` | Total in-flight admission cap (set to `0` → dynamic) |
+
+### WebSocket Broadcast
+
+| Property | Default | Description |
+| --- | --- | --- |
+| `websocket.broadcast-mode` | `EVENT_LOOP_DIRECT` | `EVENT_LOOP_DIRECT` (v1.6+ zero-copy fan-out) or `THREAD_POOL_LEGACY` (v1.5.x compat) |
 | `websocket.broadcast-non-writable-channel-policy` | `SKIP` | `SKIP` or `CLOSE` non-writable channels |
 | `websocket.broadcast-rejected-execution-policy` | `DROP` | `DROP` or `CALLER_RUNS` when executor is full |
+| `websocket.write-buffer-low-water-mark` | `32768` | Per-channel write buffer low mark (bytes) |
+| `websocket.write-buffer-high-water-mark` | `65536` | Per-channel write buffer high mark; above this a channel is non-writable |
+| `websocket.flush-consolidation-threshold` | `256` | `FlushConsolidationHandler` threshold; `0` or negative disables |
 
 ---
 
