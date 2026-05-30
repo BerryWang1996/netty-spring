@@ -115,11 +115,14 @@ connection cannot be closing and opening at once). Defense-in-depth correctness 
   **standalone / Sentinel Redis** (1.8.0's supported topologies) but would violate Redis Cluster's
   cross-slot key rule — consistent with our non-goal "Redis Cluster client deferred". Documented as
   such; if a Redis Cluster client lands later it revisits this.
-- Script cached via `EVALSHA` with `EVAL` fallback on `NOSCRIPT`.
+- Plain `EVAL` (Redis caches the compiled script by SHA after first use, and the body is tiny, so
+  resending it is negligible). An `EVALSHA`-with-fallback wire-size micro-opt is not worth the
+  NOSCRIPT bookkeeping at deregister rates — deferred.
 
-**Test.** integration against real Redis: interleave deregister(s1) with a re-register(s1) and assert
-no orphaned node-set member and `lookupNode` reflects the surviving registration; assert the script
-path (EVALSHA) is taken and the legacy non-atomic path is gone.
+**Test.** integration against real Redis: register then deregister and assert both the session hash is
+gone (`lookupNode == null`) and the node-set member was `SREM`-ed (no orphan) — the observable atomic
+contract. (A forced interleave race is non-deterministic; the node-set-cleanup assertion is the
+durable check.)
 
 ### ④ Reconciliation leader-election (claim before reap)
 
