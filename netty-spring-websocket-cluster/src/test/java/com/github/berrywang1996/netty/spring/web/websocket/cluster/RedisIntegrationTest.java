@@ -139,6 +139,31 @@ class RedisIntegrationTest {
         hb.deregister("test-node");
     }
 
+    @Test
+    @Order(11)
+    void findExpiredNodesBatchesMultipleSimultaneousExpiries() throws Exception {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available");
+
+        RedisClusterNodeHeartbeat hb = new RedisClusterNodeHeartbeat(connection);
+        // three nodes with a short TTL → all expire together
+        hb.register("batch-A", 1000);
+        hb.register("batch-B", 1000);
+        hb.register("batch-C", 1000);
+        // one node renewed long → must NOT be reported expired
+        hb.register("batch-live", 60000);
+
+        Thread.sleep(1300); // let A/B/C TTLs lapse
+
+        List<String> expired = hb.findExpiredNodes(1000);
+        assertTrue(expired.contains("batch-A"));
+        assertTrue(expired.contains("batch-B"));
+        assertTrue(expired.contains("batch-C"));
+        assertFalse(expired.contains("batch-live"), "a freshly-renewed node must be excluded");
+
+        hb.deregister("batch-A"); hb.deregister("batch-B");
+        hb.deregister("batch-C"); hb.deregister("batch-live");
+    }
+
     // ==================== 3. Pub/Sub Broker — Broadcast + Self-Delivery Suppression ====================
 
     @Test

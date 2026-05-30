@@ -17,14 +17,18 @@
 package com.github.berrywang1996.netty.spring.web.websocket.cluster.redis;
 
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeHeartbeat;
+import io.lettuce.core.RedisFuture;
 import io.lettuce.core.SetArgs;
 import io.lettuce.core.api.StatefulRedisConnection;
+import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.lettuce.core.api.sync.RedisCommands;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Redis-backed implementation of {@link ClusterNodeHeartbeat}.
@@ -104,24 +108,46 @@ public class RedisClusterNodeHeartbeat implements ClusterNodeHeartbeat {
         }
 
         long now = System.currentTimeMillis();
-        List<String> expired = new ArrayList<>();
 
+        // Phase 1: collect timestamp-stale candidates (cheap, in-memory).
+        List<String> candidates = new ArrayList<>();
         for (Map.Entry<String, String> entry : nodes.entrySet()) {
             String nodeId = entry.getKey();
             try {
                 long lastHeartbeat = Long.parseLong(entry.getValue());
                 if (now - lastHeartbeat > timeoutMs) {
-                    // Double-check: is the heartbeat key actually gone?
-                    Boolean exists = sync.exists(HEARTBEAT_PREFIX + nodeId) > 0;
-                    if (!exists) {
-                        expired.add(nodeId);
-                    }
+                    candidates.add(nodeId);
                 }
             } catch (NumberFormatException e) {
                 log.warn("Invalid heartbeat timestamp for node {}: {}", nodeId, entry.getValue());
             }
         }
+        if (candidates.isEmpty()) {
+            return List.of();
+        }
 
+        // Phase 2: confirm each candidate's heartbeat key is actually gone. Fire all EXISTS commands
+        // async WITHOUT awaiting between them (Lettuce pipelines on the default auto-flush), then await
+        // all — ~1 round-trip group instead of N sequential blocking calls. We must NOT toggle
+        // setAutoFlushCommands here: it is connection-wide and this connection is shared.
+        RedisAsyncCommands<String, String> async = connection.async();
+        Map<String, RedisFuture<Long>> existsFutures = new LinkedHashMap<>();
+        for (String nodeId : candidates) {
+            existsFutures.put(nodeId, async.exists(HEARTBEAT_PREFIX + nodeId));
+        }
+
+        List<String> expired = new ArrayList<>();
+        for (Map.Entry<String, RedisFuture<Long>> e : existsFutures.entrySet()) {
+            try {
+                Long exists = e.getValue().get(timeoutMs, TimeUnit.MILLISECONDS);
+                if (exists != null && exists == 0L) {
+                    expired.add(e.getKey());
+                }
+            } catch (Exception ex) {
+                // Treat an EXISTS we couldn't confirm as "still alive" (conservative — don't reap on doubt).
+                log.debug("EXISTS check failed for candidate node {} during reconciliation", e.getKey(), ex);
+            }
+        }
         return expired;
     }
 }
