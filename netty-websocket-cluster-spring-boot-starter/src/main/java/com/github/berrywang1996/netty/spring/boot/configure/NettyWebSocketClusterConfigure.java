@@ -68,7 +68,13 @@ import org.springframework.context.annotation.Primary;
 @Configuration
 @ConditionalOnClass(ClusterBroker.class)
 @ConditionalOnProperty(prefix = "server.netty.websocket.cluster", name = "enable", havingValue = "true")
-@AutoConfigureAfter(NettyServerBootstrapConfigure.class)
+// MUST be ordered AFTER MessageSenderSupportConfigure: that config registers the local
+// `messageSender` bean under @ConditionalOnMissingBean(MessageSender). Since this cluster
+// config's @Primary ClusterMessageSender is ALSO a MessageSender, the local bean must be
+// created first — otherwise @ConditionalOnMissingBean would suppress it and the
+// @Qualifier("messageSender") injection below would fail. Explicit ordering removes the
+// (previously alphabetical-accident) fragility.
+@AutoConfigureAfter({NettyServerBootstrapConfigure.class, MessageSenderSupportConfigure.class})
 public class NettyWebSocketClusterConfigure {
 
     @Bean
@@ -83,8 +89,40 @@ public class NettyWebSocketClusterConfigure {
     @ConditionalOnMissingBean(RedisClient.class)
     public RedisClient nettyClusterRedisClient(ClusterProperties properties) {
         String uri = properties.getRedis().getUri();
-        log.info("Creating Lettuce RedisClient for cluster at {}", uri);
+        // Never log the raw URI — it may carry inline credentials (redis://:password@host).
+        log.info("Creating Lettuce RedisClient for cluster at {}", redactRedisUri(uri));
+        warnIfInsecureRedis(uri);
         return RedisClient.create(uri);
+    }
+
+    /** Masks userinfo (password) in a Redis URI before logging. */
+    private static String redactRedisUri(String uri) {
+        if (uri == null) {
+            return "null";
+        }
+        // redis[s]://[user][:password]@host:port -> redis[s]://***@host:port
+        int at = uri.indexOf('@');
+        int scheme = uri.indexOf("://");
+        if (at > 0 && scheme > 0 && at > scheme) {
+            return uri.substring(0, scheme + 3) + "***@" + uri.substring(at + 1);
+        }
+        return uri;
+    }
+
+    /** Warns when the cluster control-plane Redis is configured without TLS or a password. */
+    private static void warnIfInsecureRedis(String uri) {
+        if (uri == null) {
+            return;
+        }
+        boolean tls = uri.startsWith("rediss://") || uri.startsWith("redis+tls://");
+        boolean hasAuth = uri.contains("@");
+        if (!tls || !hasAuth) {
+            log.warn("Cluster Redis is the WebSocket control plane: anyone who can PUBLISH to it "
+                    + "can inject into or close any session. Configured URI is {}{} — for production "
+                    + "use a DEDICATED, network-isolated Redis with a password (redis://:secret@host) "
+                    + "and TLS (rediss://). See docs/cluster-design.md §Security.",
+                    tls ? "" : "non-TLS", hasAuth ? "" : (tls ? "no-auth" : "/no-auth"));
+        }
     }
 
     @Bean(name = "nettyClusterRedisConnection", destroyMethod = "close")
@@ -111,13 +149,19 @@ public class NettyWebSocketClusterConfigure {
         return new DefaultMessagePayloadCodec();
     }
 
-    @Bean
+    @Bean(destroyMethod = "shutdown")
     @ConditionalOnMissingBean(ClusterBroker.class)
-    public RedisPubSubBroker clusterBroker(RedisClient redisClient, EnvelopeCodec envelopeCodec) {
-        return new RedisPubSubBroker(redisClient, envelopeCodec);
+    public RedisPubSubBroker clusterBroker(RedisClient redisClient, EnvelopeCodec envelopeCodec,
+                                           ClusterProperties properties) {
+        RedisPubSubBroker broker = new RedisPubSubBroker(redisClient, envelopeCodec);
+        // Inbound guard: reject received messages larger than the outbound cap + headroom
+        // (Base64 ~+33% + envelope metadata). 0 (unlimited) outbound => unlimited inbound.
+        int maxOut = properties.getMessageMaxSizeBytes();
+        broker.setInboundMaxBytes(maxOut > 0 ? (int) Math.min((long) maxOut * 2L, Integer.MAX_VALUE) : 0);
+        return broker;
     }
 
-    @Bean
+    @Bean(destroyMethod = "shutdown")
     @ConditionalOnMissingBean(SessionRegistry.class)
     public RedisSessionRegistry sessionRegistry(
             @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
@@ -154,7 +198,7 @@ public class NettyWebSocketClusterConfigure {
         return manager;
     }
 
-    @Bean
+    @Bean(destroyMethod = "shutdown")
     @Primary
     public ClusterMessageSender clusterMessageSender(
             @org.springframework.beans.factory.annotation.Qualifier("messageSender") MessageSender localSender,

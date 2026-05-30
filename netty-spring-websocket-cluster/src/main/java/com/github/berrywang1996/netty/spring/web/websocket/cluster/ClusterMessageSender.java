@@ -263,19 +263,20 @@ public class ClusterMessageSender implements MessageSender {
             throws MessageUriNotDefinedException, MessageSessionClosedException {
 
         List<String> localIds = new ArrayList<>();
-        List<String> remoteIds = new ArrayList<>();
+        // Resolve each remote session's owning node EXACTLY ONCE here (no second lookup in the
+        // send loop) — avoids a TOCTOU where a cache expiry/NODE_LEFT between the two lookups
+        // would reclassify a live remote session as closed, and halves registry read load.
+        Map<String, String> remoteSessionToNode = new LinkedHashMap<>();
         List<String> closedIds = new ArrayList<>();
 
-        // Partition: local sessions go to local sender, remote sessions go to broker
         for (String sessionId : sessionIds) {
             MessageSession localSession = localSender.getSession(uri, sessionId);
             if (localSession != null) {
                 localIds.add(sessionId);
             } else {
-                // Check cluster registry
                 String targetNodeId = lookupNodeCached(uri, sessionId);
                 if (targetNodeId != null) {
-                    remoteIds.add(sessionId);
+                    remoteSessionToNode.put(sessionId, targetNodeId);
                 } else {
                     closedIds.add(sessionId);
                 }
@@ -291,33 +292,30 @@ public class ClusterMessageSender implements MessageSender {
             }
         }
 
-        // Unicast to remote sessions via broker
-        if (!remoteIds.isEmpty() && nodeManager.getState() == NodeState.ACTIVE) {
-            for (String sessionId : remoteIds) {
-                String targetNodeId = lookupNodeCached(uri, sessionId);
-                if (targetNodeId != null) {
-                    ClusterEnvelope envelope = buildUnicastEnvelope(uri, sessionId, message);
-                    if (exceedsSizeLimit(envelope)) {
-                        handlePublishFailure("unicast for session " + sessionId
-                                + " exceeds messageMaxSizeBytes (" + envelope.getPayload().length
-                                + " > " + messageMaxSizeBytes + ")", null);
-                        closedIds.add(sessionId);
-                        continue;
-                    }
-                    try {
-                        broker.unicast(targetNodeId, envelope);
-                        clusterStats.unicastSent.incrementAndGet();
-                    } catch (ClusterBrokerException e) {
-                        handlePublishFailure("unicast for session " + sessionId + " on node " + targetNodeId, e);
-                        closedIds.add(sessionId);
-                    }
-                } else {
+        // Unicast to remote sessions via broker (using the nodeId resolved above)
+        if (!remoteSessionToNode.isEmpty() && nodeManager.getState() == NodeState.ACTIVE) {
+            for (Map.Entry<String, String> entry : remoteSessionToNode.entrySet()) {
+                String sessionId = entry.getKey();
+                String targetNodeId = entry.getValue();
+                ClusterEnvelope envelope = buildUnicastEnvelope(uri, sessionId, message);
+                if (exceedsSizeLimit(envelope)) {
+                    handlePublishFailure("unicast for session " + sessionId
+                            + " exceeds messageMaxSizeBytes (" + envelope.getPayload().length
+                            + " > " + messageMaxSizeBytes + ")", null);
+                    closedIds.add(sessionId);
+                    continue;
+                }
+                try {
+                    broker.unicast(targetNodeId, envelope);
+                    clusterStats.unicastSent.incrementAndGet();
+                } catch (ClusterBrokerException e) {
+                    handlePublishFailure("unicast for session " + sessionId + " on node " + targetNodeId, e);
                     closedIds.add(sessionId);
                 }
             }
-        } else if (!remoteIds.isEmpty()) {
+        } else if (!remoteSessionToNode.isEmpty()) {
             // Broker degraded — treat remote sessions as unreachable
-            closedIds.addAll(remoteIds);
+            closedIds.addAll(remoteSessionToNode.keySet());
         }
 
         if (!closedIds.isEmpty()) {
@@ -362,18 +360,19 @@ public class ClusterMessageSender implements MessageSender {
 
     @Override
     public void shutdown() {
-        // Unsubscribe all broadcast channels
+        // Tear down only what this sender owns: the cluster subscriptions.
+        // The local sender, broker, registry and node manager are independent Spring
+        // beans with their own destroyMethod lifecycle — shutting them down here would
+        // double-shut-down them (Spring also calls their destroy methods).
         for (ClusterSubscription sub : broadcastSubscriptions.values()) {
             sub.unsubscribe();
         }
         broadcastSubscriptions.clear();
 
-        // Unsubscribe unicast
         if (unicastSubscription != null) {
             unicastSubscription.unsubscribe();
         }
 
-        localSender.shutdown();
         log.info("ClusterMessageSender shut down for node {}", nodeManager.getNodeId());
     }
 

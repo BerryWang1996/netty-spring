@@ -66,7 +66,15 @@ public class DefaultMessagePayloadCodec implements MessagePayloadCodec {
             switch (type) {
                 case 'T': return new TextMessage(body);
                 case 'J': return new JsonMessage(body);
-                case 'B': return new BinaryMessage(Base64.getDecoder().decode(body));
+                case 'B':
+                    // Guard against a user TextMessage that legitimately starts with "B:" but
+                    // whose body is not valid Base64 — don't let it throw out of the decode path.
+                    try {
+                        return new BinaryMessage(Base64.getDecoder().decode(body));
+                    } catch (IllegalArgumentException notBase64) {
+                        log.debug("Payload prefixed 'B:' but body is not valid Base64 — treating as TextMessage");
+                        return new TextMessage(s);
+                    }
                 default:
                     log.debug("Unknown payload type prefix '{}', treating as TextMessage", type);
                     return new TextMessage(s);

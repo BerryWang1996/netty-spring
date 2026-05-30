@@ -71,8 +71,9 @@ v1.8.0 是 **WebSocket 集群支持** 的 milestone 版本。通过 Redis Pub/Su
 
 ## 测试覆盖
 
-- 282 个测试，11 个模块，全部通过
-- 集群模块：6 SPI 隔离测试 + 8 Redis 集成测试 + 4 性能基准
+- 285 个测试，11 个模块，全部通过
+- 集群模块：6 SPI 隔离测试 + 6 配置 knobs 测试 + 9 Redis 集成测试（含入站大小上限安全测试）
+- `PerformanceBenchmark`（4 个方法）是**手动运行的性能 harness**，不计入 285 的 `mvn test` 套件
 
 ## 升级指南
 
@@ -92,7 +93,17 @@ v1.8.0 是 **WebSocket 集群支持** 的 milestone 版本。通过 Redis Pub/Su
 
 ```properties
 server.netty.websocket.cluster.enable=true
-server.netty.websocket.cluster.redis.uri=redis://your-redis:6379
+# 生产：专用 + 隔离 + 认证 + TLS 的 Redis
+server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 ```
 
 业务代码零改动 — `MessageSender` 自动切换为 `ClusterMessageSender`。
+
+## 生产发版定位与安全
+
+- **单机模式（默认）= 生产级**：`cluster.enable=false`（或缺省）时行为与 1.7.x 完全一致，零集群开销。绝大多数用户用这个。
+- **集群模式 = 面向 ≤~10 节点 + 专用加密 Redis**。⚠️ **Redis 是集群控制平面**：任何能 `PUBLISH` 的主体都能向任意会话注入消息或强制关闭会话。生产**必须**用专用、网络隔离、带密码（`redis://:secret@host`）+ TLS（`rediss://`）的 Redis。1.8.0 已内置：URI 密码日志脱敏 + 无认证/无 TLS 时 `WARN` + 接收端入站消息大小上限。应用层 AES-GCM **不**延伸过 Redis（明文扇出到远端）。完整信任模型见 `docs/cluster-design.md §安全模型`。
+
+## 已知限制（推迟到 1.9.x 硬化）
+
+envelope HMAC 认证、完整 Micrometer 指标集 + Actuator 集群健康、reconciliation 选主去重、`deregister` 原子性、心跳/对账线程隔离、Lettuce 连接事件即时降级、多 pub/sub 连接、sharded pub/sub、Redis Cluster 客户端一等支持、W3C TraceContext 跨节点传播、多节点 demo + Testcontainers、auto-config ApplicationContextRunner 装配测试。详见 `docs/cluster-design.md` 与 `docs/development-plan.md`。

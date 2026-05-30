@@ -301,6 +301,44 @@ class RedisIntegrationTest {
         client.shutdown();
     }
 
+    // ==================== 6b. Inbound size cap (security) ====================
+
+    @Test
+    @Order(7)
+    void inboundSizeCapDropsOversizedReceivedMessage() throws Exception {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available");
+
+        RedisClient pubClient = RedisClient.create(REDIS_URI);
+        RedisClient subClient = RedisClient.create(REDIS_URI);
+        RedisPubSubBroker publisher = new RedisPubSubBroker(pubClient, new SimpleTextEnvelopeCodec());
+        RedisPubSubBroker subscriber = new RedisPubSubBroker(subClient, new SimpleTextEnvelopeCodec());
+        subscriber.setInboundMaxBytes(200); // tiny inbound cap
+
+        AtomicInteger delivered = new AtomicInteger();
+        subscriber.subscribe("/ws/cap", envelope -> delivered.incrementAndGet());
+        Thread.sleep(300);
+
+        // Small message → delivered
+        publisher.publish("/ws/cap", new ClusterEnvelope(
+                "n", "/ws/cap", ClusterEnvelope.MessageKind.BROADCAST,
+                "T:small".getBytes(), null, null, System.currentTimeMillis()));
+
+        // Oversized message (payload ~5000 chars → encoded envelope well over 200) → dropped at the receiver
+        StringBuilder big = new StringBuilder("T:");
+        for (int i = 0; i < 5000; i++) big.append('z');
+        publisher.publish("/ws/cap", new ClusterEnvelope(
+                "n", "/ws/cap", ClusterEnvelope.MessageKind.BROADCAST,
+                big.toString().getBytes(), null, null, System.currentTimeMillis()));
+
+        Thread.sleep(800);
+        assertEquals(1, delivered.get(), "Only the small message should be delivered; oversized one dropped pre-decode");
+
+        publisher.shutdown();
+        subscriber.shutdown();
+        pubClient.shutdown();
+        subClient.shutdown();
+    }
+
     // ==================== 7. Full ClusterMessageSender End-to-End ====================
 
     @Test

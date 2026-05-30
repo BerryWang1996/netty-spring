@@ -60,6 +60,10 @@ public class RedisPubSubBroker implements ClusterBroker {
     /** Active listeners keyed by channel name. */
     private final ConcurrentHashMap<String, ClusterMessageListener> channelListeners = new ConcurrentHashMap<>();
 
+    /** Max accepted size (chars) of an INBOUND pub/sub message before decode. 0 = unlimited.
+     *  Protects against a malicious/compromised peer publishing a huge payload (remote OOM). */
+    private volatile int inboundMaxBytes = 0;
+
     /**
      * Creates a new broker with the given Redis client and envelope codec.
      *
@@ -75,6 +79,13 @@ public class RedisPubSubBroker implements ClusterBroker {
         subscribeConnection.addListener(new RedisPubSubAdapter<String, String>() {
             @Override
             public void message(String channel, String message) {
+                // Inbound size guard — reject oversized messages BEFORE allocating via decode/Base64.
+                int max = inboundMaxBytes;
+                if (max > 0 && message != null && message.length() > max) {
+                    log.warn("Dropping oversized inbound cluster message on channel {} ({} > {} bytes) "
+                            + "— possible misbehaving/hostile publisher", channel, message.length(), max);
+                    return;
+                }
                 ClusterMessageListener listener = channelListeners.get(channel);
                 if (listener != null) {
                     try {
@@ -92,12 +103,18 @@ public class RedisPubSubBroker implements ClusterBroker {
         log.info("RedisPubSubBroker initialized (codec={})", codec.getClass().getSimpleName());
     }
 
+    /** Sets the max accepted size of an inbound pub/sub message (chars) before decode. 0 = unlimited. */
+    public void setInboundMaxBytes(int inboundMaxBytes) {
+        this.inboundMaxBytes = Math.max(0, inboundMaxBytes);
+    }
+
     @Override
     public void publish(String uri, ClusterEnvelope envelope) {
         checkActive();
         String channel = BROADCAST_PREFIX + uri;
         String data = codec.encode(envelope);
-        publishConnection.async().publish(channel, data);
+        publishConnection.async().publish(channel, data)
+                .exceptionally(ex -> logAsyncPublishFailure(channel, ex));
     }
 
     @Override
@@ -105,7 +122,15 @@ public class RedisPubSubBroker implements ClusterBroker {
         checkActive();
         String channel = UNICAST_PREFIX + targetNodeId;
         String data = codec.encode(envelope);
-        publishConnection.async().publish(channel, data);
+        publishConnection.async().publish(channel, data)
+                .exceptionally(ex -> logAsyncPublishFailure(channel, ex));
+    }
+
+    /** Surfaces async publish failures instead of silently dropping them. */
+    private Long logAsyncPublishFailure(String channel, Throwable ex) {
+        log.warn("Async cluster publish to channel {} failed — message not delivered to remote nodes",
+                channel, ex);
+        return null;
     }
 
     @Override

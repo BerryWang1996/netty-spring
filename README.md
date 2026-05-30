@@ -147,10 +147,13 @@ Scale WebSocket across multiple nodes with Redis Pub/Sub. Default is single-node
 
 ```properties
 server.netty.websocket.cluster.enable=true
-server.netty.websocket.cluster.redis.uri=redis://your-redis:6379
+# Use a DEDICATED, network-isolated Redis with auth + TLS in production:
+server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 ```
 
 **Zero business code changes** — `MessageSender` automatically switches to `ClusterMessageSender` with cross-node broadcast and unicast.
+
+> ⚠️ **Security:** Redis is the cluster control plane — anyone who can `PUBLISH` to it can inject into or close any session. Use a dedicated, network-isolated, password-protected, TLS Redis. Application-layer AES-GCM does **not** extend across Redis (plaintext is fanned out to remote nodes). See [Cluster Design §Security](docs/cluster-design.md).
 
 #### Performance Benchmarks
 
@@ -299,7 +302,7 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#10-configurati
 
 ### Current Status
 
-- **Current recommended version: `1.8.0`** (WebSocket cluster support via Redis Pub/Sub + 5-layer SPI architecture + 282 tests)
+- **Current recommended version: `1.8.0`** (WebSocket cluster support via Redis Pub/Sub + 5-layer SPI architecture + 285 tests). Single-node mode is production-grade and unchanged from 1.7.x; cluster mode targets ≤~10 nodes with a dedicated, secured Redis — see [Cluster Design §Security](docs/cluster-design.md).
 - `1.7.0` delivered, across four work streams: Micrometer metrics expansion (connection/message/broadcast/latency distributions, per-URI & thread-pool & allocator gauges), SLF4J MDC structured logging, an Actuator `/actuator/health` indicator, optional WebSocket fragmented-message aggregation, and 6 audited legacy defect fixes — all preserved in 1.8.0 and backward compatible
 - Milestones P0 through P7 are all complete; performance (1.6.x), security/stability (1.6.2) and observability (1.7.0) hardening followed
 - Next: `1.8.0` Redis Pub/Sub clustering; later `2.0.0` Spring Boot 3.x / Jakarta migration + enterprise security
@@ -313,7 +316,7 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#10-configurati
 - [Release Notes - 1.7.1](docs/release-notes-1.7.1.md)
 - [Release Notes - 1.7.0](docs/release-notes-1.7.0.md)
 - [Development Plan](docs/development-plan.md) — Roadmap (1.8.0 cluster, 2.0.0 Spring Boot 3.x)
-- [Cluster Design (1.8.0 preview)](docs/cluster-design.md) — Redis Pub/Sub cluster architecture
+- [Cluster Design](docs/cluster-design.md) — Redis Pub/Sub cluster architecture, 1.8.0 scope vs roadmap, and the security/trust model
 - [Release Checklist](docs/release-checklist.md) — Release process & gates
 - [Dependency Governance](docs/dependency-governance.md) — SBOM, vulnerability scanning
 - Older release notes: see `docs/release-notes-*.md`
@@ -483,10 +486,13 @@ handler 与 WebSocket 生命周期会写入 SLF4J **MDC**（`netty.requestId`、
 
 ```properties
 server.netty.websocket.cluster.enable=true
-server.netty.websocket.cluster.redis.uri=redis://your-redis:6379
+# 生产环境用专用、网络隔离、带认证 + TLS 的 Redis：
+server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 ```
 
 **业务代码零改动** — `MessageSender` 自动切换为 `ClusterMessageSender`，跨节点广播和单播即刻生效。
+
+> ⚠️ **安全**：Redis 是集群控制平面——任何能向它 `PUBLISH` 的人都能注入/关闭任意会话。生产必须用专用、网络隔离、带密码 + TLS 的 Redis。应用层 AES-GCM **不**延伸过 Redis（明文会扇出到远端节点）。详见 [集群方案设计 §安全模型](docs/cluster-design.md)。
 
 #### 性能基准
 
@@ -632,7 +638,7 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 
 ### 当前阶段
 
-- **当前推荐版本：`1.8.0`**（WebSocket 集群支持：Redis Pub/Sub 跨节点广播/单播 + 5 层 SPI 可插拔架构 + 282 个测试全绿）
+- **当前推荐版本：`1.8.0`**（WebSocket 集群支持：Redis Pub/Sub 跨节点广播/单播 + 5 层 SPI 可插拔架构 + 285 个测试全绿）。单机模式生产级、与 1.7.x 完全一致；集群模式面向 ≤~10 节点 + 专用加密 Redis——见 [集群方案设计 §安全模型](docs/cluster-design.md)。
 - `1.7.0` 按四刀交付：Micrometer 指标扩展（连接/消息/广播/延迟分布，分 URI、线程池、allocator 内存 Gauge）、SLF4J MDC 结构化日志、Actuator `/actuator/health` 健康检查、可选 WebSocket 分片消息聚合，以及 6 项经审计的遗留缺陷修复——这些能力在 `1.8.0` 中完整保留，全部向后兼容
 - P0 至 P7 全部里程碑已完成；其后依次推进性能（1.6.x）、安全稳定性（1.6.2）、可观测性（1.7.0）加固
 - 下一步：`1.8.0` Redis Pub/Sub 集群支持；之后 `2.0.0` Spring Boot 3.x / Jakarta 迁移 + 企业安全版本
@@ -646,7 +652,7 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 - [1.7.1 发布说明](docs/release-notes-1.7.1.md)
 - [1.7.0 发布说明](docs/release-notes-1.7.0.md)
 - [开发计划与阶段状态](docs/development-plan.md) — 路线图（1.8.0 集群、2.0.0 Spring Boot 3.x）
-- [集群方案设计（1.8.0 预览）](docs/cluster-design.md) — Redis Pub/Sub 集群架构
+- [集群方案设计](docs/cluster-design.md) — Redis Pub/Sub 集群架构、1.8.0 实现范围 vs 路线图、安全/信任模型
 - [版本发布检查清单](docs/release-checklist.md) — 发布流程与门槛
 - [依赖治理与供应链门禁](docs/dependency-governance.md) — SBOM、漏洞扫描
 - 历史发布说明：见 `docs/release-notes-*.md`

@@ -399,12 +399,12 @@ netty-spring/
 ├── netty-spring-web
 ├── netty-spring-webmvc
 ├── netty-spring-websocket
-├── netty-spring-cluster              [NEW]  Redis 通信、Session Registry、跨节点路由
+├── netty-spring-websocket-cluster              [NEW]  Redis 通信、Session Registry、跨节点路由
 ├── netty-spring-boot-autoconfigure
 ├── netty-web-spring-boot-starter
 ├── netty-webmvc-spring-boot-starter
 ├── netty-websocket-spring-boot-starter
-├── netty-cluster-spring-boot-starter [NEW]
+├── netty-websocket-cluster-spring-boot-starter [NEW]
 └── demo-netty-web-spring-boot-starter
 ```
 
@@ -416,10 +416,23 @@ netty-spring/
 ## 兼容性承诺
 
 - **API 兼容**：现有 `@MessageMapping` 控制器零迁移；本地查询接口语义不变；跨集群操作通过**新增**异步接口提供，避免对 1.7.x 用户产生隐式语义变化。
-- **配置兼容**：`server.netty.cluster.enable` 默认 `false`；未启用时所有集群依赖不参与运行时路径，行为与 `1.7.x` 完全一致。
+- **配置兼容**：`server.netty.websocket.cluster.enable` 默认 `false`；未启用时所有集群依赖不参与运行时路径，行为与 `1.7.x` 完全一致。
 - **回退路径**：集群启用后如需回退，关闭 `cluster.enable` 即可，无需修改业务代码或数据迁移（在线 session 自然过期）。
 - **Micrometer 最低版本**：与主线一致（见根 README "兼容性"）；集群指标在缺失 `micrometer-core` 时自动跳过。
 - **Lettuce 版本**：跟随 Spring Boot BOM；如有特定漏洞需要覆盖，通过 `dependencyManagement` 显式 pin。
+
+## 安全模型（Security）— 必读
+
+> **Redis 是集群的"控制平面"，1.8.0 对它是完全信任的。** 任何能向集群 Redis `PUBLISH` 的主体，都能向任意 WebSocket 会话注入消息、或强制关闭任意会话（`CLOSE` 控制指令无授权校验，`originNodeId` 是明文字段、可伪造，自投递抑制可被绕过）。这是 Pub/Sub 扇出架构的固有信任假设。生产部署**必须**据此加固：
+
+- **专用、网络隔离的 Redis**：集群 Redis 不要与其他应用共用实例；用防火墙/安全组限制只有集群节点能连。
+- **认证**：使用 `requirepass`，URI 形如 `redis://:password@host:6379`（1.8.0 在检测到无密码/无 TLS 时会打 `WARN`；日志中 URI 的密码部分已脱敏）。
+- **TLS**：跨网络时用 `rediss://host:6379`（Lettuce 原生支持）。
+- **入站大小上限**：1.8.0 在接收端对单条消息有大小上限（由 `message-max-size-bytes` 的 2 倍推导），防止恶意 peer 发超大消息打爆订阅节点内存。
+
+**加密边界提示**：应用层 AES-GCM 加密作用在浏览器↔节点的 WebSocket 帧上。集群广播/单播把**解密后的明文** `AbstractMessage` 放上 Redis 再扇出到远端会话——所以"端到端加密"的保证**不延伸过 Redis**。需要跨集群也保密时，依赖 `rediss://` + 专用 Redis 的网络层保护。
+
+**1.9.x 计划的纵深防御**：envelope HMAC 共享密钥（`cluster.auth-secret`），接收端拒绝伪造/重放的 envelope，杜绝 `originNodeId` 伪造与 `CLOSE` 滥用。这是根因层面的修复,1.8.0 先以"文档 + 默认告警 + 入站上限"兜底。
 
 ## 已知未覆盖项（明确推迟）
 
@@ -427,6 +440,19 @@ netty-spring/
 - **Redis Streams 完整生命周期**（消费者重平衡、死信队列）：`1.8.0` 仅提供基础至少一次入口，完整治理推迟到 `1.9.x`。
 - **跨 DC 多 Redis**：本设计假设单 Redis 集群可用区；多活 / 跨 DC 复制方案在 `2.x` 评估。
 - **持久化 / 离线消息**：通过 Streams 提供原语，但消息存储 / 拉取 API 不在 `1.8.0`。
+
+### `1.8.0` 集群已知限制 → `1.9.x` 硬化项（发版评审结论）
+
+`1.8.0` 集群适用于 **≤~10 节点、配专用且加密的 Redis** 的场景。以下硬化项明确推迟到 `1.9.x`，生产用户需知悉：
+
+- **envelope HMAC 认证**（安全根因修复）：消除 `originNodeId` 伪造与未授权 `CLOSE`/注入。1.8.0 以文档 + 默认告警 + 入站大小上限兜底。
+- **完整 Micrometer 指标集 + Actuator 集群健康**：1.8.0 仅提供程序内 `ClusterRuntimeStats`（可通过注入 `ClusterMessageSender` 后 `getClusterRuntimeStats()` 读取）+ `ClusterNodeManager.getState()`；尚无 `MeterBinder`/`HealthIndicator`/端点。
+- **reconciliation 去重 / 选主**：当前每个存活节点独立清理同一死节点（幂等但有 N 倍清理流量）；1.9.x 加 `SET NX` 认领，只有赢家清理。
+- **`deregister` 原子性**：当前 HGET→DEL+SREM 非原子；1.9.x 改 Lua 条件删除（仅当 nodeId 匹配时删），消除 close-then-reconnect 竞态。
+- **心跳 / 对账线程隔离 + 批量 EXISTS + 命令超时**：当前两者共用单线程 + 单连接 + 逐节点 EXISTS，Redis 压力下可能自我饿死；1.9.x 拆独立调度线程并加超时。
+- **DEGRADE_TO_LOCAL 检测延迟**：当前仅靠心跳写失败触发（最多 `heartbeat-interval` 延迟）；1.9.x 接 Lettuce 连接状态事件即时降级，并让 `broker.state()` 反映真实连接状态。
+- **多 pub/sub 连接并行解码 / sharded pub/sub / 写 pipeline 批量 / registry 限速**：见上文实现范围表，均为规模化档位优化。
+- **auto-config 的 ApplicationContextRunner 装配测试**：1.8.0 以 SPI 隔离单测 + 真实 Redis 集成测试覆盖；完整 Spring 容器装配测试推迟。
 
 ## 技术参考
 

@@ -4,7 +4,7 @@
 
 ## 当前结论
 
-- **当前推荐版本：`1.8.0`**（WebSocket 集群支持：Redis Pub/Sub 跨节点 + 5 层 SPI + 282 测试。详见 `docs/release-notes-1.8.0.md`）。
+- **当前推荐版本：`1.8.0`**（WebSocket 集群支持：Redis Pub/Sub 跨节点 + 5 层 SPI + 285 测试。单机模式生产级；集群模式面向 ≤~10 节点 + 专用加密 Redis，详见 `docs/release-notes-1.8.0.md` 与 `cluster-design.md §安全模型`）。
 - 上一版本：`1.7.1`（在 `1.7.0` 之上修复架构评审发现的 CORS 通配符+credentials 安全问题、`@MessageMapping(ON_CLOSE)` 在陈旧 channel 路径上未触发的正确性问题、CompressorHandler 解析与大小写问题、AES-GCM IV 长度校验，并 pin logback 1.2.13 修复 CVE-2023-6378。详见 `docs/release-notes-1.7.1.md`）。
 - `P0`–`P7` 全部里程碑已完成；项目历经"功能建设期 → 质量深化 → 产品化 → 性能优化 → 安全稳定性加固 → 可观测性增强 → 集群水平扩展"七个阶段。
 - 下一步：**`2.0.0`** Spring Boot 3.x 迁移基线，**`2.1.0`** 企业安全准入。`2.0` / `2.1` 拆分见下方 `2.x` 路线说明。`1.9.x` 跟随项见 `1.8.0` 推迟项清单。
@@ -17,7 +17,7 @@
 - **5 层可插拔 SPI**：`ClusterBroker`（跨节点传输，Redis Pub/Sub 默认）、`SessionRegistry`（分布式会话路由）、`EnvelopeCodec`（信封线格式，零依赖默认）、`MessagePayloadCodec`（消息体序列化，零依赖默认）、`ClusterNodeHeartbeat`（心跳持久化）。全部 `@ConditionalOnMissingBean` 可覆盖。
 - **零 Jackson 依赖**：集群模块序列化全部走 SPI，用户自由选择 JSON/Protobuf/自定义。
 - **核心能力**：跨节点广播/单播、远程关闭、origin 自投递抑制、节点生命周期状态机（JOINING→ACTIVE→DEGRADED→RESYNC→DRAINING→LEFT）、心跳+周期对账、单播热路径缓存、集群运行时统计、`onRedisLoss`（degrade-to-local 默认 / close-all）、`onPublishFailure`、消息大小上限、重连抖动。
-- 282 个测试（含 6 SPI 隔离 + 8 Redis 集成 + 4 性能基准），11 模块全绿。详见 `docs/release-notes-1.8.0.md`。
+- 285 个测试（含 6 SPI 隔离 + 6 配置 knobs + 9 Redis 集成；另有 4 个性能基准为手动 harness，不计入套件），11 模块全绿。详见 `docs/release-notes-1.8.0.md`。
 
 > **1.8.0 实现范围 vs 设计目标**：`docs/cluster-design.md` 描述的是**完整目标架构**，其中相当一部分能力（多 pub/sub 连接并行解码、sharded pub/sub、Redis Streams 可靠投递、写 pipeline 批量、registry 限速、Redis 失联宽限期、Redis Cluster 客户端一等支持、W3C TraceContext 跨节点传播、多节点 demo + Testcontainers）**推迟到 `1.9.x`**。1.8.0 只暴露**有实际效果**的配置项——不暴露还没实现的特性的开关（"会撒谎的配置比没有配置更糟"）。下方"四刀"为原始设计全集，标注 ✅ 已实现 / ⏳ 推迟。
 
@@ -90,7 +90,7 @@
 - ✅ 不启用集群时行为与 `1.7.x` 完全一致；启用集群仅修改依赖坐标 + 一个配置开关。
 - ✅ `ClusterBroker` / `SessionRegistry` SPI 边界清晰：`InMemoryBroker` / `InMemorySessionRegistry` 非 Redis stub 证明 `ClusterMessageSender` 不漏依赖 Lettuce。
 - ✅ 容量表与节点数适用边界（≤~10 节点活跃广播）写入文档，并用 `redis-benchmark` + Java 基准实测校准。
-- ✅ 全量 `mvn test` 通过（282 测试 / 11 模块）；✅ 集群路径有真实 Redis 集成测试（⏳ Testcontainers 化推迟）。
+- ✅ 全量 `mvn test` 通过（285 测试 / 11 模块）；✅ 集群路径有真实 Redis 集成测试（⏳ Testcontainers 化推迟）。
 - ⏳ W3C TraceContext 跨节点端到端串联（推迟 1.9.x，envelope 已预留字段）。
 
 `1.8.0` 不作为阻塞项的内容：
