@@ -69,7 +69,12 @@ public class ClusterNodeManager {
      *  Default 10000ms; configurable via {@link #setReconnectJitterMaxMs(long)}. */
     private volatile long reconnectJitterMaxMs = 10_000L;
 
-    private ScheduledExecutorService scheduler;
+    /** Dedicated heartbeat-renewal scheduler (thread cluster-hb-{node}) — kept lean so a slow
+     *  reconciliation sweep can never delay heartbeat renewal (which would let peers falsely reap us). */
+    private ScheduledExecutorService heartbeatScheduler;
+    /** Dedicated reconciliation scheduler (thread cluster-recon-{node}) — also runs the grace timer
+     *  and the RESYNC re-register task. */
+    private ScheduledExecutorService reconScheduler;
     private ScheduledFuture<?> heartbeatFuture;
     private ScheduledFuture<?> reconciliationFuture;
 
@@ -145,8 +150,14 @@ public class ClusterNodeManager {
             return;
         }
 
-        scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "cluster-node-" + nodeId.substring(0, Math.min(8, nodeId.length())));
+        String shortId = nodeId.substring(0, Math.min(8, nodeId.length()));
+        heartbeatScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "cluster-hb-" + shortId);
+            t.setDaemon(true);
+            return t;
+        });
+        reconScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "cluster-recon-" + shortId);
             t.setDaemon(true);
             return t;
         });
@@ -154,7 +165,7 @@ public class ClusterNodeManager {
         // Always start reconciliation (slow-path backstop — even if initial registration
         // fails, reconciliation can detect and clean dead peers, and the heartbeat task
         // will retry registration on its next tick).
-        reconciliationFuture = scheduler.scheduleAtFixedRate(
+        reconciliationFuture = reconScheduler.scheduleAtFixedRate(
                 this::doReconciliation, reconciliationIntervalMs, reconciliationIntervalMs, TimeUnit.MILLISECONDS);
 
         // Register this node
@@ -166,12 +177,11 @@ public class ClusterNodeManager {
             log.error("Failed to register cluster node {} — starting in DEGRADED mode, "
                     + "heartbeat task will retry", nodeId, e);
             transitionTo(NodeState.DEGRADED);
-            // Still start the heartbeat scheduler so it can retry registration
         }
 
-        // Schedule periodic heartbeat (runs even in DEGRADED — doHeartbeat() handles
-        // the retry-on-failure logic and calls onTransportLost/onTransportRestored)
-        heartbeatFuture = scheduler.scheduleAtFixedRate(
+        // Schedule periodic heartbeat on its OWN thread (runs even in DEGRADED — doHeartbeat()
+        // handles retry-on-failure and calls onTransportLost/onTransportRestored).
+        heartbeatFuture = heartbeatScheduler.scheduleAtFixedRate(
                 this::doHeartbeat, heartbeatIntervalMs, heartbeatIntervalMs, TimeUnit.MILLISECONDS);
 
         if (state.get() == NodeState.ACTIVE) {
@@ -216,8 +226,11 @@ public class ClusterNodeManager {
             log.warn("Error deregistering node {} from cluster", nodeId, e);
         }
 
-        if (scheduler != null) {
-            scheduler.shutdown();
+        if (heartbeatScheduler != null) {
+            heartbeatScheduler.shutdown();
+        }
+        if (reconScheduler != null) {
+            reconScheduler.shutdown();
         }
 
         fireStateChange(prev, NodeState.LEFT);
@@ -245,7 +258,7 @@ public class ClusterNodeManager {
             fireStateChange(NodeState.DEGRADED, NodeState.RESYNC);
 
             // Re-register heartbeat, then transition back to ACTIVE
-            scheduler.schedule(() -> {
+            reconScheduler.schedule(() -> {
                 try {
                     heartbeat.register(nodeId, heartbeatTimeoutMs);
                     transitionTo(NodeState.ACTIVE);
