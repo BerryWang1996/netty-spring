@@ -17,6 +17,8 @@ public class InMemorySessionRegistry implements SessionRegistry {
     private final ConcurrentHashMap<String, String> sessionToNode = new ConcurrentHashMap<>();
     /** Key = nodeId, Value = set of "uri|sessionId". */
     private final ConcurrentHashMap<String, Set<String>> nodeToSessions = new ConcurrentHashMap<>();
+    /** Test helper: counts lookupNode invocations (to prove the degraded short-circuit skips it). */
+    private final java.util.concurrent.atomic.AtomicInteger lookupNodeCalls = new java.util.concurrent.atomic.AtomicInteger();
 
     @Override
     public CompletionStage<Void> register(String uri, String sessionId, String nodeId,
@@ -40,8 +42,14 @@ public class InMemorySessionRegistry implements SessionRegistry {
 
     @Override
     public CompletionStage<String> lookupNode(String uri, String sessionId) {
+        lookupNodeCalls.incrementAndGet();
         String key = uri + "|" + sessionId;
         return CompletableFuture.completedFuture(sessionToNode.get(key));
+    }
+
+    /** Test helper: number of lookupNode invocations so far. */
+    public int getLookupNodeCalls() {
+        return lookupNodeCalls.get();
     }
 
     @Override

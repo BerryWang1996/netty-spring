@@ -126,6 +126,33 @@ public interface ClusterBroker {
     BrokerState state();
 
     /**
+     * Listener notified the instant the underlying transport connection is lost or restored,
+     * so the cluster can degrade/recover immediately (event-driven) instead of waiting for the
+     * periodic heartbeat probe to notice.
+     *
+     * @since V1.8.0
+     */
+    interface TransportStateListener {
+        /** Transport connection lost (e.g. Redis disconnected). */
+        void onTransportLost();
+        /** Transport connection restored. */
+        void onTransportRestored();
+    }
+
+    /**
+     * Registers a {@link TransportStateListener} to be notified on transport connect/disconnect
+     * events. Implementations that can detect connection state (e.g. via a Lettuce
+     * {@code RedisConnectionStateListener}) should override this and also keep {@link #state()}
+     * truthful. The default is a no-op — degradation then relies solely on the heartbeat probe.
+     *
+     * @param listener the listener (never null)
+     * @since V1.8.0
+     */
+    default void setTransportStateListener(TransportStateListener listener) {
+        // no-op by default; transports without connection-state events rely on the heartbeat probe
+    }
+
+    /**
      * Shuts down the broker, releasing all transport resources.
      * After shutdown, all publish/unicast/subscribe calls will throw.
      */

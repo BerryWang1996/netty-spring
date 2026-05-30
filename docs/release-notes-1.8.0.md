@@ -57,6 +57,7 @@ v1.8.0 是 **WebSocket 集群支持** 的 milestone 版本。通过 Redis Pub/Su
 | `drain-timeout-seconds` | 60 | 优雅停机等待 session 关闭上限 |
 | `reconnect-jitter-max-seconds` | 10 | DEGRADED→RESYNC 重注册前抖动，防重连风暴 |
 | `registry-read-cache-ttl-ms` | 5000 | sessionId→nodeId 单播热路径缓存 TTL |
+| `command-timeout-ms` | 2000 | Redis 命令超时;失联时界定热路径阻塞上限（vs Lettuce 默认 60s） |
 | `message-max-size-bytes` | 1048576 | 超限消息不发往集群（本地投递不受影响） |
 | `on-redis-loss` | `degrade-to-local` | Redis 失联策略：保活本地（默认）/ `close-all` 关闭全部本地 session |
 | `on-publish-failure` | `log` | 集群发布失败策略：`log` / `drop` |
@@ -73,9 +74,9 @@ v1.8.0 是 **WebSocket 集群支持** 的 milestone 版本。通过 Redis Pub/Su
 
 ## 测试覆盖
 
-- 289 个测试，11 个模块，全部通过
-- 集群：6 SPI 隔离 + 7 配置/行为 + 9 Redis 集成（含入站大小上限安全测试）+ 3 auto-config 装配测试（ApplicationContextRunner）
-- `PerformanceBenchmark`（4 个方法）是**手动运行的性能 harness**，不计入 289 的 `mvn test` 套件
+- 291 个测试，11 个模块，全部通过
+- 集群：6 SPI 隔离 + 9 配置/行为 + 9 Redis 集成（含入站大小上限安全测试）+ 3 auto-config 装配测试（ApplicationContextRunner）
+- `PerformanceBenchmark`（4 个方法）是**手动运行的性能 harness**，不计入 291 的 `mvn test` 套件
 
 ## 升级指南
 
@@ -121,4 +122,6 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 
 ## 已知限制（推迟到 1.9.x 硬化）
 
-envelope HMAC 认证、完整 Micrometer meter-binder 指标集（`netty.cluster.*` 时序）、reconciliation 选主去重、`deregister` 原子性（理论竞态,UUID sessionId 下实际不发生）、心跳/对账线程隔离、Lettuce 连接事件即时降级、多 pub/sub 连接、sharded pub/sub、Redis Cluster 客户端一等支持、W3C TraceContext 跨节点传播、多节点 demo + Testcontainers。详见 `docs/cluster-design.md` 与 `docs/development-plan.md`。
+envelope HMAC 认证、完整 Micrometer meter-binder 指标集（`netty.cluster.*` 时序）、reconciliation 选主去重、`deregister` 原子性（理论竞态,UUID sessionId 下实际不发生）、心跳/对账线程隔离、Redis 失联宽限期、多 pub/sub 连接、sharded pub/sub、Redis Cluster 客户端一等支持、W3C TraceContext 跨节点传播、多节点 demo + Testcontainers。详见 `docs/cluster-design.md` 与 `docs/development-plan.md`。
+
+> **失联硬化（1.8.0）**：事件驱动即时降级（接 Lettuce 连接状态事件,断连瞬间 DEGRADED + `broker.state()` 反映真实状态,不再等心跳 ~3s）+ Redis 命令超时（`command-timeout-ms` 默认 2s,vs Lettuce 60s）+ 单播热路径降级短路（DEGRADED 时不查 registry）。Redis 失联不再最长阻塞调用线程 60s。

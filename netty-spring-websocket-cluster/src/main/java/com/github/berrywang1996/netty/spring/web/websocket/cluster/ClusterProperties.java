@@ -80,6 +80,11 @@ public class ClusterProperties {
     /** Local sessionId→nodeId cache TTL in ms for the unicast hot path. Default 5000. */
     private long registryReadCacheTtlMs = 5000;
 
+    /** Redis command timeout in ms for the cluster control plane. Bounds how long any single
+     *  Redis operation (incl. the unicast hot-path registry lookup) can block when Redis is
+     *  unreachable — much lower than Lettuce's 60s default. Default 2000. */
+    private long commandTimeoutMs = 2000;
+
     /** Max serialized cluster message size in bytes. Messages larger than this are not
      *  published to the cluster (local delivery is unaffected); handled per {@link #onPublishFailure}.
      *  Default 1 MiB. */
@@ -119,6 +124,9 @@ public class ClusterProperties {
 
     public long getRegistryReadCacheTtlMs() { return registryReadCacheTtlMs; }
     public void setRegistryReadCacheTtlMs(long v) { this.registryReadCacheTtlMs = v; }
+
+    public long getCommandTimeoutMs() { return commandTimeoutMs; }
+    public void setCommandTimeoutMs(long v) { this.commandTimeoutMs = v; }
 
     public int getMessageMaxSizeBytes() { return messageMaxSizeBytes; }
     public void setMessageMaxSizeBytes(int v) { this.messageMaxSizeBytes = v; }

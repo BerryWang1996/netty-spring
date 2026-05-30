@@ -92,7 +92,16 @@ public class NettyWebSocketClusterConfigure {
         // Never log the raw URI — it may carry inline credentials (redis://:password@host).
         log.info("Creating Lettuce RedisClient for cluster at {}", redactRedisUri(uri));
         warnIfInsecureRedis(uri);
-        return RedisClient.create(uri);
+        RedisClient client = RedisClient.create(uri);
+        // Bound command timeout for the control plane — much lower than Lettuce's 60s default, so a
+        // Redis stall can't hang the unicast hot path. Auto-reconnect stays on (default) so the
+        // node recovers automatically. See S2 hardening.
+        client.setOptions(io.lettuce.core.ClientOptions.builder()
+                .autoReconnect(true)
+                .timeoutOptions(io.lettuce.core.TimeoutOptions.enabled(
+                        java.time.Duration.ofMillis(properties.getCommandTimeoutMs())))
+                .build());
+        return client;
     }
 
     /** Masks userinfo (password) in a Redis URI before logging. */
@@ -215,6 +224,7 @@ public class NettyWebSocketClusterConfigure {
         sender.setMessageMaxSizeBytes(properties.getMessageMaxSizeBytes());
         sender.setOnPublishFailure(properties.getOnPublishFailure());
         sender.setOnRedisLoss(properties.getOnRedisLoss());
+        sender.setNodeLookupTimeoutMs(properties.getCommandTimeoutMs());
         sender.start();
         log.info("ClusterMessageSender started — cluster mode is ACTIVE (onRedisLoss={}, onPublishFailure={}, maxMsgBytes={})",
                 properties.getOnRedisLoss(), properties.getOnPublishFailure(), properties.getMessageMaxSizeBytes());

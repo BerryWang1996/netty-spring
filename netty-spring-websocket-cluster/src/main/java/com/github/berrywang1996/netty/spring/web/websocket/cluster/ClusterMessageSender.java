@@ -91,6 +91,9 @@ public class ClusterMessageSender implements MessageSender {
     /** Policy when the cluster transport is lost. Default DEGRADE_TO_LOCAL. */
     private volatile ClusterProperties.OnRedisLoss onRedisLoss = ClusterProperties.OnRedisLoss.DEGRADE_TO_LOCAL;
 
+    /** Max time (ms) the synchronous unicast-path registry lookup may block. Default 2000. */
+    private volatile long nodeLookupTimeoutMs = 2000;
+
     public ClusterMessageSender(MessageSender localSender,
                                 ClusterBroker broker,
                                 SessionRegistry registry,
@@ -138,6 +141,13 @@ public class ClusterMessageSender implements MessageSender {
         }
     }
 
+    /** Sets the max time (ms) the synchronous unicast-path registry lookup may block. */
+    public void setNodeLookupTimeoutMs(long nodeLookupTimeoutMs) {
+        if (nodeLookupTimeoutMs > 0) {
+            this.nodeLookupTimeoutMs = nodeLookupTimeoutMs;
+        }
+    }
+
     /**
      * Starts cluster subscriptions: subscribe to unicast channel for this node,
      * and to broadcast channels for all locally registered URIs.
@@ -147,6 +157,21 @@ public class ClusterMessageSender implements MessageSender {
 
         // Wire reconciliation→cache invalidation (I-3 fix)
         nodeManager.setDeadNodeCallback(this::invalidateCacheForNode);
+
+        // Event-driven degradation (S1): the broker notifies us the instant the transport
+        // connection drops/recovers, so we degrade/recover immediately instead of waiting up to
+        // a heartbeat interval. The heartbeat probe remains as a backstop for logical failures
+        // (transport up but auth/role wrong) that a connection event would miss.
+        broker.setTransportStateListener(new ClusterBroker.TransportStateListener() {
+            @Override
+            public void onTransportLost() {
+                nodeManager.onTransportLost();
+            }
+            @Override
+            public void onTransportRestored() {
+                nodeManager.onTransportRestored();
+            }
+        });
 
         // Wire onRedisLoss=CLOSE_ALL: when the node degrades (transport lost), optionally
         // close all local sessions instead of keeping them alive (DEGRADE_TO_LOCAL default).
@@ -274,10 +299,17 @@ public class ClusterMessageSender implements MessageSender {
         Map<String, String> remoteSessionToNode = new LinkedHashMap<>();
         List<String> closedIds = new ArrayList<>();
 
+        // S2: when degraded (Redis lost) the broker can't deliver cross-node anyway — short-circuit
+        // remote sessions to "closed" WITHOUT a registry lookup, so a Redis outage never blocks the
+        // unicast hot path on a registry round-trip.
+        boolean active = nodeManager.getState() == NodeState.ACTIVE;
+
         for (String sessionId : sessionIds) {
             MessageSession localSession = localSender.getSession(uri, sessionId);
             if (localSession != null) {
                 localIds.add(sessionId);
+            } else if (!active) {
+                closedIds.add(sessionId);
             } else {
                 String targetNodeId = lookupNodeCached(uri, sessionId);
                 if (targetNodeId != null) {
@@ -516,16 +548,24 @@ public class ClusterMessageSender implements MessageSender {
         }
         clusterStats.cacheMisses.incrementAndGet();
 
-        // Synchronous lookup (blocking on the CompletionStage for simplicity in 1.8.0;
-        // can be made fully async in a future version if profiling shows this matters)
+        // Bounded blocking lookup (S2): wait at most nodeLookupTimeoutMs so a Redis stall can never
+        // hang the unicast hot path (the default RedisClient command timeout already bounds this,
+        // but this guards against a custom SessionRegistry that ignores timeouts). On timeout/error
+        // the session is treated as not-found (→ closed), which is the correct degraded behavior.
         try {
-            String nodeId = registry.lookupNode(uri, sessionId).toCompletableFuture().join();
+            String nodeId = registry.lookupNode(uri, sessionId).toCompletableFuture()
+                    .get(nodeLookupTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
             if (nodeId != null) {
                 nodeCache.put(cacheKey, new CachedNodeLookup(nodeId, System.currentTimeMillis()));
             } else {
                 nodeCache.remove(cacheKey);
             }
             return nodeId;
+        } catch (java.util.concurrent.TimeoutException te) {
+            log.warn("Registry lookup for session {} on URI {} timed out after {}ms — treating as unreachable",
+                    sessionId, uri, nodeLookupTimeoutMs);
+            nodeCache.remove(cacheKey);
+            return null;
         } catch (Exception e) {
             log.warn("Registry lookup failed for session {} on URI {}", sessionId, uri, e);
             nodeCache.remove(cacheKey);

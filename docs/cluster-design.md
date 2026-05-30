@@ -24,6 +24,8 @@
 | 心跳 + 周期对账（reconciliation）双路故障检测 | ✅ | 兜底 keyspace notification 漏报 |
 | 单播热路径缓存（`registry-read-cache-ttl-ms`） | ✅ | + dead-node 失效 |
 | `on-redis-loss`（degrade-to-local 默认 / close-all） | ✅ | |
+| **事件驱动即时降级**（Lettuce 连接事件 → 立刻 DEGRADED + 真实 `broker.state()`） | ✅ | 非 3s 心跳滞后;心跳探测降级为兜底 |
+| **命令超时 + 单播热路径短路**（`command-timeout-ms`，降级时不查 registry） | ✅ | Redis 失联不再最长阻塞 60s |
 | `on-publish-failure`（log / drop）、`message-max-size-bytes`、`reconnect-jitter-max-seconds` | ✅ | |
 | `ClusterRuntimeStats` 程序内计数 | ✅ | broadcastPublished / selfDropped / unicastSent / publishFailures / cacheHitRatio |
 | Sentinel（`redis-sentinel://` URI） | ✅ | Lettuce 原生，URI scheme 选择拓扑 |
@@ -303,6 +305,7 @@ server:
         drain-timeout-seconds: 60
         reconnect-jitter-max-seconds: 10    # DEGRADED→RESYNC 重注册前抖动，防重连风暴
         registry-read-cache-ttl-ms: 5000    # sessionId→nodeId 单播热路径缓存（§2 瓶颈 #4）
+        command-timeout-ms: 2000            # Redis 命令超时,失联时界定热路径阻塞上限（vs Lettuce 默认 60s）
         message-max-size-bytes: 1048576     # 超限消息不发往集群（本地投递不受影响）
         on-redis-loss: degrade-to-local     # degrade-to-local（默认） | close-all
         on-publish-failure: log             # log（默认） | drop
@@ -451,8 +454,7 @@ netty-spring/
 - **envelope HMAC 认证**（安全根因修复）：消除 `originNodeId` 伪造与未授权 `CLOSE`/注入。1.8.0 以文档 + 默认告警 + 入站大小上限兜底。
 - **reconciliation 去重 / 选主**：当前每个存活节点独立清理同一死节点（幂等但有 N 倍清理流量）；1.9.x 加 `SET NX` 认领，只有赢家清理。
 - **`deregister` 原子性**：当前 HGET→DEL+SREM 非原子；理论竞态（同 sessionId 跨连接复用）因 sessionId 为每连接 UUID **实际不可能发生**，故仅作纵深防御推迟；1.9.x 改 Lua 条件删除。
-- **心跳 / 对账线程隔离 + 批量 EXISTS + 命令超时**：当前两者共用单线程 + 单连接 + 逐节点 EXISTS，仅在 Redis 降级且超出"≤10 节点 + 专用 Redis"envelope 时可能自我饿死；1.9.x 拆独立调度线程并加超时。
-- **DEGRADE_TO_LOCAL 检测延迟**：当前仅靠心跳写失败触发（最多 `heartbeat-interval` 延迟，默认 3s）；1.9.x 接 Lettuce 连接状态事件即时降级，并让 `broker.state()` 反映真实连接状态。
+- **心跳 / 对账线程隔离 + 批量 EXISTS**：当前两者共用单线程 + 单连接 + 逐节点 EXISTS，仅在 Redis 降级且超出"≤10 节点 + 专用 Redis"envelope 时可能自我饿死；1.9.x 拆独立调度线程。（命令超时已在 1.8.0 落地,见下。）
 - **多 pub/sub 连接并行解码 / sharded pub/sub / 写 pipeline 批量 / registry 限速**：见上文实现范围表，均为规模化档位优化。
 
 ## 技术参考

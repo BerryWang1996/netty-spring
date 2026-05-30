@@ -783,6 +783,7 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 | `cluster.drain-timeout-seconds` | `60` | Graceful-shutdown session-close wait |
 | `cluster.reconnect-jitter-max-seconds` | `10` | Max jitter before DEGRADED→RESYNC re-register |
 | `cluster.registry-read-cache-ttl-ms` | `5000` | sessionId→nodeId unicast hot-path cache TTL |
+| `cluster.command-timeout-ms` | `2000` | Redis command timeout — bounds hot-path blocking on Redis loss (vs Lettuce's 60s default) |
 | `cluster.message-max-size-bytes` | `1048576` | Max serialized cluster message; larger is not published cross-node (`0` = unlimited) |
 | `cluster.on-redis-loss` | `degrade-to-local` | `degrade-to-local` (keep local sessions) or `close-all` |
 | `cluster.on-publish-failure` | `log` | `log` or `drop` on publish failure |

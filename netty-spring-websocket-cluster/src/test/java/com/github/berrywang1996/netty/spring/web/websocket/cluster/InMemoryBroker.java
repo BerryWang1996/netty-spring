@@ -18,6 +18,7 @@ public class InMemoryBroker implements ClusterBroker {
     private final ConcurrentHashMap<String, ClusterMessageListener> unicastListeners = new ConcurrentHashMap<>();
     private volatile BrokerState state = BrokerState.ACTIVE;
     private final List<ClusterEnvelope> publishedEnvelopes = new CopyOnWriteArrayList<>();
+    private volatile TransportStateListener transportStateListener;
 
     @Override
     public void publish(String uri, ClusterEnvelope envelope) {
@@ -84,6 +85,24 @@ public class InMemoryBroker implements ClusterBroker {
     @Override
     public BrokerState state() {
         return state;
+    }
+
+    @Override
+    public void setTransportStateListener(TransportStateListener listener) {
+        this.transportStateListener = listener;
+    }
+
+    /** Test helper: simulate a transport drop/restore by invoking the registered listener. */
+    public void fireTransportLost() {
+        if (transportStateListener != null) transportStateListener.onTransportLost();
+    }
+
+    public void fireTransportRestored() {
+        if (transportStateListener != null) transportStateListener.onTransportRestored();
+    }
+
+    public boolean hasTransportStateListener() {
+        return transportStateListener != null;
     }
 
     @Override

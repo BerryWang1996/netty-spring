@@ -2,7 +2,9 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster;
 
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeHeartbeat;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.NodeState;
 import com.github.berrywang1996.netty.spring.web.websocket.context.*;
+import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSessionClosedException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -164,6 +166,48 @@ class ClusterMessageSenderKnobsTest {
         assertEquals(0, broker.getPublishedEnvelopes().size());
         // ...and the loss is now VISIBLE via the counter (was silent debug-only before).
         assertEquals(1, clusterSender.getClusterRuntimeStats().getBroadcastsSkippedDegraded());
+    }
+
+    // ==================== S1: event-driven degradation ====================
+
+    @Test
+    void transportLostEventDegradesNodeImmediately() {
+        localSender.addUri("/ws/x");
+        nodeManager.start();
+        clusterSender.start();
+
+        // The sender must register a transport-state listener on the broker (S1 wiring).
+        assertTrue(broker.hasTransportStateListener(),
+                "sender should register a transport-state listener on the broker");
+        assertEquals(NodeState.ACTIVE, nodeManager.getState());
+
+        // Simulate a Lettuce disconnect event → node degrades IMMEDIATELY (not heartbeat-late).
+        broker.fireTransportLost();
+        assertEquals(NodeState.DEGRADED, nodeManager.getState(),
+                "transport-lost event should degrade the node immediately");
+    }
+
+    // ==================== S2: degraded send short-circuits without registry lookup ====================
+
+    @Test
+    void degradedSendMessageShortCircuitsRemoteWithoutRegistryLookup() throws Exception {
+        localSender.addUri("/ws/x");
+        registry.register("/ws/x", "remote-s", "node-B", Collections.emptyMap())
+                .toCompletableFuture().join();
+        nodeManager.start();
+        clusterSender.start();
+
+        nodeManager.onTransportLost();
+        assertEquals(NodeState.DEGRADED, nodeManager.getState());
+
+        int lookupsBefore = registry.getLookupNodeCalls();
+        // Sending to a remote session while degraded → reported closed, WITHOUT any registry lookup
+        // (so a Redis outage can never block the unicast hot path on a registry round-trip).
+        MessageSessionClosedException ex = assertThrows(MessageSessionClosedException.class, () ->
+                clusterSender.sendMessage("/ws/x", new TextMessage("hi"), "remote-s"));
+        assertTrue(ex.getSessionIds().contains("remote-s"));
+        assertEquals(lookupsBefore, registry.getLookupNodeCalls(),
+                "degraded send must NOT query the registry (hot-path short-circuit)");
     }
 
     // ==================== Test helpers ====================

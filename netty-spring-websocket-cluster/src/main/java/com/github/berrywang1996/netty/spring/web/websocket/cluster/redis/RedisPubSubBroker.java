@@ -17,12 +17,15 @@
 package com.github.berrywang1996.netty.spring.web.websocket.cluster.redis;
 
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.*;
+import io.lettuce.core.RedisChannelHandler;
 import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisConnectionStateListener;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.pubsub.RedisPubSubAdapter;
 import io.lettuce.core.pubsub.StatefulRedisPubSubConnection;
 import lombok.extern.slf4j.Slf4j;
 
+import java.net.SocketAddress;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -64,6 +67,9 @@ public class RedisPubSubBroker implements ClusterBroker {
      *  Protects against a malicious/compromised peer publishing a huge payload (remote OOM). */
     private volatile int inboundMaxBytes = 0;
 
+    /** Notified the instant the Redis connection drops/recovers (event-driven degrade/recover). */
+    private volatile TransportStateListener transportStateListener;
+
     /**
      * Creates a new broker with the given Redis client and envelope codec.
      *
@@ -72,6 +78,41 @@ public class RedisPubSubBroker implements ClusterBroker {
      */
     public RedisPubSubBroker(RedisClient redisClient, EnvelopeCodec codec) {
         this.codec = codec;
+
+        // Event-driven transport health: flip broker state the instant Redis drops/recovers and
+        // notify the listener (the cluster degrades/recovers immediately, not up to a heartbeat
+        // interval late). The listener fires per-connection; CAS keeps the state transition
+        // idempotent across the publish + pub/sub connections.
+        redisClient.addListener(new RedisConnectionStateListener() {
+            @Override
+            public void onRedisDisconnected(RedisChannelHandler<?, ?> connection) {
+                if (state.compareAndSet(BrokerState.ACTIVE, BrokerState.DEGRADED)) {
+                    log.warn("Redis transport disconnected — broker DEGRADED (cross-node paused, local fan-out continues)");
+                    TransportStateListener l = transportStateListener;
+                    if (l != null) {
+                        try { l.onTransportLost(); } catch (Exception e) { log.debug("transportStateListener.onTransportLost failed", e); }
+                    }
+                }
+            }
+
+            @Override
+            public void onRedisConnected(RedisChannelHandler<?, ?> connection, SocketAddress remoteAddress) {
+                if (state.compareAndSet(BrokerState.DEGRADED, BrokerState.ACTIVE)) {
+                    log.info("Redis transport reconnected — broker ACTIVE");
+                    TransportStateListener l = transportStateListener;
+                    if (l != null) {
+                        try { l.onTransportRestored(); } catch (Exception e) { log.debug("transportStateListener.onTransportRestored failed", e); }
+                    }
+                }
+            }
+
+            @Override
+            public void onRedisExceptionCaught(RedisChannelHandler<?, ?> connection, Throwable cause) {
+                // Connection-level exceptions are surfaced via onRedisDisconnected; just trace here.
+                log.debug("Redis connection exception", cause);
+            }
+        });
+
         this.publishConnection = redisClient.connect();
         this.subscribeConnection = redisClient.connectPubSub();
 
@@ -131,6 +172,11 @@ public class RedisPubSubBroker implements ClusterBroker {
         log.warn("Async cluster publish to channel {} failed — message not delivered to remote nodes",
                 channel, ex);
         return null;
+    }
+
+    @Override
+    public void setTransportStateListener(TransportStateListener listener) {
+        this.transportStateListener = listener;
     }
 
     @Override
