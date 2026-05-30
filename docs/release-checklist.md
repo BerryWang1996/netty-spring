@@ -1,6 +1,6 @@
 # 版本发布检查清单
 
-更新时间：2026-05-29
+更新时间：2026-05-30
 
 ## 适用范围
 
@@ -15,8 +15,8 @@
 
 ## 通用发布前检查
 
-1. **版本号与文档**：根 `pom.xml` 切到目标版本（含 9 个模块），更新 README "当前推荐版本"、`docs/development-plan.md` 当前发版判断、`docs/release-notes-<version>.md`。
-2. **全量测试**：执行 `mvn test`，9 个模块全部 SUCCESS。
+1. **版本号与文档**：根 `pom.xml` 切到目标版本（覆盖全部模块），更新 README "当前推荐版本"、`docs/development-plan.md` 当前发版判断、`docs/release-notes-<version>.md`。
+2. **全量测试**：执行 `mvn test`，全部模块 SUCCESS（`1.8.0` 起为 11 个模块）。
 3. **SBOM**：`mvn -Psbom -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom`；CI 发布需确认 `Maven Test` + `Generate SBOM` job 成功。
 4. **Starter & Demo 回归**：四个 Starter（`netty-web` / `netty-webmvc` / `netty-websocket` / `demo-netty-web`）的集成测试必须通过；demo 启动 smoke 通过。
 5. **工程化边界复核**：
@@ -33,7 +33,7 @@
 7. **可观测性门槛**（自 `1.7.0` 起）：
    - `micrometer-core` 与 `spring-boot-actuator` 为 optional 依赖，缺失时自动退化。
    - 新增 Micrometer 指标命名遵循 `netty.<component>.*`，标签卡死在框架枚举（如 `CloseReason`）以避免无界基数。
-   - 新增可观测能力同步进 `docs/api-guide.md` §9 与对应配置文档。
+   - 新增可观测能力同步进 `docs/api-guide.md` §10 与对应配置文档。
 8. **审计闭环**（自 `1.7.0` 起，minor 版本必做）：
    - 发布前至少一轮独立代码审计（建议参考 `1.7.0` 的 4 路并行审计 + 对抗式验证模型）。
    - 发现的正确性 / 资源 / 安全问题在发版前清零；保留审计纪要在发布说明中体现。
@@ -97,7 +97,7 @@
 
 完成确认项：
 
-- 全量 `mvn test` 通过（**288 个测试 / 11 个模块**）；6 个 SPI 隔离 + 6 个配置 knobs + 9 个 Redis 集成（含入站大小上限安全测试）+ 3 个 auto-config 装配测试（ApplicationContextRunner）。`PerformanceBenchmark`（4 方法）是手动 harness，不计入套件。
+- 全量 `mvn test` 通过（**289 个测试 / 11 个模块**）；6 个 SPI 隔离 + 7 个配置/行为 + 9 个 Redis 集成（含入站大小上限安全测试）+ 3 个 auto-config 装配测试（ApplicationContextRunner）。`PerformanceBenchmark`（4 方法）是手动 harness，不计入套件。
 - **2 个新模块**：`netty-spring-websocket-cluster`、`netty-websocket-cluster-spring-boot-starter`。
 - **5 层可插拔 SPI**：`ClusterBroker` / `SessionRegistry` / `EnvelopeCodec` / `MessagePayloadCodec` / `ClusterNodeHeartbeat`，全部 `@ConditionalOnMissingBean` 可覆盖；集群模块**零 Jackson 依赖**（序列化用户自选）。
 - **配置诚实化**：`ClusterProperties` 只暴露有实际效果的配置项；设计文档中尚未实现的特性（多 pub/sub 连接、sharded pub/sub、可靠 streams、写 pipeline、限速、宽限期、Redis Cluster 客户端）**不暴露开关**，明确标注推迟到 `1.9.x`。

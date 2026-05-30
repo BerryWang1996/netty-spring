@@ -2,6 +2,11 @@
 
 配置前缀：`server.netty.websocket`
 
+> **多节点扩展（自 V1.8.0）**：单机 WebSocket 可通过 Redis Pub/Sub 横向扩展为集群。配置前缀
+> `server.netty.websocket.cluster.*`（默认关闭，需引入 `netty-websocket-cluster-spring-boot-starter`）。
+> 详见 [API 使用指南 §9 WebSocket Cluster](api-guide.md#9-websocket-cluster) 与
+> [集群方案设计](cluster-design.md)。
+
 ## 配置示例
 
 ```yaml

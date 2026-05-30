@@ -1,0 +1,91 @@
+{
+  "properties": [
+    {
+      "name": "server.netty.websocket.cluster.enable",
+      "type": "java.lang.Boolean",
+      "description": "Master switch for WebSocket cluster mode. Default false — single-node mode with zero cluster overhead. Only when true does the cluster auto-configuration activate.",
+      "defaultValue": false
+    },
+    {
+      "name": "server.netty.websocket.cluster.node-id",
+      "type": "java.lang.String",
+      "description": "Unique identifier for this node. Null or empty auto-generates a UUID."
+    },
+    {
+      "name": "server.netty.websocket.cluster.redis.uri",
+      "type": "java.lang.String",
+      "description": "Redis connection URI. Topology is selected by the scheme: redis://host:port (standalone), redis-sentinel://host:port/?sentinelMasterId=... (sentinel). Use rediss:// for TLS and redis://:password@host for auth — Redis is a trusted control plane and MUST be secured in production.",
+      "defaultValue": "redis://localhost:6379"
+    },
+    {
+      "name": "server.netty.websocket.cluster.heartbeat-interval-seconds",
+      "type": "java.lang.Long",
+      "description": "How often this node writes its heartbeat to Redis.",
+      "defaultValue": 3
+    },
+    {
+      "name": "server.netty.websocket.cluster.heartbeat-timeout-seconds",
+      "type": "java.lang.Long",
+      "description": "How long before a missing heartbeat marks a node as dead.",
+      "defaultValue": 10
+    },
+    {
+      "name": "server.netty.websocket.cluster.reconciliation-interval-seconds",
+      "type": "java.lang.Long",
+      "description": "Slow-path reconciliation sweep interval — backstop for missed keyspace notifications (fire-and-forget, no replay).",
+      "defaultValue": 15
+    },
+    {
+      "name": "server.netty.websocket.cluster.drain-timeout-seconds",
+      "type": "java.lang.Long",
+      "description": "Max time to wait for sessions to close during graceful shutdown.",
+      "defaultValue": 60
+    },
+    {
+      "name": "server.netty.websocket.cluster.reconnect-jitter-max-seconds",
+      "type": "java.lang.Long",
+      "description": "Max jitter applied before a DEGRADED to RESYNC re-registration, to avoid reconnect storms when many nodes recover simultaneously.",
+      "defaultValue": 10
+    },
+    {
+      "name": "server.netty.websocket.cluster.on-redis-loss",
+      "type": "com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterProperties$OnRedisLoss",
+      "description": "Behavior when the cluster transport (Redis) is lost. DEGRADE_TO_LOCAL (default) keeps local sessions alive and continues local fan-out, pausing only cross-node traffic. CLOSE_ALL closes all local sessions (fail-fast / load-shed).",
+      "defaultValue": "degrade-to-local"
+    },
+    {
+      "name": "server.netty.websocket.cluster.on-publish-failure",
+      "type": "com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterProperties$OnPublishFailure",
+      "description": "Behavior when a cluster publish/unicast fails or a message is too large. LOG (default) logs a warning; DROP silently drops (only the publishFailures counter increments).",
+      "defaultValue": "log"
+    },
+    {
+      "name": "server.netty.websocket.cluster.registry-read-cache-ttl-ms",
+      "type": "java.lang.Long",
+      "description": "Local sessionId-to-nodeId cache TTL (ms) for the unicast hot path.",
+      "defaultValue": 5000
+    },
+    {
+      "name": "server.netty.websocket.cluster.message-max-size-bytes",
+      "type": "java.lang.Integer",
+      "description": "Max serialized cluster message size in bytes. Larger messages are not published to the cluster (local delivery is unaffected); handled per on-publish-failure. 0 means unlimited.",
+      "defaultValue": 1048576
+    }
+  ],
+  "hints": [
+    {
+      "name": "server.netty.websocket.cluster.on-redis-loss",
+      "values": [
+        { "value": "degrade-to-local", "description": "Keep local sessions alive, continue local fan-out, pause cross-node traffic (default)." },
+        { "value": "close-all", "description": "Close all local sessions when the transport is lost." }
+      ]
+    },
+    {
+      "name": "server.netty.websocket.cluster.on-publish-failure",
+      "values": [
+        { "value": "log", "description": "Log a warning on publish failure (default)." },
+        { "value": "drop", "description": "Silently drop on publish failure." }
+      ]
+    }
+  ]
+}

@@ -142,6 +142,30 @@ class ClusterMessageSenderKnobsTest {
         assertEquals(0, localSender.closedSessions.size(), "Sessions should NOT be closed in degrade-to-local");
     }
 
+    // ==================== degrade-to-local broadcast: local delivered, cross-node loss visible ====================
+
+    @Test
+    void whileDegraded_broadcastDeliversLocallyButCrossNodeSkipIsCounted() {
+        localSender.addUri("/ws/room");
+        clusterSender.setOnRedisLoss(ClusterProperties.OnRedisLoss.DEGRADE_TO_LOCAL);
+        nodeManager.start();
+        clusterSender.start();
+
+        // Go DEGRADED (Redis lost) — cross-node publish should now be skipped, not attempted.
+        nodeManager.onTransportLost();
+        assertEquals(com.github.berrywang1996.netty.spring.web.websocket.cluster.node.NodeState.DEGRADED,
+                nodeManager.getState());
+
+        clusterSender.topicMessage("/ws/room", new TextMessage("while-degraded"));
+
+        // Local fan-out still happened (never lost)...
+        assertEquals(1, localSender.topicMessageCount.get());
+        // ...but the cross-node copy was NOT published (nothing on the broker)...
+        assertEquals(0, broker.getPublishedEnvelopes().size());
+        // ...and the loss is now VISIBLE via the counter (was silent debug-only before).
+        assertEquals(1, clusterSender.getClusterRuntimeStats().getBroadcastsSkippedDegraded());
+    }
+
     // ==================== Test helpers ====================
 
     /** Local sender that tracks per-URI sessionIds and records closeSession calls. */

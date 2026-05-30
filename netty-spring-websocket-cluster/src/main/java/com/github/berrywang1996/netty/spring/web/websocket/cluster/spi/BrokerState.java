@@ -28,15 +28,18 @@ public enum BrokerState {
     ACTIVE,
 
     /**
-     * The broker has lost its connection to the transport (e.g. Redis disconnected)
-     * but has not yet exceeded the grace period. Cross-node messages are buffered or
-     * dropped depending on the configured policy; local fan-out continues.
+     * The broker has lost its connection to the transport (e.g. Redis disconnected).
+     * In 1.8.0 cross-node publishes are <b>dropped</b> while degraded (NOT buffered —
+     * at-most-once); local fan-out continues unaffected (degrade-to-local). The number
+     * of cross-node broadcasts skipped while degraded is counted in
+     * {@code ClusterRuntimeStats.broadcastsSkippedDegraded}. (Buffering / replay is the
+     * reliable-stream path, roadmap for 1.9.x.)
      */
     DEGRADED,
 
     /**
-     * The broker is reconnecting and rebuilding state (re-subscribing channels,
-     * re-syncing session registry). Incoming cross-node messages are not yet accepted.
+     * The broker is reconnecting and rebuilding state. Cross-node publishes are still
+     * dropped until the node returns to {@link #ACTIVE}; local fan-out continues.
      */
     RESYNC,
 

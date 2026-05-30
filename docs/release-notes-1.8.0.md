@@ -1,6 +1,6 @@
 # Release Notes — v1.8.0
 
-> 发布日期：2026-05-29
+> 发布日期：2026-05-30
 
 ## 版本定位
 
@@ -73,9 +73,9 @@ v1.8.0 是 **WebSocket 集群支持** 的 milestone 版本。通过 Redis Pub/Su
 
 ## 测试覆盖
 
-- 288 个测试，11 个模块，全部通过
-- 集群：6 SPI 隔离 + 6 配置 knobs + 9 Redis 集成（含入站大小上限安全测试）+ 3 auto-config 装配测试（ApplicationContextRunner）
-- `PerformanceBenchmark`（4 个方法）是**手动运行的性能 harness**，不计入 288 的 `mvn test` 套件
+- 289 个测试，11 个模块，全部通过
+- 集群：6 SPI 隔离 + 7 配置/行为 + 9 Redis 集成（含入站大小上限安全测试）+ 3 auto-config 装配测试（ApplicationContextRunner）
+- `PerformanceBenchmark`（4 个方法）是**手动运行的性能 harness**，不计入 289 的 `mvn test` 套件
 
 ## 升级指南
 
@@ -105,6 +105,14 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 
 - **单机模式（默认）= 生产级**：`cluster.enable=false`（或缺省）时行为与 1.7.x 完全一致，零集群开销。绝大多数用户用这个。
 - **集群模式 = 面向 ≤~10 节点 + 专用加密 Redis**。⚠️ **Redis 是集群控制平面**：任何能 `PUBLISH` 的主体都能向任意会话注入消息或强制关闭会话。生产**必须**用专用、网络隔离、带密码（`redis://:secret@host`）+ TLS（`rediss://`）的 Redis。1.8.0 已内置：URI 密码日志脱敏 + 无认证/无 TLS 时 `WARN` + 接收端入站消息大小上限。应用层 AES-GCM **不**延伸过 Redis（明文扇出到远端）。完整信任模型见 `docs/cluster-design.md §安全模型`。
+
+## 消息投递语义（重要）
+
+- **本地投递：永不因集群问题丢失。** `topicMessage`/广播总是先做本地 fan-out（即使节点 DEGRADED），本节点的本地 session 一定收到。
+- **跨节点广播：at-most-once（可能丢，不保证送达）。** 走 Redis Pub/Sub（fire-and-forget）——订阅节点在发布瞬间若离线/断连,其本地用户**静默收不到,无重放**。这是 Pub/Sub 固有契约,与 Socket.IO Redis adapter / Spring STOMP relay 默认一致。
+- **跨节点单播：失败同步通知调用方。** `sendMessage` 把送不到的 sessionId 收进 `MessageSessionClosedException` 抛出,调用方明确知道哪些没送达。
+- **可见性:** 发布失败 → 日志 + `publishFailures` 计数;降级期间跳过的跨节点广播 → `broadcastsSkippedDegraded` 计数;两者都在 `/actuator/health` 的 `nettyCluster` 下暴露。
+- **需要 at-least-once（重放）的可靠投递**(Redis Streams + offset/epoch + `reliableBroadcast`)是 **1.9.x**;1.8.0 **不提供**该方法。
 
 ## 可观测性（1.8.0）
 

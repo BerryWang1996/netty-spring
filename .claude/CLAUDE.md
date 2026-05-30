@@ -5,8 +5,8 @@
 - **Owner**: BerryWang1996 (wangbor@yeah.net), single maintainer
 - **License**: Apache 2.0
 - **Maven Central**: `io.github.berrywang1996:netty-*` (namespace verified at central.sonatype.com)
-- **Current version**: 1.7.1 (published to Maven Central: 1.4.0, 1.6.2, 1.7.0, 1.7.1)
-- **In development**: 1.8.0 (WebSocket cluster support via Redis, with ClusterBroker/SessionRegistry SPI)
+- **Current version**: 1.8.0 (WebSocket cluster support; committed + tagged `v1.8.0`, deployed to Central pending manual Publish). Earlier published: 1.4.0, 1.6.2, 1.7.0, 1.7.1
+- **Next**: 1.9.x (cluster hardening — see development-plan.md), 2.0.0 (Boot 3.x)
 - **Spring Boot**: 2.7.18 (Boot 3.x migration planned for 2.0.0)
 - **JDK**: 17 (GraalVM JDK 17.0.11)
 - **Build**: Maven 3.9.9, 11 modules (including 2 new cluster modules)
@@ -49,47 +49,44 @@ demo-netty-web-spring-boot-starter        — demo app (not published to Central
 - Commit style: `type: description` (fix/feat/docs/release), include `Co-Authored-By: Claude ...`
 - Pre-release: 4-way parallel code audit + adversarial verification model
 
-## 1.8.0 Development Progress (as of 2026-05-29)
-Module skeletons created and validated (mvn validate passes 11 modules):
-- `netty-spring-websocket-cluster/` — pom.xml done, package `...web.websocket.cluster.*`
-- `netty-websocket-cluster-spring-boot-starter/` — pom.xml done
+## 1.8.0 Status (RELEASED — committed, tagged v1.8.0, deployed to Central pending manual Publish)
+WebSocket cluster support. 289 tests / 11 modules green. Single-node (cluster.enable=false) is
+production-grade and behaviorally identical to 1.7.x; cluster mode targets ≤~10 nodes + a dedicated,
+secured Redis. Multiple pre-release review rounds (correctness/concurrency, security, production/API,
+release/build) + a "fix until N clean rounds" loop hardened it.
 
-ALL CODE DONE — 11 modules compile + all tests pass (no commits yet). Created files:
+**5-layer pluggable SPI** (all `@ConditionalOnMissingBean`):
+- `ClusterBroker` (cross-node transport; `RedisPubSubBroker` default) — publish/unicast/subscribe/state/shutdown
+- `SessionRegistry` (distributed session routing; `RedisSessionRegistry` default, SCAN-based clusterSessionIds)
+- `EnvelopeCodec` (wire format; `SimpleTextEnvelopeCodec` zero-dep pipe-delimited default — NO Jackson)
+- `MessagePayloadCodec` (message body; `DefaultMessagePayloadCodec` T:/J:/B: default)
+- `ClusterNodeHeartbeat` (`RedisClusterNodeHeartbeat` SET+TTL default)
 
-SPI layer (`...websocket.cluster.spi/`):
-- `ClusterBroker` — publish/unicast/subscribe/subscribeUnicast/state/shutdown
-- `SessionRegistry` — register/deregister/lookupNode/clusterSessionIds/removeAllForNode/shutdown
-- `ClusterEnvelope` — originNodeId/uri/kind/payload/targetSessionId/traceparent/timestamp
-- `ClusterMessageListener` / `ClusterSubscription` / `ClusterBrokerException` / `BrokerState`
+**Core**: `ClusterMessageSender` (@Primary MessageSender, local-first + broker fan-out, self-delivery
+suppression, single-lookup unicast, node cache); `ClusterNodeManager` (JOINING→ACTIVE→DEGRADED→RESYNC→
+DRAINING→LEFT, heartbeat + reconciliation, configurable reconnect jitter); `ClusterRuntimeStats`;
+`ClusterSessionHook(Impl)` (session lifecycle → registry); `ClusterProperties` (only functional knobs —
+no lying config).
 
-Node lifecycle (`...websocket.cluster.node/`):
-- `NodeState` enum — JOINING/ACTIVE/DEGRADED/RESYNC/DRAINING/LEFT
-- `ClusterNodeManager` — heartbeat scheduler, reconciliation sweep, state transitions
-- `ClusterNodeHeartbeat` interface + `NodeStateListener` interface
+**Hardening done in 1.8.0**: bean destroyMethod lifecycle; `@AutoConfigureAfter(MessageSenderSupportConfigure)`
+ordering; Redis URI password redaction + no-TLS/no-auth warn; inbound message size cap (remote-OOM guard);
+async publish failure logged (not silent) + `onPublishFailure` policy; `onRedisLoss` degrade-to-local/close-all;
+`messageMaxSizeBytes`; degrade-skip visibility counter; `ClusterHealthIndicator` (/actuator/health → nettyCluster);
+spring-configuration-metadata for IDE hints; deps pinned (spring-framework 5.3.39, snakeyaml 1.33).
 
-Core (`...websocket.cluster/`):
-- `ClusterMessageSender` — implements MessageSender, local-first + broker fan-out, self-delivery suppression, node cache
-- `ClusterProperties` — full server.netty.websocket.cluster.* config binding
+**Delivery semantics**: local delivery never lost; cross-node broadcast at-most-once (Pub/Sub fire-and-forget,
+no replay); unicast undeliverable → MessageSessionClosedException to caller. Reliable replay path
+(reliableBroadcast / Redis Streams) is 1.9.x — NOT in 1.8.0.
 
-Redis impl (`...websocket.cluster.redis/`):
-- `RedisPubSubBroker` — Lettuce PUBLISH/SUBSCRIBE, JSON envelope ser/de, base64 payload
-- `RedisSessionRegistry` — HSET/HGET/SADD/DEL pipeline, bulk node cleanup
-- `RedisClusterNodeHeartbeat` — SET+TTL, HSET nodes hash, findExpiredNodes reconciliation
+**Deferred to 1.9.x** (documented in cluster-design.md): HMAC envelope auth, full Micrometer meter-binder set,
+reconciliation leader-election, deregister atomicity, scheduler isolation, multi pub/sub connections, sharded
+pub/sub, Redis Cluster client, W3C trace propagation, multi-node demo + Testcontainers.
 
-Auto-config (`netty-websocket-cluster-spring-boot-starter`):
-- `NettyWebSocketClusterConfigure` — @ConditionalOnProperty(cluster.enable=true), wires all beans
-- `META-INF/spring.factories` — registers the auto-config
-
-Tests (`...websocket.cluster/` test):
-- `InMemoryBroker` + `InMemorySessionRegistry` — stub SPI impls proving no Lettuce dependency
-- `ClusterMessageSenderTest` — 6 tests: broadcast+self-suppression, unicast routing, local queries, cluster-wide queries, cache invalidation
-
-REMAINING:
-- Version bump to 1.8.0-SNAPSHOT (task #29)
-- Session lifecycle hooks in MessageMappingResolver (task #36) — register/deregister on connect/close
+Docs: `docs/api-guide.md` §9 (WebSocket Cluster), `docs/cluster-design.md` (scope table + §Security + roadmap),
+`docs/release-notes-1.8.0.md`, README cluster section (EN+中文).
 
 ## Key Docs
 - `docs/cluster-design.md` — full 1.8.0 cluster design (430+ lines, includes capacity model + ADR-001)
 - `docs/development-plan.md` — roadmap: 1.8.0 → 1.9.x (NATS) → 2.0.0 (Boot 3.x) → 2.1.0 (enterprise security)
 - `docs/release-checklist.md` — reusable release process
-- `docs/api-guide.md` — 12-section user guide
+- `docs/api-guide.md` — 13-section user guide (incl. §9 WebSocket Cluster)

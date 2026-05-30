@@ -21,8 +21,9 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster;
  * Bound to {@code server.netty.websocket.cluster.*}.
  *
  * <p>Default is {@code enable=false} — single-node mode with zero cluster overhead.
- * When enabled, a {@link ClusterMessageSender} replaces the default
- * {@link com.github.berrywang1996.netty.spring.web.websocket.context.DefaultMessageSender}.
+ * When enabled, a {@link ClusterMessageSender} becomes the {@code @Primary}
+ * {@link com.github.berrywang1996.netty.spring.web.websocket.context.MessageSender},
+ * wrapping the local single-node sender.
  *
  * <p><b>Scope note (1.8.0):</b> this class exposes only properties that have an observable
  * effect in the 1.8.0 implementation. Additional knobs described in

@@ -255,12 +255,12 @@ netty:broadcast:{uri}  → 每个 @MessageMapping URI 一个 Pub/Sub 频道
 |---|---|---|
 | `getSessionIds(uri)` / `getSessions(uri)` | **本地节点** | 不变，热路径安全 |
 | `isSessionAlive(uri, ids…)` | **本地节点**，非本地 id 返回 `false` | 不变，热路径安全 |
-| `closeSession(uri, sessionId)` | 本地 sessionId 同步关闭，远端 sessionId 异步发布关闭意图后立即返回 `true` | Javadoc 明确语义 |
-| `broadcast(uri, msg)` | 本地 + 跨节点 fan-out，**at-most-once** | 同上 |
-| `getClusterSessionIds(uri)` | 全集群 | 新增，返回 `CompletionStage<Set<String>>` |
-| `isSessionAliveCluster(uri, ids…)` | 全集群 | 新增，`CompletionStage<Boolean>` |
-| `closeSessionCluster(uri, sessionId)` | 全集群关闭，等待目标节点 ACK | 新增，`CompletionStage<Boolean>` |
-| `reliableBroadcast(uri, msg)` 或 `broadcast(uri, msg, DeliveryHint.atLeastOnce())` | Streams 路径 | 显式 at-least-once |
+| `closeSession(uri, sessionId)` | ✅ 1.8.0 — 本地 sessionId 同步关闭，远端 sessionId 异步发布 CLOSE 意图后返回（fire-and-forget，不等 ACK） | Javadoc 明确语义 |
+| `topicMessage(uri, msg)`（广播） | ✅ 1.8.0 — 本地 + 跨节点 fan-out，**at-most-once** | 本地永不丢；跨节点 at-most-once |
+| `getClusterSessionIds(uri)` | ✅ 1.8.0 — 全集群 | `CompletionStage<Set<String>>` |
+| `isSessionAliveCluster(uri, ids…)` | ✅ 1.8.0 — 全集群 | `CompletionStage<Boolean>` |
+| `closeSessionCluster(uri, sessionId)`（等目标节点 ACK） | ⏳ 1.9.x（1.8.0 用上面 fire-and-forget 的 `closeSession`） | `CompletionStage<Boolean>` |
+| `reliableBroadcast(uri, msg)` / `broadcast(uri, msg, DeliveryHint.atLeastOnce())` | ⏳ 1.9.x（Streams + offset/epoch，1.8.0 **不存在**此方法） | 显式 at-least-once |
 
 控制器代码：
 
@@ -271,12 +271,11 @@ public class ChatController {
 
     @MessageMapping(value = "/ws/chat", messageType = MessageType.TEXT_MESSAGE)
     public void onMessage(ChatMessage msg, MessageSession session) {
-        // 本地 + 跨节点 fan-out（at-most-once）
+        // 本地 + 跨节点 fan-out（at-most-once；本地永不丢，跨节点不保证送达）
         messageSender.broadcastJson("/ws/chat", response);
-        // 本地直发 / 跨节点路由
+        // 本地直发 / 跨节点路由（送不到的 session 会抛 MessageSessionClosedException）
         messageSender.sendJsonToSession("/ws/chat", pm, targetSessionId);
-        // 重要通知：at-least-once
-        messageSender.reliableBroadcast("/ws/chat", important);
+        // 需要 at-least-once（重放）的可靠广播是 1.9.x 的 reliableBroadcast(...)，1.8.0 暂无
     }
 }
 ```

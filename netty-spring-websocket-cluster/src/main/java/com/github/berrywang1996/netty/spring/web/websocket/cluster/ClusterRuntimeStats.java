@@ -46,6 +46,11 @@ public class ClusterRuntimeStats {
     /** Cluster publishes that failed or were dropped (oversized payload / broker error). */
     final AtomicLong publishFailures = new AtomicLong();
 
+    /** Cross-node broadcasts skipped because the node was not ACTIVE (DEGRADED/RESYNC/etc.).
+     *  Local fan-out still happened; the cross-node copy was dropped (at-most-once). Makes
+     *  degrade-to-local message loss visible/quantifiable to operators. */
+    final AtomicLong broadcastsSkippedDegraded = new AtomicLong();
+
     /** Node lookup cache hits. */
     final AtomicLong cacheHits = new AtomicLong();
 
@@ -59,6 +64,7 @@ public class ClusterRuntimeStats {
     public long getSelfDeliveryDropped() { return selfDeliveryDropped.get(); }
     public long getUnicastSent() { return unicastSent.get(); }
     public long getPublishFailures() { return publishFailures.get(); }
+    public long getBroadcastsSkippedDegraded() { return broadcastsSkippedDegraded.get(); }
     public long getCacheHits() { return cacheHits.get(); }
     public long getCacheMisses() { return cacheMisses.get(); }
 
@@ -80,6 +86,7 @@ public class ClusterRuntimeStats {
                 ", selfDropped=" + selfDeliveryDropped.get() +
                 ", unicastSent=" + unicastSent.get() +
                 ", publishFailures=" + publishFailures.get() +
+                ", broadcastsSkippedDegraded=" + broadcastsSkippedDegraded.get() +
                 ", cacheHits=" + cacheHits.get() +
                 ", cacheMisses=" + cacheMisses.get() +
                 ", cacheHitRatio=" + String.format("%.2f", getCacheHitRatio()) +

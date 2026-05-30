@@ -31,17 +31,17 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Cluster-aware {@link MessageSender} implementation that wraps a local
- * {@link DefaultMessageSender} and adds cross-node broadcast/unicast via
- * the {@link ClusterBroker} and {@link SessionRegistry} SPIs.
+ * Cluster-aware {@link MessageSender} implementation that wraps the local (single-node)
+ * {@code MessageSender} and adds cross-node broadcast/unicast via the {@link ClusterBroker}
+ * and {@link SessionRegistry} SPIs.
  *
  * <h3>Design principle: local-first, cluster-second</h3>
  * <ul>
  *   <li>All local-query methods ({@link #getSessionIds}, {@link #getSessions},
  *       {@link #isSessionAlive}) remain <b>local-node only</b> and O(1) — they delegate
  *       directly to the local sender with zero network overhead.</li>
- *   <li>{@link #broadcast} performs local fan-out first, then publishes to the cluster
- *       broker for remote nodes (at-most-once by default).</li>
+ *   <li>{@link #topicMessage} (broadcast) performs local fan-out first, then publishes to
+ *       the cluster broker for remote nodes (at-most-once by default).</li>
  *   <li>{@link #sendMessage} checks if the target session is local; if not, it looks up
  *       the owning node via the registry and unicasts through the broker.</li>
  *   <li>Cluster-wide queries are exposed as <b>new async methods</b> that return
@@ -251,7 +251,12 @@ public class ClusterMessageSender implements MessageSender {
                         + " — local delivery succeeded, remote nodes may not have received it", e);
             }
         } else {
-            log.debug("Cluster broadcast skipped for URI {} — node state is {}",
+            // Node not ACTIVE (DEGRADED/RESYNC/...): local fan-out already happened above,
+            // but the cross-node copy is dropped (at-most-once, degrade-to-local). Count it
+            // so the loss is visible/quantifiable rather than silent.
+            clusterStats.broadcastsSkippedDegraded.incrementAndGet();
+            log.debug("Cluster broadcast cross-node copy skipped for URI {} — node state is {} "
+                    + "(local delivery succeeded; remote nodes will not receive this message)",
                     uri, nodeManager.getState());
         }
     }
@@ -455,13 +460,17 @@ public class ClusterMessageSender implements MessageSender {
         // DROP: silent (only the counter is incremented)
     }
 
+    /** WebSocket close status code 1011 = "internal/server error" (RFC 6455 §7.4.1) —
+     *  used when CLOSE_ALL sheds local sessions because the cluster transport was lost. */
+    private static final int CLOSE_CODE_TRANSPORT_LOST = 1011;
+
     /** Closes all local sessions across all URIs (onRedisLoss=CLOSE_ALL policy). */
     private void closeAllLocalSessions() {
         int closed = 0;
         for (String uri : localSender.getRegisteredUri()) {
             for (String sessionId : localSender.getSessionIds(uri)) {
                 try {
-                    localSender.closeSession(uri, sessionId, 1011, "cluster transport lost");
+                    localSender.closeSession(uri, sessionId, CLOSE_CODE_TRANSPORT_LOST, "cluster transport lost");
                     closed++;
                 } catch (Exception e) {
                     log.debug("Failed to close session {} on URI {} during CLOSE_ALL", sessionId, uri, e);

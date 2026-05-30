@@ -1,6 +1,6 @@
 # netty-spring API Usage Guide
 
-> Version: 1.8.0 | Updated: 2026-05-29
+> Version: 1.8.0 | Updated: 2026-05-30
 
 This guide walks through the most common integration scenarios for `netty-spring`. Each section is self-contained — jump directly to the scenario that matches your use case.
 
@@ -16,10 +16,11 @@ This guide walks through the most common integration scenarios for `netty-spring
 6. [Chat Room Pattern (Multi-User)](#6-chat-room-pattern-multi-user)
 7. [Handshake Authentication](#7-handshake-authentication)
 8. [Application-Layer Encryption](#8-application-layer-encryption)
-9. [Metrics & Monitoring](#9-metrics--monitoring)
-10. [Configuration Reference](#10-configuration-reference)
-11. [Annotation Reference](#11-annotation-reference)
-12. [Troubleshooting](#12-troubleshooting)
+9. [WebSocket Cluster](#9-websocket-cluster)
+10. [Metrics & Monitoring](#10-metrics--monitoring)
+11. [Configuration Reference](#11-configuration-reference)
+12. [Annotation Reference](#12-annotation-reference)
+13. [Troubleshooting](#13-troubleshooting)
 
 ---
 
@@ -523,7 +524,88 @@ public MessageCryptoPolicy cryptoPolicy() {
 
 ---
 
-## 9. Metrics & Monitoring
+## 9. WebSocket Cluster
+
+*Since V1.8.0.* Scale WebSocket across multiple nodes via Redis Pub/Sub. **Default is single-node mode** (`cluster.enable=false`) with zero overhead and behavior identical to 1.7.x. Cluster mode is **opt-in** and targets **≤ ~10 nodes with a dedicated, secured Redis**.
+
+### Enable Cluster
+
+Add the cluster starter alongside your existing starter:
+
+```xml
+<dependency>
+    <groupId>io.github.berrywang1996</groupId>
+    <artifactId>netty-websocket-cluster-spring-boot-starter</artifactId>
+    <version>1.8.0</version>
+</dependency>
+```
+
+```properties
+server.netty.websocket.cluster.enable=true
+# Production: dedicated, network-isolated Redis with auth + TLS
+server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
+```
+
+**No business code changes** — your `MessageSender` is transparently replaced by a `ClusterMessageSender`. `broadcastText`/`broadcastJson` now fan out across all nodes; `sendTextToSession`/unicast routes to whichever node owns the target session.
+
+```java
+@MessageMapping(value = "/ws/chat", messageType = MessageType.TEXT_MESSAGE)
+public void onMessage(String text, MessageSession session) {
+    // Local + cross-node broadcast (at-most-once across nodes)
+    messageSender.broadcastText("/ws/chat", text);
+}
+```
+
+### Delivery Semantics (important)
+
+| Path | Guarantee |
+| --- | --- |
+| Local delivery | **Never lost** — local fan-out happens first, even while degraded |
+| Cross-node broadcast | **At-most-once** — Redis Pub/Sub is fire-and-forget; a node offline at publish time misses the message (no replay). Industry-standard default (same as Socket.IO Redis adapter / Spring STOMP relay) |
+| Cross-node unicast | Undeliverable sessions are reported to the caller via `MessageSessionClosedException` |
+
+An at-least-once replay path (`reliableBroadcast`, Redis Streams + offset/epoch) is roadmap for 1.9.x; it does **not** exist in 1.8.0.
+
+### Cluster-Wide Queries
+
+`ClusterMessageSender` adds async, network-backed queries (cast `MessageSender` to `ClusterMessageSender`, or inject it directly):
+
+```java
+clusterSender.getClusterSessionIds("/ws/chat")          // CompletionStage<Set<String>>
+             .thenAccept(ids -> ...);
+clusterSender.isSessionAliveCluster("/ws/chat", sid)     // CompletionStage<Boolean>
+             .thenAccept(alive -> ...);
+clusterSender.getClusterRuntimeStats();                  // counters (publishFailures, cacheHitRatio, ...)
+```
+
+Local queries (`getSessionIds`, `isSessionAlive`, `getSessionNums`) remain **local-node only** and O(1) — they are not turned into hidden network calls.
+
+### Security (must read)
+
+> Redis is the cluster **control plane**. Anyone who can `PUBLISH` to it can inject messages into, or force-close, any WebSocket session. For production: use a **dedicated, network-isolated Redis** with a **password** (`redis://:secret@host`) and **TLS** (`rediss://`). 1.8.0 redacts the URI password in logs and warns when the URI has no TLS/auth. Application-layer AES-GCM does **not** extend across Redis — plaintext is fanned out to remote nodes.
+
+### Pluggable Serialization (zero Jackson)
+
+All serialization is SPI-based. Override any default with a `@Bean`:
+
+```java
+@Bean
+public EnvelopeCodec envelopeCodec() { return new MyProtobufEnvelopeCodec(); }       // wire envelope
+@Bean
+public MessagePayloadCodec messagePayloadCodec() { return new MyPayloadCodec(); }     // message body
+```
+
+Likewise `ClusterBroker`, `SessionRegistry`, and `ClusterNodeHeartbeat` are `@ConditionalOnMissingBean` — provide your own to swap the transport (e.g. a future NATS/mesh impl) without touching application code.
+
+### Health
+
+With `spring-boot-actuator` on the classpath, `GET /actuator/health` includes a `nettyCluster` indicator reporting node state (ACTIVE/DEGRADED/RESYNC/DRAINING/LEFT), broker state, and runtime counters. DEGRADED/RESYNC report `UP` (the node still serves local traffic) so a transient Redis blip won't trigger an orchestrator pod kill.
+
+See [`docs/cluster-design.md`](cluster-design.md) for the full architecture, capacity model, and roadmap.
+
+---
+
+## 10. Metrics & Monitoring
 
 ### Built-in Management Endpoints
 
@@ -605,7 +687,7 @@ Health at: `http://localhost:8081/actuator/health`
 
 ---
 
-## 10. Configuration Reference
+## 11. Configuration Reference
 
 All properties use the `server.netty.*` prefix.
 
@@ -686,9 +768,28 @@ the framework substitutes a value derived from CPU count at startup.
 | `websocket.write-buffer-high-water-mark` | `65536` | Per-channel write buffer high mark; above this a channel is non-writable |
 | `websocket.flush-consolidation-threshold` | `256` | `FlushConsolidationHandler` threshold; `0` or negative disables |
 
+### WebSocket Cluster — *since V1.8.0*
+
+Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; requires the `netty-websocket-cluster-spring-boot-starter`.
+
+| Property | Default | Description |
+| --- | --- | --- |
+| `cluster.enable` | `false` | Master switch; `false` = single-node (zero overhead) |
+| `cluster.node-id` | *(auto UUID)* | Unique node id; empty auto-generates |
+| `cluster.redis.uri` | `redis://localhost:6379` | Redis URI; scheme selects topology (`redis://` / `redis-sentinel://`); use `rediss://` + auth in production |
+| `cluster.heartbeat-interval-seconds` | `3` | Heartbeat write interval |
+| `cluster.heartbeat-timeout-seconds` | `10` | Missing-heartbeat → dead-node threshold |
+| `cluster.reconciliation-interval-seconds` | `15` | Slow-path dead-node sweep interval |
+| `cluster.drain-timeout-seconds` | `60` | Graceful-shutdown session-close wait |
+| `cluster.reconnect-jitter-max-seconds` | `10` | Max jitter before DEGRADED→RESYNC re-register |
+| `cluster.registry-read-cache-ttl-ms` | `5000` | sessionId→nodeId unicast hot-path cache TTL |
+| `cluster.message-max-size-bytes` | `1048576` | Max serialized cluster message; larger is not published cross-node (`0` = unlimited) |
+| `cluster.on-redis-loss` | `degrade-to-local` | `degrade-to-local` (keep local sessions) or `close-all` |
+| `cluster.on-publish-failure` | `log` | `log` or `drop` on publish failure |
+
 ---
 
-## 11. Annotation Reference
+## 12. Annotation Reference
 
 ### HTTP MVC
 
@@ -718,7 +819,7 @@ the framework substitutes a value derived from CPU count at startup.
 
 ---
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 ### Common Issues
 

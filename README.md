@@ -27,10 +27,12 @@ A Spring Boot integration for Netty, providing HTTP MVC and WebSocket capabiliti
 | `netty-spring-web` | Core Netty bootstrap, channel init, HTTP dispatch |
 | `netty-spring-webmvc` | MVC routing and parameter binding |
 | `netty-spring-websocket` | WebSocket mapping, session management, message sending |
+| `netty-spring-websocket-cluster` | *(v1.8.0)* Cluster SPI + Redis Pub/Sub transport |
 | `netty-spring-boot-autoconfigure` | Shared auto-configuration for all starters |
 | `netty-web-spring-boot-starter` | Combined HTTP MVC + WebSocket starter |
 | `netty-webmvc-spring-boot-starter` | HTTP MVC only starter |
 | `netty-websocket-spring-boot-starter` | WebSocket only starter |
+| `netty-websocket-cluster-spring-boot-starter` | *(v1.8.0)* Cluster auto-configuration (opt-in) |
 | `demo-netty-web-spring-boot-starter` | Demo application |
 
 ### Quick Start (5 minutes)
@@ -298,11 +300,11 @@ The interceptor runs after Origin check but before `@MessageMapping(ON_HANDSHAKE
 | `server.netty.websocket.broadcast-mode` | `EVENT_LOOP_DIRECT` | `EVENT_LOOP_DIRECT` (v1.6+ zero-copy) or `THREAD_POOL_LEGACY` (v1.5.x compat) |
 | `server.netty.websocket.crypto.enable` | `false` | Application-layer WebSocket frame encryption |
 
-Full configuration reference: [API Usage Guide](docs/api-guide.md#10-configuration-reference)
+Full configuration reference: [API Usage Guide](docs/api-guide.md#11-configuration-reference)
 
 ### Current Status
 
-- **Current recommended version: `1.8.0`** (WebSocket cluster support via Redis Pub/Sub + 5-layer SPI architecture + 288 tests). Single-node mode is production-grade and unchanged from 1.7.x; cluster mode targets ≤~10 nodes with a dedicated, secured Redis — see [Cluster Design §Security](docs/cluster-design.md).
+- **Current recommended version: `1.8.0`** (WebSocket cluster support via Redis Pub/Sub + 5-layer SPI architecture + 289 tests). Single-node mode is production-grade and unchanged from 1.7.x; cluster mode targets ≤~10 nodes with a dedicated, secured Redis — see [Cluster Design §Security](docs/cluster-design.md).
 - `1.7.0` delivered, across four work streams: Micrometer metrics expansion (connection/message/broadcast/latency distributions, per-URI & thread-pool & allocator gauges), SLF4J MDC structured logging, an Actuator `/actuator/health` indicator, optional WebSocket fragmented-message aggregation, and 6 audited legacy defect fixes — all preserved in 1.8.0 and backward compatible
 - Milestones P0 through P7 are all complete; performance (1.6.x), security/stability (1.6.2) and observability (1.7.0) hardening followed
 - Next: `1.8.0` Redis Pub/Sub clustering; later `2.0.0` Spring Boot 3.x / Jakarta migration + enterprise security
@@ -324,7 +326,7 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#10-configurati
 ### Testing
 
 ```bash
-# Full reactor test (all 9 modules)
+# Full reactor test (all 11 modules)
 ./mvnw test
 
 # Test a specific module
@@ -364,10 +366,12 @@ Verified on `GraalVM JDK 17.0.11` + `Apache Maven 3.9.9`. CI workflow runs full 
 | `netty-spring-web` | Netty 启动、通道初始化、HTTP 请求分发 |
 | `netty-spring-webmvc` | MVC 路由与参数绑定 |
 | `netty-spring-websocket` | WebSocket 映射、会话管理、消息发送 |
+| `netty-spring-websocket-cluster` | *(v1.8.0)* 集群 SPI + Redis Pub/Sub 传输 |
 | `netty-spring-boot-autoconfigure` | Starter 共用自动装配骨架 |
 | `netty-web-spring-boot-starter` | HTTP MVC + WebSocket 组合 Starter |
 | `netty-webmvc-spring-boot-starter` | 仅 HTTP MVC 的 Starter |
 | `netty-websocket-spring-boot-starter` | 仅 WebSocket 的 Starter |
+| `netty-websocket-cluster-spring-boot-starter` | *(v1.8.0)* 集群自动装配（按需开启） |
 | `demo-netty-web-spring-boot-starter` | 示例工程 |
 
 ### 5 分钟快速开始
@@ -634,11 +638,11 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 | `server.netty.websocket.broadcast-mode` | `EVENT_LOOP_DIRECT` | `EVENT_LOOP_DIRECT`（v1.6+ 零拷贝）或 `THREAD_POOL_LEGACY`（v1.5.x 兼容） |
 | `server.netty.websocket.crypto.enable` | `false` | 应用层 WebSocket 帧加密 |
 
-完整配置参考：[API 使用指南](docs/api-guide.md#10-configuration-reference)
+完整配置参考：[API 使用指南](docs/api-guide.md#11-configuration-reference)
 
 ### 当前阶段
 
-- **当前推荐版本：`1.8.0`**（WebSocket 集群支持：Redis Pub/Sub 跨节点广播/单播 + 5 层 SPI 可插拔架构 + 288 个测试全绿）。单机模式生产级、与 1.7.x 完全一致；集群模式面向 ≤~10 节点 + 专用加密 Redis——见 [集群方案设计 §安全模型](docs/cluster-design.md)。
+- **当前推荐版本：`1.8.0`**（WebSocket 集群支持：Redis Pub/Sub 跨节点广播/单播 + 5 层 SPI 可插拔架构 + 289 个测试全绿）。单机模式生产级、与 1.7.x 完全一致；集群模式面向 ≤~10 节点 + 专用加密 Redis——见 [集群方案设计 §安全模型](docs/cluster-design.md)。
 - `1.7.0` 按四刀交付：Micrometer 指标扩展（连接/消息/广播/延迟分布，分 URI、线程池、allocator 内存 Gauge）、SLF4J MDC 结构化日志、Actuator `/actuator/health` 健康检查、可选 WebSocket 分片消息聚合，以及 6 项经审计的遗留缺陷修复——这些能力在 `1.8.0` 中完整保留，全部向后兼容
 - P0 至 P7 全部里程碑已完成；其后依次推进性能（1.6.x）、安全稳定性（1.6.2）、可观测性（1.7.0）加固
 - 下一步：`1.8.0` Redis Pub/Sub 集群支持；之后 `2.0.0` Spring Boot 3.x / Jakarta 迁移 + 企业安全版本
@@ -660,7 +664,7 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 ### 验证
 
 ```bash
-# 全量测试（9 个模块）
+# 全量测试（11 个模块）
 ./mvnw test
 
 # 测试指定模块

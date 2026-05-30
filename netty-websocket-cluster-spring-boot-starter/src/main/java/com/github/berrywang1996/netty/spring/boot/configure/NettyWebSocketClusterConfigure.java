@@ -114,14 +114,16 @@ public class NettyWebSocketClusterConfigure {
         if (uri == null) {
             return;
         }
-        boolean tls = uri.startsWith("rediss://") || uri.startsWith("redis+tls://");
+        boolean tls = uri.startsWith("rediss://");
         boolean hasAuth = uri.contains("@");
         if (!tls || !hasAuth) {
+            String missing = (!tls && !hasAuth) ? "no TLS and no password"
+                    : (!tls ? "no TLS" : "no password");
             log.warn("Cluster Redis is the WebSocket control plane: anyone who can PUBLISH to it "
-                    + "can inject into or close any session. Configured URI is {}{} — for production "
-                    + "use a DEDICATED, network-isolated Redis with a password (redis://:secret@host) "
-                    + "and TLS (rediss://). See docs/cluster-design.md §Security.",
-                    tls ? "" : "non-TLS", hasAuth ? "" : (tls ? "no-auth" : "/no-auth"));
+                    + "can inject into or close any session. The configured Redis URI has {} — for "
+                    + "production use a DEDICATED, network-isolated Redis with a password "
+                    + "(redis://:secret@host) and TLS (rediss://). See docs/cluster-design.md §Security.",
+                    missing);
         }
     }
 

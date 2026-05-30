@@ -96,6 +96,7 @@ public class ClusterHealthIndicator extends AbstractHealthIndicator {
                 .withDetail("unicastSent", stats.getUnicastSent())
                 .withDetail("selfDeliveryDropped", stats.getSelfDeliveryDropped())
                 .withDetail("publishFailures", stats.getPublishFailures())
+                .withDetail("broadcastsSkippedDegraded", stats.getBroadcastsSkippedDegraded())
                 .withDetail("cacheHitRatio", String.format("%.3f", stats.getCacheHitRatio()));
     }
 }

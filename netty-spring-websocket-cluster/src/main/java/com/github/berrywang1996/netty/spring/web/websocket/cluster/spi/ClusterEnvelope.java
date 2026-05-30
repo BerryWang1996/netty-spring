@@ -27,8 +27,9 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster.spi;
  *   <li>Route unicast messages to the correct local session ({@link #targetSessionId})</li>
  * </ul>
  *
- * <p>Serialization to/from the transport wire format (e.g. JSON for Redis Pub/Sub) is
- * handled by the {@link ClusterBroker} implementation, not by this class.
+ * <p>Serialization to/from the transport wire format is handled by an {@link EnvelopeCodec}
+ * (the default {@code SimpleTextEnvelopeCodec} is a zero-dependency pipe-delimited format),
+ * not by this class and not by the {@link ClusterBroker} itself.
  *
  * @author berrywang1996
  * @since V1.8.0
