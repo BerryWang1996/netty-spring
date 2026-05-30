@@ -103,4 +103,43 @@ class ClusterNodeManagerReliabilityTest {
         assertEquals(NodeState.DEGRADED, mgr.getState(), "grace=0 preserves 1.8.0 instant-degrade");
         mgr.shutdown();
     }
+
+    // ---- reaper gating helpers + tests ----
+
+    private static ClusterNodeHeartbeat expiredReturning(String deadNodeId) {
+        return new ClusterNodeHeartbeat() {
+            @Override public void register(String nodeId, long timeoutMs) {}
+            @Override public void renewHeartbeat(String nodeId, long timeoutMs) {}
+            @Override public void deregister(String nodeId) {}
+            @Override public List<String> findExpiredNodes(long timeoutMs) { return List.of(deadNodeId); }
+        };
+    }
+
+    @Test
+    void reconciliationSkipsCleanupWhenReapClaimLost() throws Exception {
+        InMemorySessionRegistry reg = new InMemorySessionRegistry();
+        reg.register("/ws/x", "s-dead", "dead-1", Collections.emptyMap()).toCompletableFuture().join();
+        ClusterNodeManager mgr = new ClusterNodeManager(
+                "live-1", 600000, 10000, 200, 60000, expiredReturning("dead-1"), reg);
+        mgr.setReaper((dead, me, win) -> false); // claim always lost
+        mgr.start();
+        Thread.sleep(600); // a few reconciliation cycles @200ms
+        mgr.shutdown();
+        assertEquals("dead-1", reg.lookupNode("/ws/x", "s-dead").toCompletableFuture().join(),
+                "cleanup must be skipped when the reap claim is lost");
+    }
+
+    @Test
+    void reconciliationCleansUpWhenReapClaimWon() throws Exception {
+        InMemorySessionRegistry reg = new InMemorySessionRegistry();
+        reg.register("/ws/x", "s-dead", "dead-2", Collections.emptyMap()).toCompletableFuture().join();
+        ClusterNodeManager mgr = new ClusterNodeManager(
+                "live-2", 600000, 10000, 200, 60000, expiredReturning("dead-2"), reg);
+        mgr.setReaper((dead, me, win) -> true);
+        mgr.start();
+        Thread.sleep(600);
+        mgr.shutdown();
+        assertNull(reg.lookupNode("/ws/x", "s-dead").toCompletableFuture().join(),
+                "cleanup must run when the reap claim is won");
+    }
 }

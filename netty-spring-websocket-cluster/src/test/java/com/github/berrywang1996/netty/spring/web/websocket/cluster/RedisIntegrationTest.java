@@ -4,6 +4,7 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterN
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.NodeState;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterNodeHeartbeat;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterReaper;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisPubSubBroker;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisSessionRegistry;
@@ -162,6 +163,24 @@ class RedisIntegrationTest {
 
         hb.deregister("batch-A"); hb.deregister("batch-B");
         hb.deregister("batch-C"); hb.deregister("batch-live");
+    }
+
+    @Test
+    @Order(12)
+    void reapClaimElectsSingleWinner() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available");
+
+        RedisClusterReaper r1 = new RedisClusterReaper(connection);
+        RedisClusterReaper r2 = new RedisClusterReaper(connection);
+
+        boolean w1 = r1.tryClaim("dead-X", "node-1", 5000);
+        boolean w2 = r2.tryClaim("dead-X", "node-2", 5000);
+
+        assertTrue(w1, "first claimant wins");
+        assertFalse(w2, "second claimant is locked out within the window");
+        assertTrue(w1 ^ w2, "exactly one winner");
+
+        connection.sync().del("netty:cluster:reaping:dead-X");
     }
 
     // ==================== 3. Pub/Sub Broker — Broadcast + Self-Delivery Suppression ====================

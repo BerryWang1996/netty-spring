@@ -65,6 +65,9 @@ public class ClusterNodeManager {
     /** Callback invoked when a dead node is detected during reconciliation (for cache invalidation). */
     private volatile java.util.function.Consumer<String> deadNodeCallback;
 
+    /** Reconciliation leader-election: only the claim winner cleans up a dead node. Default = always-reap. */
+    private volatile ClusterReaper reaper = ClusterReaper.alwaysReap();
+
     /** Max jitter (ms) applied before DEGRADED→RESYNC re-registration, to avoid reconnect storms.
      *  Default 10000ms; configurable via {@link #setReconnectJitterMaxMs(long)}. */
     private volatile long reconnectJitterMaxMs = 10_000L;
@@ -154,6 +157,16 @@ public class ClusterNodeManager {
     public void setRedisLossGracePeriodMs(long redisLossGracePeriodMs) {
         if (redisLossGracePeriodMs >= 0) {
             this.redisLossGracePeriodMs = redisLossGracePeriodMs;
+        }
+    }
+
+    /**
+     * Sets the reconciliation reaper (leader-election for dead-node cleanup). Default is
+     * {@link ClusterReaper#alwaysReap()} (every node reaps; correct but not deduplicated).
+     */
+    public void setReaper(ClusterReaper reaper) {
+        if (reaper != null) {
+            this.reaper = reaper;
         }
     }
 
@@ -397,6 +410,12 @@ public class ClusterNodeManager {
             List<String> deadNodes = heartbeat.findExpiredNodes(heartbeatTimeoutMs);
             for (String deadNodeId : deadNodes) {
                 if (!deadNodeId.equals(nodeId)) {
+                    // Leader-election: only the claim winner cleans up, so a dead node detected by
+                    // every surviving node in the same sweep is reaped once, not N times.
+                    if (!reaper.tryClaim(deadNodeId, nodeId, reconciliationIntervalMs)) {
+                        log.debug("Skipping cleanup of dead node {} — another node claimed it", deadNodeId);
+                        continue;
+                    }
                     log.warn("Reconciliation detected dead node {} — cleaning up sessions + cache", deadNodeId);
                     sessionRegistry.removeAllForNode(deadNodeId);
                     heartbeat.deregister(deadNodeId);

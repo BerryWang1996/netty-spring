@@ -26,7 +26,9 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MessagePa
 import com.github.berrywang1996.netty.spring.web.websocket.context.ClusterSessionHook;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeHeartbeat;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterReaper;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterNodeHeartbeat;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterReaper;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisPubSubBroker;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisSessionRegistry;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
@@ -188,13 +190,22 @@ public class NettyWebSocketClusterConfigure {
         return new RedisClusterNodeHeartbeat(connection);
     }
 
+    @Bean
+    @ConditionalOnMissingBean(ClusterReaper.class)
+    public ClusterReaper clusterReaper(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
+            StatefulRedisConnection<String, String> connection) {
+        return new RedisClusterReaper(connection);
+    }
+
     // ---- Core cluster beans ----
 
     @Bean(destroyMethod = "shutdown")
     public ClusterNodeManager clusterNodeManager(
             ClusterProperties properties,
             ClusterNodeHeartbeat heartbeat,
-            SessionRegistry sessionRegistry) {
+            SessionRegistry sessionRegistry,
+            ClusterReaper clusterReaper) {
         ClusterNodeManager manager = new ClusterNodeManager(
                 properties.getNodeId(),
                 properties.getHeartbeatIntervalSeconds() * 1000,
@@ -205,6 +216,7 @@ public class NettyWebSocketClusterConfigure {
                 sessionRegistry);
         manager.setReconnectJitterMaxMs(properties.getReconnectJitterMaxSeconds() * 1000);
         manager.setRedisLossGracePeriodMs(properties.getRedisLossGracePeriodMs());
+        manager.setReaper(clusterReaper);
         manager.start();
         log.info("Cluster node manager started (nodeId={})", manager.getNodeId());
         return manager;
