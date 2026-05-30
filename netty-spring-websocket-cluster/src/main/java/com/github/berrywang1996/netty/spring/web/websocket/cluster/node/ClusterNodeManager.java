@@ -236,6 +236,13 @@ public class ClusterNodeManager {
         if (reconciliationFuture != null) {
             reconciliationFuture.cancel(false);
         }
+        // Cancel any pending grace-period degrade so it can't fire during/after shutdown.
+        synchronized (graceLock) {
+            if (graceFuture != null) {
+                graceFuture.cancel(false);
+                graceFuture = null;
+            }
+        }
 
         try {
             heartbeat.deregister(nodeId);
@@ -316,7 +323,8 @@ public class ClusterNodeManager {
                 if (state.get() == NodeState.ACTIVE) {
                     return; // never left ACTIVE — done
                 }
-                // else: raced with onGraceExpired() → fall through to RESYNC recovery
+                // else: state is DEGRADED (onGraceExpired won the race and degraded before we
+                // cancelled, or a prior heartbeat failure already degraded us) → run RESYNC recovery
             }
         }
         if (state.compareAndSet(NodeState.DEGRADED, NodeState.RESYNC)) {
@@ -361,7 +369,10 @@ public class ClusterNodeManager {
             } else {
                 heartbeat.renewHeartbeat(nodeId, heartbeatTimeoutMs);
                 // A successful renew while a grace-period degrade is pending means the transport
-                // recovered (no connection event fired) — cancel the pending degrade.
+                // recovered (no connection event fired) — cancel the pending degrade. This is an
+                // intentionally optimistic, lock-free read of graceFuture: onTransportRestored() is
+                // idempotent (its DEGRADED→RESYNC CAS is the real guard), so a stale read here at
+                // worst triggers one harmless no-op call — cheaper than locking every heartbeat tick.
                 if (graceFuture != null) {
                     onTransportRestored();
                 }

@@ -86,7 +86,11 @@ class ClusterNodeManagerReliabilityTest {
         ClusterNodeManager mgr = graceManager(400);
         mgr.start();
         mgr.onTransportLost();
-        Thread.sleep(900);                      // exceed the grace window with no recovery
+        // grace fires after 400ms → DEGRADED; poll up to 3s so a loaded CI box can't flake.
+        long deadline = System.currentTimeMillis() + 3000;
+        while (mgr.getState() != NodeState.DEGRADED && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
         assertEquals(NodeState.DEGRADED, mgr.getState(), "no recovery → degrade after the grace period");
         mgr.shutdown();
     }
