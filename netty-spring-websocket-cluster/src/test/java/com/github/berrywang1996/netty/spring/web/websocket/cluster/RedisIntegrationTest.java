@@ -183,6 +183,24 @@ class RedisIntegrationTest {
         connection.sync().del("netty:cluster:reaping:dead-X");
     }
 
+    @Test
+    @Order(13)
+    void deregisterIsAtomicAndCleansNodeSet() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available");
+
+        RedisSessionRegistry registry = new RedisSessionRegistry(connection);
+        registry.register("/ws/lua", "s1", "node-L", Map.of()).toCompletableFuture().join();
+        assertTrue(connection.sync().sismember("netty:node:node-L:sessions", "/ws/lua|s1"),
+                "precondition: node-set has the member");
+
+        registry.deregister("/ws/lua", "s1").toCompletableFuture().join();
+
+        assertNull(registry.lookupNode("/ws/lua", "s1").toCompletableFuture().join(),
+                "session hash deleted");
+        assertFalse(connection.sync().sismember("netty:node:node-L:sessions", "/ws/lua|s1"),
+                "Lua deregister must SREM the node-set member atomically (no orphan)");
+    }
+
     // ==================== 3. Pub/Sub Broker — Broadcast + Self-Delivery Suppression ====================
 
     @Test

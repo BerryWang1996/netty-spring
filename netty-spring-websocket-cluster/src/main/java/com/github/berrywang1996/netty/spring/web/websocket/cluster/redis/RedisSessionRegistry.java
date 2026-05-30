@@ -19,6 +19,7 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster.redis;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.SessionRegistry;
 import io.lettuce.core.ScanArgs;
 import io.lettuce.core.ScanCursor;
+import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.lettuce.core.api.sync.RedisCommands;
@@ -49,6 +50,21 @@ public class RedisSessionRegistry implements SessionRegistry {
 
     private final StatefulRedisConnection<String, String> connection;
 
+    /**
+     * Atomic deregister: HGET the owning nodeId, then DEL the session hash and SREM the node-set
+     * member — in one script so a concurrent re-register of the same uri|sessionId cannot interleave.
+     * KEYS[1] = sessionKey; ARGV[1] = "uri|sessionId" member. The node-set key is derived from the
+     * stored nodeId (safe on standalone/sentinel; not Redis-Cluster cross-slot safe — that client is
+     * a roadmap item). Returns the removed nodeId (or nil).
+     */
+    private static final String DEREGISTER_LUA =
+            "local nodeId = redis.call('HGET', KEYS[1], 'nodeId') "
+          + "if nodeId then "
+          + "  redis.call('DEL', KEYS[1]) "
+          + "  redis.call('SREM', 'netty:node:' .. nodeId .. ':sessions', ARGV[1]) "
+          + "end "
+          + "return nodeId";
+
     public RedisSessionRegistry(StatefulRedisConnection<String, String> connection) {
         this.connection = connection;
     }
@@ -73,21 +89,16 @@ public class RedisSessionRegistry implements SessionRegistry {
 
     @Override
     public CompletionStage<Void> deregister(String uri, String sessionId) {
-        RedisAsyncCommands<String, String> async = connection.async();
         String sessionKey = sessionKey(uri, sessionId);
-
-        // First get the nodeId so we can clean up the node's session set
-        return async.hget(sessionKey, NODE_ID_FIELD).thenCompose(nodeId -> {
-            CompletableFuture<Long> del = async.del(sessionKey).toCompletableFuture();
-            if (nodeId != null) {
-                String nodeSetKey = nodeSetKey(nodeId);
-                CompletableFuture<Long> srem = async.srem(nodeSetKey, uri + "|" + sessionId)
-                        .toCompletableFuture();
-                return CompletableFuture.allOf(del, srem);
-            }
-            return del.thenApply(v -> null);
-        }).thenRun(() ->
-                log.debug("Deregistered session {} for URI {}", sessionId, uri));
+        String member = uri + "|" + sessionId;
+        // Single atomic Lua call replaces the former non-atomic HGET → DEL + SREM. Plain EVAL: Redis
+        // caches the compiled script by SHA, and the body is tiny, so resending it is negligible.
+        return connection.async().<String>eval(DEREGISTER_LUA, ScriptOutputType.VALUE,
+                        new String[]{ sessionKey }, member)
+                .thenAccept(removedNodeId ->
+                        log.debug("Deregistered session {} for URI {} (was on node {})",
+                                sessionId, uri, removedNodeId))
+                .toCompletableFuture();
     }
 
     @Override
