@@ -66,6 +66,13 @@
             <artifactId>lombok</artifactId>
         </dependency>
 
+        <!-- Actuator (optional): enables the cluster HealthIndicator when present -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>

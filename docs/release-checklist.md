@@ -97,7 +97,7 @@
 
 完成确认项：
 
-- 全量 `mvn test` 通过（**285 个测试 / 11 个模块**）；6 个 SPI 隔离测试 + 6 个配置 knobs 测试 + 9 个 Redis 集成测试（含入站大小上限安全测试）。`PerformanceBenchmark`（4 方法）是手动 harness，不计入套件。
+- 全量 `mvn test` 通过（**288 个测试 / 11 个模块**）；6 个 SPI 隔离 + 6 个配置 knobs + 9 个 Redis 集成（含入站大小上限安全测试）+ 3 个 auto-config 装配测试（ApplicationContextRunner）。`PerformanceBenchmark`（4 方法）是手动 harness，不计入套件。
 - **2 个新模块**：`netty-spring-websocket-cluster`、`netty-websocket-cluster-spring-boot-starter`。
 - **5 层可插拔 SPI**：`ClusterBroker` / `SessionRegistry` / `EnvelopeCodec` / `MessagePayloadCodec` / `ClusterNodeHeartbeat`，全部 `@ConditionalOnMissingBean` 可覆盖；集群模块**零 Jackson 依赖**（序列化用户自选）。
 - **配置诚实化**：`ClusterProperties` 只暴露有实际效果的配置项；设计文档中尚未实现的特性（多 pub/sub 连接、sharded pub/sub、可靠 streams、写 pipeline、限速、宽限期、Redis Cluster 客户端）**不暴露开关**，明确标注推迟到 `1.9.x`。

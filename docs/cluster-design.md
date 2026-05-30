@@ -35,7 +35,9 @@
 | registry 写限速（`session-registry-write-rate`） | ⏳ 1.9.x | |
 | Redis 失联宽限期（`redis-loss-grace-period`） | ⏳ 1.9.x | 当前心跳失败即降级 |
 | 频道基数硬上限 / 订阅 hold（`max-subscribed-channels` / `subscription-hold-duration`） | ⏳ 1.9.x | 订阅集由 `@MessageMapping` URI 固定，不会无界增长 |
-| 完整 Micrometer 指标集 + Actuator 集群健康 | ⏳ 1.9.x | 1.8.0 提供程序内 `ClusterRuntimeStats` |
+| Actuator 集群健康（`ClusterHealthIndicator`，节点/broker 状态 + 运行时计数） | ✅ | `/actuator/health` 下 `nettyCluster`；actuator 在 classpath 时启用 |
+| 完整 Micrometer 指标集（meter-binder） | ⏳ 1.9.x | 1.8.0 提供程序内 `ClusterRuntimeStats` + 上面的 health indicator |
+| auto-config 装配测试（ApplicationContextRunner） | ✅ | 验证 enable=true→`@Primary` 为 ClusterMessageSender + health indicator；enable=false→零集群 bean |
 | W3C TraceContext 跨节点传播 | ⏳ 1.9.x | envelope 已留 `traceparent` 字段 |
 | NATS broker（ADR-001 规模化档位） | ⏳ 1.9.x | SPI 下新增实现，非替换 |
 | 多节点 demo + Docker Compose + Testcontainers | ⏳ 1.9.x | 1.8.0 已有真实 Redis 集成测试 |
@@ -446,13 +448,13 @@ netty-spring/
 `1.8.0` 集群适用于 **≤~10 节点、配专用且加密的 Redis** 的场景。以下硬化项明确推迟到 `1.9.x`，生产用户需知悉：
 
 - **envelope HMAC 认证**（安全根因修复）：消除 `originNodeId` 伪造与未授权 `CLOSE`/注入。1.8.0 以文档 + 默认告警 + 入站大小上限兜底。
-- **完整 Micrometer 指标集 + Actuator 集群健康**：1.8.0 仅提供程序内 `ClusterRuntimeStats`（可通过注入 `ClusterMessageSender` 后 `getClusterRuntimeStats()` 读取）+ `ClusterNodeManager.getState()`；尚无 `MeterBinder`/`HealthIndicator`/端点。
+- **完整 Micrometer 指标集（meter-binder）**：1.8.0 已提供 `ClusterHealthIndicator`（`/actuator/health` 下 `nettyCluster`，含节点/broker 状态 + 运行时计数）+ 程序内 `ClusterRuntimeStats`；完整的 `MeterBinder` 指标集（`netty.cluster.*` 时序）推迟到 1.9.x。
+- **envelope HMAC 认证**（安全根因修复）：消除 `originNodeId` 伪造与未授权 `CLOSE`/注入。1.8.0 以文档 + 默认告警 + 入站大小上限兜底。
 - **reconciliation 去重 / 选主**：当前每个存活节点独立清理同一死节点（幂等但有 N 倍清理流量）；1.9.x 加 `SET NX` 认领，只有赢家清理。
-- **`deregister` 原子性**：当前 HGET→DEL+SREM 非原子；1.9.x 改 Lua 条件删除（仅当 nodeId 匹配时删），消除 close-then-reconnect 竞态。
-- **心跳 / 对账线程隔离 + 批量 EXISTS + 命令超时**：当前两者共用单线程 + 单连接 + 逐节点 EXISTS，Redis 压力下可能自我饿死；1.9.x 拆独立调度线程并加超时。
-- **DEGRADE_TO_LOCAL 检测延迟**：当前仅靠心跳写失败触发（最多 `heartbeat-interval` 延迟）；1.9.x 接 Lettuce 连接状态事件即时降级，并让 `broker.state()` 反映真实连接状态。
+- **`deregister` 原子性**：当前 HGET→DEL+SREM 非原子；理论竞态（同 sessionId 跨连接复用）因 sessionId 为每连接 UUID **实际不可能发生**，故仅作纵深防御推迟；1.9.x 改 Lua 条件删除。
+- **心跳 / 对账线程隔离 + 批量 EXISTS + 命令超时**：当前两者共用单线程 + 单连接 + 逐节点 EXISTS，仅在 Redis 降级且超出"≤10 节点 + 专用 Redis"envelope 时可能自我饿死；1.9.x 拆独立调度线程并加超时。
+- **DEGRADE_TO_LOCAL 检测延迟**：当前仅靠心跳写失败触发（最多 `heartbeat-interval` 延迟，默认 3s）；1.9.x 接 Lettuce 连接状态事件即时降级，并让 `broker.state()` 反映真实连接状态。
 - **多 pub/sub 连接并行解码 / sharded pub/sub / 写 pipeline 批量 / registry 限速**：见上文实现范围表，均为规模化档位优化。
-- **auto-config 的 ApplicationContextRunner 装配测试**：1.8.0 以 SPI 隔离单测 + 真实 Redis 集成测试覆盖；完整 Spring 容器装配测试推迟。
 
 ## 技术参考
 

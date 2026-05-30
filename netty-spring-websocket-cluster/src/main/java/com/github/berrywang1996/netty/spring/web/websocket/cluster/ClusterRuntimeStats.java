@@ -29,7 +29,9 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class ClusterRuntimeStats {
 
-    /** Broadcast messages published to the cluster broker. */
+    /** Broadcast messages <b>handed to</b> the cluster broker for publish (attempted, not
+     *  confirmed-delivered — the transport is async/at-most-once; async failures are counted
+     *  in {@link #publishFailures} and logged). */
     final AtomicLong broadcastPublished = new AtomicLong();
 
     /** Broadcast messages received from other nodes and delivered locally. */

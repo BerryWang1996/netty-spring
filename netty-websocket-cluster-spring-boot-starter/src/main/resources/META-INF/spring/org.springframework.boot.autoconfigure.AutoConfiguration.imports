@@ -1,1 +1,2 @@
 com.github.berrywang1996.netty.spring.boot.configure.NettyWebSocketClusterConfigure
+com.github.berrywang1996.netty.spring.boot.configure.NettyClusterActuatorConfigure
