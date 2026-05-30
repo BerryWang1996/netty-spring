@@ -44,7 +44,9 @@ class ClusterNodeManagerReliabilityTest {
         assertTrue(reconEntered.await(2, TimeUnit.SECONDS), "reconciliation should run and block");
         Thread.sleep(1000); // during the blocked sweep, heartbeat must keep ticking on its own thread
         mgr.shutdown();
-        assertTrue(renews.get() >= 3,
+        // >= 2 cleanly separates the fixed case from the broken single-scheduler case (which gets 0
+        // ticks during the 2s block); kept low so it's robust on a slow/loaded CI box.
+        assertTrue(renews.get() >= 2,
                 "heartbeat must keep renewing while reconciliation is blocked (two schedulers); got " + renews.get());
     }
 }

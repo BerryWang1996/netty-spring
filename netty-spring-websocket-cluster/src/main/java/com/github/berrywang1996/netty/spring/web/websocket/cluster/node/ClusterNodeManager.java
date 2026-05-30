@@ -72,8 +72,8 @@ public class ClusterNodeManager {
     /** Dedicated heartbeat-renewal scheduler (thread cluster-hb-{node}) — kept lean so a slow
      *  reconciliation sweep can never delay heartbeat renewal (which would let peers falsely reap us). */
     private ScheduledExecutorService heartbeatScheduler;
-    /** Dedicated reconciliation scheduler (thread cluster-recon-{node}) — also runs the grace timer
-     *  and the RESYNC re-register task. */
+    /** Dedicated reconciliation scheduler (thread cluster-recon-{node}) — also runs the
+     *  RESYNC re-register task. */
     private ScheduledExecutorService reconScheduler;
     private ScheduledFuture<?> heartbeatFuture;
     private ScheduledFuture<?> reconciliationFuture;
