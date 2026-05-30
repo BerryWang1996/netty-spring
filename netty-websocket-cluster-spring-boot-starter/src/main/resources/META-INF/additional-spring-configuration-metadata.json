@@ -48,6 +48,12 @@
       "defaultValue": 10
     },
     {
+      "name": "server.netty.websocket.cluster.redis-loss-grace-period-ms",
+      "type": "java.lang.Long",
+      "description": "Grace period (ms) before a transport loss degrades the node state machine (debounce). A blip shorter than this will not flap the node or trigger on-redis-loss=close-all. The broker's own state still flips immediately for truthful health. 0 = instant degrade (1.8.0 behavior).",
+      "defaultValue": 5000
+    },
+    {
       "name": "server.netty.websocket.cluster.on-redis-loss",
       "type": "com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterProperties$OnRedisLoss",
       "description": "Behavior when the cluster transport (Redis) is lost. DEGRADE_TO_LOCAL (default) keeps local sessions alive and continues local fan-out, pausing only cross-node traffic. CLOSE_ALL closes all local sessions (fail-fast / load-shed).",

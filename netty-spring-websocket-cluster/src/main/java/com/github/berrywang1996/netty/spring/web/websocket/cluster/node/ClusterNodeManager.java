@@ -69,6 +69,13 @@ public class ClusterNodeManager {
      *  Default 10000ms; configurable via {@link #setReconnectJitterMaxMs(long)}. */
     private volatile long reconnectJitterMaxMs = 10_000L;
 
+    /** Grace period (ms) before a transport loss actually degrades this node. 0 = instant. Default 5000. */
+    private volatile long redisLossGracePeriodMs = 5000L;
+    /** Pending grace-period degrade task (null = none). Mutated under {@link #graceLock}; volatile for the
+     *  fast-path read in {@link #doHeartbeat()}. */
+    private volatile ScheduledFuture<?> graceFuture;
+    private final Object graceLock = new Object();
+
     /** Dedicated heartbeat-renewal scheduler (thread cluster-hb-{node}) — kept lean so a slow
      *  reconciliation sweep can never delay heartbeat renewal (which would let peers falsely reap us). */
     private ScheduledExecutorService heartbeatScheduler;
@@ -137,6 +144,16 @@ public class ClusterNodeManager {
     public void setReconnectJitterMaxMs(long reconnectJitterMaxMs) {
         if (reconnectJitterMaxMs >= 0) {
             this.reconnectJitterMaxMs = reconnectJitterMaxMs;
+        }
+    }
+
+    /**
+     * Sets the grace period (ms) before a transport loss degrades the node. 0 = instant degrade.
+     * Bound from {@code server.netty.websocket.cluster.redis-loss-grace-period-ms}.
+     */
+    public void setRedisLossGracePeriodMs(long redisLossGracePeriodMs) {
+        if (redisLossGracePeriodMs >= 0) {
+            this.redisLossGracePeriodMs = redisLossGracePeriodMs;
         }
     }
 
@@ -238,36 +255,88 @@ public class ClusterNodeManager {
     }
 
     /**
-     * Called by the broker when transport connectivity is lost. Transitions to DEGRADED.
+     * Called by the broker (connection event) or {@link #doHeartbeat()} (renewal failure) when
+     * transport connectivity is lost. Debounced: schedules a degrade after the grace period unless
+     * the transport recovers first. With grace = 0, degrades immediately (1.8.0 behavior).
      */
     public void onTransportLost() {
-        NodeState current = state.get();
-        if (current == NodeState.ACTIVE) {
-            transitionTo(NodeState.DEGRADED);
+        if (state.get() != NodeState.ACTIVE) {
+            return; // already degraded/leaving — nothing to debounce
+        }
+        long grace = redisLossGracePeriodMs;
+        if (grace <= 0) {
+            degradeNow();
+            return;
+        }
+        synchronized (graceLock) {
+            if (state.get() != NodeState.ACTIVE) {
+                return;
+            }
+            if (graceFuture != null && !graceFuture.isDone()) {
+                return; // a grace timer is already counting down
+            }
+            log.warn("Cluster node {} transport lost — {}ms grace before degrading "
+                    + "(local delivery continues meanwhile)", nodeId, grace);
+            try {
+                graceFuture = reconScheduler.schedule(this::onGraceExpired, grace, TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.RejectedExecutionException rej) {
+                degradeNow(); // scheduler shutting down — degrade now as a fallback
+            }
+        }
+    }
+
+    /** Grace timer body: degrade only if still ACTIVE (i.e. transport never recovered). */
+    private void onGraceExpired() {
+        synchronized (graceLock) {
+            graceFuture = null;
+            if (state.get() == NodeState.ACTIVE) {
+                degradeNow();
+            }
+        }
+    }
+
+    /** Performs the ACTIVE→DEGRADED transition (CAS so it fires the state change exactly once). */
+    private void degradeNow() {
+        if (state.compareAndSet(NodeState.ACTIVE, NodeState.DEGRADED)) {
             log.warn("Cluster node {} degraded — transport lost, local-only mode", nodeId);
+            fireStateChange(NodeState.ACTIVE, NodeState.DEGRADED);
         }
     }
 
     /**
-     * Called by the broker when transport connectivity is restored. Transitions
-     * from DEGRADED → RESYNC → ACTIVE.
+     * Called when transport connectivity is restored. If a grace-period degrade is still pending
+     * (node never left ACTIVE), cancels it — no flap. Otherwise runs the DEGRADED→RESYNC→ACTIVE recovery.
      */
     public void onTransportRestored() {
+        synchronized (graceLock) {
+            if (graceFuture != null && !graceFuture.isDone()) {
+                graceFuture.cancel(false);
+                graceFuture = null;
+                log.info("Cluster node {} transport restored within grace — staying ACTIVE (no flap)", nodeId);
+                if (state.get() == NodeState.ACTIVE) {
+                    return; // never left ACTIVE — done
+                }
+                // else: raced with onGraceExpired() → fall through to RESYNC recovery
+            }
+        }
         if (state.compareAndSet(NodeState.DEGRADED, NodeState.RESYNC)) {
             log.info("Cluster node {} entering RESYNC — rebuilding cluster state", nodeId);
             fireStateChange(NodeState.DEGRADED, NodeState.RESYNC);
-
-            // Re-register heartbeat, then transition back to ACTIVE
-            reconScheduler.schedule(() -> {
-                try {
-                    heartbeat.register(nodeId, heartbeatTimeoutMs);
-                    transitionTo(NodeState.ACTIVE);
-                    log.info("Cluster node {} completed RESYNC → ACTIVE", nodeId);
-                } catch (Exception e) {
-                    log.error("Failed to resync node {}, staying DEGRADED", nodeId, e);
-                    transitionTo(NodeState.DEGRADED);
-                }
-            }, jitter(reconnectJitterMaxMs), TimeUnit.MILLISECONDS);
+            try {
+                reconScheduler.schedule(() -> {
+                    try {
+                        heartbeat.register(nodeId, heartbeatTimeoutMs);
+                        transitionTo(NodeState.ACTIVE);
+                        log.info("Cluster node {} completed RESYNC → ACTIVE", nodeId);
+                    } catch (Exception e) {
+                        log.error("Failed to resync node {}, staying DEGRADED", nodeId, e);
+                        transitionTo(NodeState.DEGRADED);
+                    }
+                }, jitter(reconnectJitterMaxMs), TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.RejectedExecutionException rej) {
+                log.debug("Resync task rejected (scheduler shutting down) for node {}", nodeId);
+                transitionTo(NodeState.DEGRADED);
+            }
         }
     }
 
@@ -291,6 +360,11 @@ public class ClusterNodeManager {
                 onTransportRestored();
             } else {
                 heartbeat.renewHeartbeat(nodeId, heartbeatTimeoutMs);
+                // A successful renew while a grace-period degrade is pending means the transport
+                // recovered (no connection event fired) — cancel the pending degrade.
+                if (graceFuture != null) {
+                    onTransportRestored();
+                }
             }
         } catch (Exception e) {
             if (currentState == NodeState.ACTIVE) {

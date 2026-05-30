@@ -66,6 +66,12 @@ public class ClusterProperties {
      *  reconnect storms when many nodes recover simultaneously. Default 10. */
     private long reconnectJitterMaxSeconds = 10;
 
+    /** Grace period in ms before a transport loss degrades the NODE state machine (debounce). A blip
+     *  shorter than this won't flap the node or trigger {@code on-redis-loss=close-all}. The broker's
+     *  own {@code state()} still flips immediately (truthful health + fast-fail of in-flight publishes).
+     *  0 = instant degrade (exact 1.8.0 behavior). Default 5000. */
+    private long redisLossGracePeriodMs = 5000;
+
     // ---- Failure handling ----
 
     /** What to do when Redis (cluster transport) is lost. Default {@code DEGRADE_TO_LOCAL}:
@@ -115,6 +121,9 @@ public class ClusterProperties {
 
     public long getReconnectJitterMaxSeconds() { return reconnectJitterMaxSeconds; }
     public void setReconnectJitterMaxSeconds(long v) { this.reconnectJitterMaxSeconds = v; }
+
+    public long getRedisLossGracePeriodMs() { return redisLossGracePeriodMs; }
+    public void setRedisLossGracePeriodMs(long v) { this.redisLossGracePeriodMs = v; }
 
     public OnRedisLoss getOnRedisLoss() { return onRedisLoss; }
     public void setOnRedisLoss(OnRedisLoss v) { this.onRedisLoss = v; }

@@ -204,6 +204,7 @@ public class NettyWebSocketClusterConfigure {
                 heartbeat,
                 sessionRegistry);
         manager.setReconnectJitterMaxMs(properties.getReconnectJitterMaxSeconds() * 1000);
+        manager.setRedisLossGracePeriodMs(properties.getRedisLossGracePeriodMs());
         manager.start();
         log.info("Cluster node manager started (nodeId={})", manager.getNodeId());
         return manager;

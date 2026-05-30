@@ -49,4 +49,54 @@ class ClusterNodeManagerReliabilityTest {
         assertTrue(renews.get() >= 2,
                 "heartbeat must keep renewing while reconciliation is blocked (two schedulers); got " + renews.get());
     }
+
+    private static ClusterNodeHeartbeat noOpHeartbeat() {
+        return new ClusterNodeHeartbeat() {
+            @Override public void register(String nodeId, long timeoutMs) {}
+            @Override public void renewHeartbeat(String nodeId, long timeoutMs) {}
+            @Override public void deregister(String nodeId) {}
+            @Override public List<String> findExpiredNodes(long timeoutMs) { return Collections.emptyList(); }
+        };
+    }
+
+    /** Manager with a long heartbeat/recon interval so only the explicit transport events drive state. */
+    private static ClusterNodeManager graceManager(long graceMs) {
+        ClusterNodeManager mgr = new ClusterNodeManager(
+                "grace-node", 60000, 600000, 60000, 60000, noOpHeartbeat(), new InMemorySessionRegistry());
+        mgr.setRedisLossGracePeriodMs(graceMs);
+        return mgr;
+    }
+
+    @Test
+    void transportLostWithinGraceDoesNotDegrade() throws Exception {
+        ClusterNodeManager mgr = graceManager(500);
+        mgr.start();
+        assertEquals(NodeState.ACTIVE, mgr.getState());
+        mgr.onTransportLost();                  // starts the grace countdown, does NOT degrade
+        Thread.sleep(150);
+        assertEquals(NodeState.ACTIVE, mgr.getState(), "must not degrade during the grace window");
+        mgr.onTransportRestored();              // recovery within grace cancels the countdown
+        Thread.sleep(600);                      // past where the grace timer would have fired
+        assertEquals(NodeState.ACTIVE, mgr.getState(), "recovered within grace — no flap, stays ACTIVE");
+        mgr.shutdown();
+    }
+
+    @Test
+    void transportLostBeyondGraceDegrades() throws Exception {
+        ClusterNodeManager mgr = graceManager(400);
+        mgr.start();
+        mgr.onTransportLost();
+        Thread.sleep(900);                      // exceed the grace window with no recovery
+        assertEquals(NodeState.DEGRADED, mgr.getState(), "no recovery → degrade after the grace period");
+        mgr.shutdown();
+    }
+
+    @Test
+    void zeroGraceDegradesInstantly() {
+        ClusterNodeManager mgr = graceManager(0);
+        mgr.start();
+        mgr.onTransportLost();
+        assertEquals(NodeState.DEGRADED, mgr.getState(), "grace=0 preserves 1.8.0 instant-degrade");
+        mgr.shutdown();
+    }
 }

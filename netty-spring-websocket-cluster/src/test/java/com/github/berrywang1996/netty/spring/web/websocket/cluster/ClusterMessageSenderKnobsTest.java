@@ -36,6 +36,7 @@ class ClusterMessageSenderKnobsTest {
         localSender = new SessionAwareLocalSender();
         ClusterNodeHeartbeat heartbeat = new NoOpHeartbeat();
         nodeManager = new ClusterNodeManager("node-A", 3000, 10000, 15000, 60000, heartbeat, registry);
+        nodeManager.setRedisLossGracePeriodMs(0); // tests verify instant-degrade (1.8.0 behavior)
         clusterSender = new ClusterMessageSender(localSender, broker, registry, nodeManager, 5000);
     }
 
