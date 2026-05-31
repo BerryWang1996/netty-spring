@@ -17,7 +17,6 @@
 package com.github.berrywang1996.netty.spring.web.websocket.cluster;
 
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
-import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.SessionRegistry;
 import com.github.berrywang1996.netty.spring.web.websocket.context.ClusterSessionHook;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
 import lombok.extern.slf4j.Slf4j;
@@ -38,14 +37,14 @@ import java.util.Collections;
 @Slf4j
 public class ClusterSessionHookImpl implements ClusterSessionHook {
 
-    private final SessionRegistry registry;
+    private final CoalescingRegistryWriter registryWriter;
     private final ClusterNodeManager nodeManager;
     private final ClusterMessageSender clusterSender;
 
-    public ClusterSessionHookImpl(SessionRegistry registry,
+    public ClusterSessionHookImpl(CoalescingRegistryWriter registryWriter,
                                   ClusterNodeManager nodeManager,
                                   ClusterMessageSender clusterSender) {
-        this.registry = registry;
+        this.registryWriter = registryWriter;
         this.nodeManager = nodeManager;
         this.clusterSender = clusterSender;
     }
@@ -55,12 +54,8 @@ public class ClusterSessionHookImpl implements ClusterSessionHook {
         String nodeId = nodeManager.getNodeId();
         String sessionId = session.getSessionId();
 
-        // Register in distributed session registry (async, fire-and-forget for the hot path)
-        registry.register(uri, sessionId, nodeId, Collections.emptyMap())
-                .exceptionally(ex -> {
-                    log.warn("Failed to register session {} in cluster registry", sessionId, ex);
-                    return null;
-                });
+        // Register in distributed session registry (rate-limited/coalesced; the writer handles errors)
+        registryWriter.register(uri, sessionId, nodeId, Collections.emptyMap());
 
         // Ensure the URI's broadcast subscription is active
         clusterSender.onLocalUriActive(uri);
@@ -72,12 +67,8 @@ public class ClusterSessionHookImpl implements ClusterSessionHook {
     public void onSessionRemoved(MessageSession session, String uri) {
         String sessionId = session.getSessionId();
 
-        // Deregister from distributed session registry
-        registry.deregister(uri, sessionId)
-                .exceptionally(ex -> {
-                    log.warn("Failed to deregister session {} from cluster registry", sessionId, ex);
-                    return null;
-                });
+        // Deregister from distributed session registry (rate-limited/coalesced)
+        registryWriter.deregister(uri, sessionId);
 
         // Notify cluster sender (it manages subscription hold logic)
         clusterSender.onLocalUriInactive(uri);

@@ -19,6 +19,7 @@ package com.github.berrywang1996.netty.spring.boot.configure;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterMessageSender;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterProperties;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterSessionHookImpl;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.CoalescingRegistryWriter;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.DefaultMessagePayloadCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.EnvelopeCodec;
@@ -244,12 +245,22 @@ public class NettyWebSocketClusterConfigure {
         return sender;
     }
 
+    @Bean(destroyMethod = "shutdown")
+    public CoalescingRegistryWriter clusterRegistryWriter(
+            SessionRegistry sessionRegistry, ClusterProperties properties, ClusterNodeManager nodeManager) {
+        CoalescingRegistryWriter writer = new CoalescingRegistryWriter(
+                sessionRegistry, properties.getSessionRegistryWriteRate(), 50L, nodeManager.getNodeId());
+        writer.start();
+        log.info("Cluster registry writer started (rate={} ops/s/node)", properties.getSessionRegistryWriteRate());
+        return writer;
+    }
+
     @Bean
     public ClusterSessionHook clusterSessionHook(
-            SessionRegistry sessionRegistry,
+            CoalescingRegistryWriter clusterRegistryWriter,
             ClusterNodeManager nodeManager,
             ClusterMessageSender clusterSender) {
         log.info("Registering cluster session hook for distributed session lifecycle");
-        return new ClusterSessionHookImpl(sessionRegistry, nodeManager, clusterSender);
+        return new ClusterSessionHookImpl(clusterRegistryWriter, nodeManager, clusterSender);
     }
 }

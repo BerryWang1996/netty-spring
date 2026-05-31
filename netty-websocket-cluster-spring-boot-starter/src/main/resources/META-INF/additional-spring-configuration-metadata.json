@@ -82,6 +82,12 @@
       "type": "java.lang.Integer",
       "description": "Max serialized cluster message size in bytes. Larger messages are not published to the cluster (local delivery is unaffected); handled per on-publish-failure. 0 means unlimited.",
       "defaultValue": 1048576
+    },
+    {
+      "name": "server.netty.websocket.cluster.session-registry-write-rate",
+      "type": "java.lang.Long",
+      "description": "Max sustained session register+deregister writes per second per node. Absorbs reconnect storms by coalescing and throttling registry writes (never dropping a register). Under this rate, writes pass straight through with no added latency. 0 means unlimited (pure pass-through).",
+      "defaultValue": 1000
     }
   ],
   "hints": [

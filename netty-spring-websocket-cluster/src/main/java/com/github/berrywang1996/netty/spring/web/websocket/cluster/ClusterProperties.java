@@ -96,6 +96,11 @@ public class ClusterProperties {
      *  Default 1 MiB. */
     private int messageMaxSizeBytes = 1048576;
 
+    /** Max sustained session register+deregister writes per second per node. Absorbs reconnect storms
+     *  by coalescing+throttling registry writes (never dropping a register). Under this rate, writes
+     *  pass straight through with no added latency. 0 = unlimited (pure pass-through). Default 1000. */
+    private long sessionRegistryWriteRate = 1000;
+
     // ---- Getters / Setters ----
 
     public boolean isEnable() { return enable; }
@@ -139,6 +144,9 @@ public class ClusterProperties {
 
     public int getMessageMaxSizeBytes() { return messageMaxSizeBytes; }
     public void setMessageMaxSizeBytes(int v) { this.messageMaxSizeBytes = v; }
+
+    public long getSessionRegistryWriteRate() { return sessionRegistryWriteRate; }
+    public void setSessionRegistryWriteRate(long v) { this.sessionRegistryWriteRate = v; }
 
     // ---- Nested classes ----
 
