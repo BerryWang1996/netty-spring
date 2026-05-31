@@ -19,6 +19,7 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.NodeState;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.*;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ReliableBroker;
 import java.util.concurrent.atomic.AtomicLong;
 import com.github.berrywang1996.netty.spring.web.websocket.context.*;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSessionClosedException;
@@ -94,6 +95,12 @@ public class ClusterMessageSender implements MessageSender {
     /** Max time (ms) the synchronous unicast-path registry lookup may block. Default 2000. */
     private volatile long nodeLookupTimeoutMs = 2000;
 
+    /** Reliable (at-least-once) broadcast broker; null when reliable.enable=false. */
+    private volatile ReliableBroker reliableBroker;
+    /** Active reliable subscriptions keyed by URI. */
+    private final ConcurrentHashMap<String, ClusterSubscription>
+            reliableSubscriptions = new ConcurrentHashMap<>();
+
     public ClusterMessageSender(MessageSender localSender,
                                 ClusterBroker broker,
                                 SessionRegistry registry,
@@ -148,6 +155,11 @@ public class ClusterMessageSender implements MessageSender {
         }
     }
 
+    /** Injects the reliable broker (enables reliableBroadcast). Null = reliable delivery disabled. */
+    public void setReliableBroker(ReliableBroker reliableBroker) {
+        this.reliableBroker = reliableBroker;
+    }
+
     /**
      * Starts cluster subscriptions: subscribe to unicast channel for this node,
      * and to broadcast channels for all locally registered URIs.
@@ -188,6 +200,13 @@ public class ClusterMessageSender implements MessageSender {
         // Subscribe to broadcast channels for URIs that have local sessions
         for (String uri : localSender.getRegisteredUri()) {
             subscribeBroadcast(uri);
+        }
+
+        // Reliable (Streams) subscriptions for locally-active URIs (only when reliable.enable wired a broker)
+        if (reliableBroker != null) {
+            for (String uri : localSender.getRegisteredUri()) {
+                subscribeReliable(uri);
+            }
         }
 
         log.info("ClusterMessageSender started for node {} — {} URI broadcast subscriptions",
@@ -406,6 +425,11 @@ public class ClusterMessageSender implements MessageSender {
         }
         broadcastSubscriptions.clear();
 
+        for (ClusterSubscription sub : reliableSubscriptions.values()) {
+            sub.unsubscribe();
+        }
+        reliableSubscriptions.clear();
+
         if (unicastSubscription != null) {
             unicastSubscription.unsubscribe();
         }
@@ -517,12 +541,65 @@ public class ClusterMessageSender implements MessageSender {
                 u -> broker.subscribe(u, this::onBroadcastMessage));
     }
 
+    private void subscribeReliable(String uri) {
+        reliableSubscriptions.computeIfAbsent(uri,
+                u -> reliableBroker.reliableSubscribe(u, nodeManager.getNodeId(), this::onReliableMessage));
+    }
+
+    /**
+     * Publishes a broadcast with at-least-once cross-node delivery (Redis Streams). Local fan-out
+     * happens first (origin's own echo is suppressed in {@link #onReliableMessage}); then the envelope
+     * is durably appended. Requires {@code reliable.enable=true}.
+     *
+     * @throws IllegalStateException if reliable delivery is disabled
+     */
+    public void reliableBroadcast(String uri, AbstractMessage message) throws MessageUriNotDefinedException {
+        ReliableBroker rb = reliableBroker;
+        if (rb == null) {
+            throw new IllegalStateException("Reliable delivery is disabled; set "
+                    + "server.netty.websocket.cluster.reliable.enable=true to use reliableBroadcast()");
+        }
+        // 1. Local fan-out first (always) — same contract as topicMessage.
+        localSender.topicMessage(uri, message);
+        // 2. Durable append for remote nodes.
+        ClusterEnvelope envelope = buildBroadcastEnvelope(uri, message);
+        if (exceedsSizeLimit(envelope)) {
+            handlePublishFailure("reliable broadcast for URI " + uri + " exceeds messageMaxSizeBytes ("
+                    + envelope.getPayload().length + " > " + messageMaxSizeBytes + ")", null);
+            return;
+        }
+        try {
+            rb.reliablePublish(uri, envelope);
+            clusterStats.reliablePublished.incrementAndGet();
+        } catch (Exception e) {
+            handlePublishFailure("reliable broadcast for URI " + uri
+                    + " — local delivery succeeded, but durable append failed (not persisted for remotes)", e);
+        }
+    }
+
+    /** Consume callback for the reliable stream: suppress origin echo, then deliver locally. */
+    private void onReliableMessage(ClusterEnvelope envelope) {
+        if (nodeManager.getNodeId().equals(envelope.getOriginNodeId())) {
+            return; // origin already did local fan-out before publishing — suppress the echo
+        }
+        clusterStats.reliableReceived.incrementAndGet();
+        try {
+            AbstractMessage message = deserializePayload(envelope.getPayload());
+            localSender.topicMessage(envelope.getUri(), message);
+        } catch (Exception e) {
+            log.warn("Failed to deliver reliable broadcast for URI {}", envelope.getUri(), e);
+        }
+    }
+
     /**
      * Notifies the cluster sender that a new URI has local sessions — triggers
      * a broadcast subscription if not already active.
      */
     public void onLocalUriActive(String uri) {
         subscribeBroadcast(uri);
+        if (reliableBroker != null) {
+            subscribeReliable(uri);
+        }
     }
 
     /**
