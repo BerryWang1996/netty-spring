@@ -101,6 +101,9 @@ public class ClusterProperties {
      *  pass straight through with no added latency. 0 = unlimited (pure pass-through). Default 1000. */
     private long sessionRegistryWriteRate = 1000;
 
+    /** Opt-in reliable (at-least-once) broadcast over Redis Streams. Disabled by default. */
+    private Reliable reliable = new Reliable();
+
     // ---- Getters / Setters ----
 
     public boolean isEnable() { return enable; }
@@ -148,6 +151,9 @@ public class ClusterProperties {
     public long getSessionRegistryWriteRate() { return sessionRegistryWriteRate; }
     public void setSessionRegistryWriteRate(long v) { this.sessionRegistryWriteRate = v; }
 
+    public Reliable getReliable() { return reliable; }
+    public void setReliable(Reliable reliable) { this.reliable = reliable; }
+
     // ---- Nested classes ----
 
     /**
@@ -166,6 +172,34 @@ public class ClusterProperties {
 
         public String getUri() { return uri; }
         public void setUri(String uri) { this.uri = uri; }
+    }
+
+    /**
+     * Reliable (at-least-once) broadcast settings. Off by default — when {@code enable=false} there
+     * are no consumer threads, no extra Redis connection, and {@code reliableBroadcast()} throws.
+     */
+    public static class Reliable {
+        /** Master gate for reliable broadcast. Default false. */
+        private boolean enable = false;
+        /** Per-URI stream MAXLEN (approx) — the at-least-once retention window. Default 10000. */
+        private int streamMaxLen = 10000;
+        /** XREADGROUP BLOCK timeout (ms) for the consume loop. Default 2000. */
+        private long pollBlockMs = 2000;
+        /** XREADGROUP COUNT per read. Default 64. */
+        private int pollCount = 64;
+        /** Per-URI ring size of recently-acked entry ids (in-process redelivery dedup). Default 1024. */
+        private int dedupWindow = 1024;
+
+        public boolean isEnable() { return enable; }
+        public void setEnable(boolean enable) { this.enable = enable; }
+        public int getStreamMaxLen() { return streamMaxLen; }
+        public void setStreamMaxLen(int v) { this.streamMaxLen = v; }
+        public long getPollBlockMs() { return pollBlockMs; }
+        public void setPollBlockMs(long v) { this.pollBlockMs = v; }
+        public int getPollCount() { return pollCount; }
+        public void setPollCount(int v) { this.pollCount = v; }
+        public int getDedupWindow() { return dedupWindow; }
+        public void setDedupWindow(int v) { this.dedupWindow = v; }
     }
 
     /** Behavior when the cluster transport (Redis) is lost. */
