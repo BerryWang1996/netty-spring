@@ -89,5 +89,7 @@ class ClusterReliableSenderTest {
         sender.reliableBroadcast("/ws/r", new TextMessage("hello"));
         assertEquals(1, localSender.topicCount.get(),
                 "origin's own reliable echo must be suppressed (no double local delivery)");
+        assertEquals(0, sender.getClusterRuntimeStats().getReliableReceived(),
+                "reliableReceived must not increment for an origin echo (early-return path taken)");
     }
 }
