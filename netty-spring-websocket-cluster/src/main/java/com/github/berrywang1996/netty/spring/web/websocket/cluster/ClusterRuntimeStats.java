@@ -51,6 +51,11 @@ public class ClusterRuntimeStats {
      *  degrade-to-local message loss visible/quantifiable to operators. */
     final AtomicLong broadcastsSkippedDegraded = new AtomicLong();
 
+    /** Reliable broadcasts published (XADD issued). */
+    final AtomicLong reliablePublished = new AtomicLong();
+    /** Reliable broadcasts received from the stream and delivered locally. */
+    final AtomicLong reliableReceived = new AtomicLong();
+
     /** Node lookup cache hits. */
     final AtomicLong cacheHits = new AtomicLong();
 
@@ -65,6 +70,8 @@ public class ClusterRuntimeStats {
     public long getUnicastSent() { return unicastSent.get(); }
     public long getPublishFailures() { return publishFailures.get(); }
     public long getBroadcastsSkippedDegraded() { return broadcastsSkippedDegraded.get(); }
+    public long getReliablePublished() { return reliablePublished.get(); }
+    public long getReliableReceived() { return reliableReceived.get(); }
     public long getCacheHits() { return cacheHits.get(); }
     public long getCacheMisses() { return cacheMisses.get(); }
 
