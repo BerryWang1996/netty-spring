@@ -5,8 +5,8 @@
 - **Owner**: BerryWang1996 (wangbor@yeah.net), single maintainer
 - **License**: Apache 2.0
 - **Maven Central**: `io.github.berrywang1996:netty-*` (namespace verified at central.sonatype.com)
-- **Current version**: 1.9.0 (cluster reliability hardening — 5 items shipped; committed + tagged `v1.9.0`, deployed to Central pending manual Publish). Earlier published: 1.4.0, 1.6.2, 1.7.0, 1.7.1, 1.8.0
-- **Next**: 2.0.0 (Boot 3.x); remaining cluster backlog (NATS, reliable delivery, full metrics, HMAC auth)
+- **Current version**: 1.9.0-RC1 (IN DEVELOPMENT — cluster reliability hardening 5 items done + tagged `v1.9.0-RC1`; reliable delivery via Redis Streams is next, then final 1.9.0 once the cycle completes. NOT pushed/deployed). Latest stable on Central: 1.8.0. Earlier published: 1.4.0, 1.6.2, 1.7.0, 1.7.1, 1.8.0
+- **Next (this 1.9.0 cycle)**: reliable broadcast via Redis Streams (`reliableBroadcast`, at-least-once, opt-in) → then final 1.9.0. Later: NATS, full metrics, HMAC auth → 2.0.0 (Boot 3.x)
 - **Spring Boot**: 2.7.18 (Boot 3.x migration planned for 2.0.0)
 - **JDK**: 17 (GraalVM JDK 17.0.11)
 - **Build**: Maven 3.9.9, 11 modules (including 2 new cluster modules)
@@ -49,7 +49,7 @@ demo-netty-web-spring-boot-starter        — demo app (not published to Central
 - Commit style: `type: description` (fix/feat/docs/release), include `Co-Authored-By: Claude ...`
 - Pre-release: 4-way parallel code audit + adversarial verification model
 
-## 1.9.0 Status (RELEASED — committed, tagged v1.9.0, deployed to Central pending manual Publish)
+## 1.9.0 Status (IN DEVELOPMENT — RC1 tagged v1.9.0-RC1; NOT pushed/deployed; final 1.9.0 cut when the cycle completes, incl. reliable delivery)
 Cluster reliability hardening. 304 tests / 11 modules green. Single-node (cluster.enable=false) is
 production-grade and behaviorally identical to 1.7.x/1.8.0; cluster mode targets ≤~10 nodes + a dedicated,
 secured Redis.

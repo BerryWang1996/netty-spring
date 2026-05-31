@@ -104,9 +104,9 @@
 - 真实 Redis 7.4.9（Docker）实测：本地广播 ~180 万 msg/s，跨节点 ~14k msg/s @ 77µs。
 - 已补 `docs/release-notes-1.8.0.md`，并同步 README（集群快速接入 + 性能基准 + 选型/容量表）、`docs/api-guide.md`、`docs/cluster-design.md`（实现范围 vs 设计目标）、`docs/development-plan.md`。
 
-### `1.9.0`（当前推荐版本，已发布 tag `v1.9.0`）
+### `1.9.0-RC1`（开发中，tag `v1.9.0-RC1`；最终 1.9.0 待整个周期完成后发布）
 
-定位：集群可靠性硬化，5 项 1.8.0 推迟项全部落地；单机模式与 1.7.x/1.8.0 完全一致；集群 SPI 签名不变。
+定位：集群可靠性硬化，5 项 1.8.0 推迟项全部落地（RC1 里程碑）；单机模式与 1.7.x/1.8.0 完全一致；集群 SPI 签名不变。后续 RC 将补充可靠投递（Redis Streams）等。
 
 完成确认项：
 
@@ -118,7 +118,7 @@
 - **⑤ Registry 写合并限速**：`session-registry-write-rate`（默认 1000 ops/s）落地；`CoalescingRegistryWriter` token-bucket；register 永不丢弃。
 - **2 个新配置项**：`redis-loss-grace-period-ms` 和 `session-registry-write-rate`。
 - **向后兼容**：SPI 签名全部不变；`ClusterReaper` 是纯新增；无代码改动可升级（仅需注意宽限期默认值变更）。
-- 已补 `docs/release-notes-1.9.0.md`，并同步 `docs/cluster-design.md`（5 项移入 ✅）、`docs/api-guide.md`（§9/§11 新增配置项）、`docs/development-plan.md`（1.9.0 当前推荐版本）、`README.md`、`.claude/CLAUDE.md`。
+- 已补 `docs/release-notes-1.9.0.md`，并同步 `docs/cluster-design.md`（5 项移入 ✅）、`docs/api-guide.md`（§9/§11 新增配置项）、`docs/development-plan.md`、`README.md`、`.claude/CLAUDE.md`。
 
 ### `1.9.x+`（规划中）
 

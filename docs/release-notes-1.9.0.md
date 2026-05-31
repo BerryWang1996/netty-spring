@@ -1,6 +1,6 @@
-# Release Notes — v1.9.0
+# Release Notes — v1.9.0 (开发中 / in development)
 
-> 发布日期：2026-05-31
+> 状态：**开发中（1.9.0-RC1，2026-05-31）** — 本文档随 1.9.0 周期累积。RC1 含下述 5 项可靠性硬化；后续 RC 将补充可靠投递（Redis Streams `reliableBroadcast`）等。最终 1.9.0 发布日期待整个周期完成后确定。
 
 ## 版本定位
 

@@ -304,7 +304,7 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#11-configurati
 
 ### Current Status
 
-- **Current recommended version: `1.9.0`** (cluster reliability hardening — 5 deferred items shipped + 2 new config knobs + 304 tests). Single-node mode is production-grade and identical to 1.7.x/1.8.0; cluster mode reliability significantly improved — see [Release Notes 1.9.0](docs/release-notes-1.9.0.md) and [Cluster Design §Security](docs/cluster-design.md).
+- **Latest stable: `1.8.0`** (on Maven Central). **`1.9.0` is in development (`1.9.0-RC1`)** — cluster reliability hardening: 5 deferred 1.8.0 items done + 2 new config knobs + 304 tests; reliable broadcast via Redis Streams is next before final 1.9.0 is cut. Single-node mode stays production-grade and identical to 1.7.x/1.8.0 — see [Release Notes 1.9.0 (in dev)](docs/release-notes-1.9.0.md) and [Cluster Design §Security](docs/cluster-design.md).
 - `1.8.0` delivered WebSocket cluster support (Redis Pub/Sub + 5-layer SPI architecture + 291 tests) — all preserved in 1.9.0 and backward compatible.
 - Milestones P0 through P7 are all complete; performance (1.6.x), security/stability (1.6.2), observability (1.7.0), clustering (1.8.0), and cluster hardening (1.9.0) followed.
 - Next: `2.0.0` Spring Boot 3.x / Jakarta migration + enterprise security
@@ -643,7 +643,7 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 
 ### 当前阶段
 
-- **当前推荐版本：`1.9.0`**（集群可靠性硬化：5 项 1.8.0 推迟项全部落地 + 2 个新配置项 + 304 个测试全绿）。单机模式生产级、与 1.7.x/1.8.0 完全一致；集群模式运维可靠性大幅提升，适用边界不变（≤~10 节点 + 专用加密 Redis）——见 [1.9.0 发布说明](docs/release-notes-1.9.0.md) 与 [集群方案设计 §安全模型](docs/cluster-design.md)。
+- **最新稳定版：`1.8.0`**（已发布 Maven Central）。**`1.9.0` 开发中（`1.9.0-RC1`）**——集群可靠性硬化：5 项 1.8.0 推迟项全部落地 + 2 个新配置项 + 304 个测试全绿；可靠投递（Redis Streams）为本周期下一项，之后再发最终 1.9.0。单机模式生产级、与 1.7.x/1.8.0 完全一致——见 [1.9.0 发布说明（开发中）](docs/release-notes-1.9.0.md) 与 [集群方案设计 §安全模型](docs/cluster-design.md)。
 - `1.8.0` 交付 WebSocket 集群支持（Redis Pub/Sub 跨节点广播/单播 + 5 层 SPI 可插拔架构 + 291 个测试全绿）——在 `1.9.0` 中完整保留，全部向后兼容。
 - P0 至 P7 全部里程碑已完成；其后依次推进性能（1.6.x）、安全稳定性（1.6.2）、可观测性（1.7.0）、集群水平扩展（1.8.0）、集群可靠性硬化（1.9.0）。
 - 下一步：`2.0.0` Spring Boot 3.x / Jakarta 迁移 + 企业安全版本
