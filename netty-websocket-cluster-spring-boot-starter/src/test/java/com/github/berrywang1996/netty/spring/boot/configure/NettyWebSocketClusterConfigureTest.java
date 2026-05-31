@@ -97,6 +97,11 @@ class NettyWebSocketClusterConfigureTest {
                     assertThat(context).hasSingleBean(ClusterHealthIndicator.class);
                     assertThat(context.getBean(ClusterHealthIndicator.class).health().getDetails())
                             .containsKey("nodeState");
+                    // 1.9.0 reliability beans are wired.
+                    assertThat(context).hasSingleBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterReaper.class);
+                    assertThat(context).hasSingleBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.CoalescingRegistryWriter.class);
                 });
         // Context close here exercises the destroyMethod lifecycle (B1) without error.
     }
