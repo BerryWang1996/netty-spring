@@ -1,17 +1,15 @@
 # Cluster Design — Redis 集群方案（设计全集 + 1.8.0 实现范围）
 
-> **本文档描述的是完整目标架构（设计全集），不是 1.8.0 的实现清单。** `1.8.0` 已发布，
-> 实现了其中一个**子集**；其余能力推迟到 `1.9.x`。下方"## 1.8.0 实现范围"表是实现与
-> 设计的权威对照——阅读本文其余章节时，请以该表为准判断某项是否已落地。
+> **本文档描述的是完整目标架构（设计全集），不是单一版本的实现清单。** `1.8.0` 实现了其中一个子集；`1.9.0` 完成了 5 项可靠性硬化项；其余能力推迟到后续版本。下方"## 实现范围"表是实现与设计的权威对照——阅读本文其余章节时，请以该表为准判断某项是否已落地。
 > 落地进度与推迟项跟踪：`docs/development-plan.md`。
 
-## 1.8.0 实现范围 vs 设计目标
+## 实现范围 vs 设计目标（1.8.0 / 1.9.0 已落地）
 
-> 原则：**1.8.0 只暴露有实际效果的配置项**。本文档其余章节描述的 `pubsub-connections`、
-> `sharded-pubsub`、`publish-batch-size`、`reliable-stream-max-len`、`redis-loss-grace-period`、
-> `session-registry-write-rate`、`max-subscribed-channels`、`subscription-hold-duration`、
-> `redis.mode` 等配置项**在 1.8.0 的 `ClusterProperties` 中不存在**（其特性尚未实现，不提供会
-> 撒谎的开关），待对应特性在 `1.9.x` 落地时再引入。
+> 原则：**只暴露有实际效果的配置项**。本文档其余章节描述的 `pubsub-connections`、
+> `sharded-pubsub`、`publish-batch-size`、`reliable-stream-max-len`、`max-subscribed-channels`、
+> `subscription-hold-duration`、`redis.mode` 等配置项**当前在 `ClusterProperties` 中不存在**
+> （其特性尚未实现，不提供会撒谎的开关），待对应特性落地时再引入。
+> `redis-loss-grace-period-ms` 和 `session-registry-write-rate` 已在 **1.9.0** 落地（见下表）。
 
 | 能力 | 1.8.0 | 说明 |
 | --- | :---: | --- |
@@ -29,14 +27,17 @@
 | `on-publish-failure`（log / drop）、`message-max-size-bytes`、`reconnect-jitter-max-seconds` | ✅ | |
 | `ClusterRuntimeStats` 程序内计数 | ✅ | broadcastPublished / selfDropped / unicastSent / publishFailures / cacheHitRatio |
 | Sentinel（`redis-sentinel://` URI） | ✅ | Lettuce 原生，URI scheme 选择拓扑 |
-| 多 pub/sub 连接并行解码（`pubsub-connections`） | ⏳ 1.9.x | 实测吞吐远低于单连接天花板，过早优化 |
-| sharded pub/sub（`SSUBSCRIBE`/`SPUBLISH`） | ⏳ 1.9.x | 经典 pub/sub 已覆盖所有模式 |
-| Redis Cluster 客户端一等支持（`RedisClusterClient`） | ⏳ 1.9.x | 需不同客户端类型；用户自备 bean |
-| 可靠投递（offset/epoch + Redis Streams、`reliable-stream-max-len`） | ⏳ 1.9.x | envelope 已留 `version` 字段 |
-| 写 pipeline 批量（`publish-batch-size` / `publish-flush-interval`） | ⏳ 1.9.x | 当前单条 async（Lettuce 连接层自动 pipeline） |
-| registry 写限速（`session-registry-write-rate`） | ⏳ 1.9.x | |
-| Redis 失联宽限期（`redis-loss-grace-period`） | ⏳ 1.9.x | 当前心跳失败即降级 |
-| 频道基数硬上限 / 订阅 hold（`max-subscribed-channels` / `subscription-hold-duration`） | ⏳ 1.9.x | 订阅集由 `@MessageMapping` URI 固定，不会无界增长 |
+| **Redis 失联宽限期**（`redis-loss-grace-period-ms`，默认 5000） | ✅ 1.9.0 | 宽限窗口内 Redis 抖动不触发状态机降级；broker `state()` 仍立刻翻转；`0` 恢复 1.8.0 即时降级 |
+| **心跳/对账线程隔离 + 批量 EXISTS**（两个独立调度器 `cluster-hb` / `cluster-recon`） | ✅ 1.9.0 | 慢对账扫描不再饿死心跳续约；`findExpiredNodes` 改为管道批量 EXISTS |
+| **原子 Lua deregister**（HGET→DEL→SREM 单 `EVAL`） | ✅ 1.9.0 | 消除并发 re-register 交错的理论竞态；standalone/sentinel 支持 |
+| **对账选主去重**（`ClusterReaper` SPI，`RedisClusterReaper` 用 `SET NX` 认领） | ✅ 1.9.0 | 死节点只被一个存活节点清理；`@ConditionalOnMissingBean` 可覆盖 |
+| **Registry 写合并限速**（`session-registry-write-rate`，默认 1000 ops/s，`CoalescingRegistryWriter`） | ✅ 1.9.0 | token-bucket 透传；超速时合并写入；register 永不丢弃；防注册风暴 |
+| 多 pub/sub 连接并行解码（`pubsub-connections`） | ⏳ 未来版本 | 实测吞吐远低于单连接天花板，过早优化 |
+| sharded pub/sub（`SSUBSCRIBE`/`SPUBLISH`） | ⏳ 未来版本 | 经典 pub/sub 已覆盖所有模式 |
+| Redis Cluster 客户端一等支持（`RedisClusterClient`） | ⏳ 未来版本 | 需不同客户端类型；用户自备 bean |
+| 可靠投递（offset/epoch + Redis Streams、`reliable-stream-max-len`） | ⏳ 未来版本 | envelope 已留 `version` 字段 |
+| 写 pipeline 批量（`publish-batch-size` / `publish-flush-interval`） | ⏳ 未来版本 | 当前单条 async（Lettuce 连接层自动 pipeline） |
+| 频道基数硬上限 / 订阅 hold（`max-subscribed-channels` / `subscription-hold-duration`） | ⏳ 未来版本 | 订阅集由 `@MessageMapping` URI 固定，不会无界增长 |
 | Actuator 集群健康（`ClusterHealthIndicator`，节点/broker 状态 + 运行时计数） | ✅ | `/actuator/health` 下 `nettyCluster`；actuator 在 classpath 时启用 |
 | 完整 Micrometer 指标集（meter-binder） | ⏳ 1.9.x | 1.8.0 提供程序内 `ClusterRuntimeStats` + 上面的 health indicator |
 | auto-config 装配测试（ApplicationContextRunner） | ✅ | 验证 enable=true→`@Primary` 为 ClusterMessageSender + health indicator；enable=false→零集群 bean |
@@ -228,7 +229,7 @@ netty:broadcast:{uri}  → 每个 @MessageMapping URI 一个 Pub/Sub 频道
 **核心承诺：单 Redis 主中断不会拖垮整个集群。**
 
 - `cluster.on-redis-loss` 默认 `degrade-to-local`：Redis 失联时本节点切到 `DEGRADED`，本地 fan-out / 本地会话保持工作；跨节点广播暂停并记入 `netty.cluster.degraded.duration` 直方图；本地 session **不被断开**。`close-all`（即历史"保守策略"）改为显式 opt-in。
-- `cluster.redis-loss-grace-period` 默认 60s：在此窗口内不改变状态机，避免短暂网络抖动触发降级。
+- `cluster.redis-loss-grace-period-ms` 默认 5000ms（1.9.0 落地）：在此窗口内不改变状态机，避免短暂网络抖动触发降级；broker `state()` 仍立刻反映真实连接状态。
 - **Sentinel / Redis Cluster 一等支持**：Lettuce 原生支持，通过 `cluster.redis.mode = standalone | sentinel | cluster` 切换；文档同时给出 Spring Boot `spring.data.redis.*` 复用方式（用 `@ConditionalOnMissingBean` 让用户已有连接工厂优先）。
 
 **节点故障恢复：**
@@ -243,7 +244,7 @@ netty:broadcast:{uri}  → 每个 @MessageMapping URI 一个 Pub/Sub 频道
 
 **Redis 恢复时的雷击防护：**
 - 所有节点恢复同步时携带 `jitter(0, cluster.reconnect-jitter-max)`（默认 10s），避免雷击。
-- Session registry 重建走 token-bucket 限速（默认 1000 ops/s/节点）。
+- Session registry 重建走 token-bucket 限速（`session-registry-write-rate` 默认 1000 ops/s/节点，1.9.0 落地）。
 - 订阅重建按 100 个 URI 一批 pipeline，避免连接被填满。
 - 节点状态机增加 `RESYNC` 状态明确表达"恢复中"。
 
@@ -286,7 +287,7 @@ public class ChatController {
 
 > 命名空间是 `server.netty.websocket.cluster.*`（集群是 WebSocket 的扩展能力）。
 
-**1.8.0 实际可用配置（`ClusterProperties` 中真实存在且有效果）：**
+**当前可用配置（`ClusterProperties` 中真实存在且有效果，含 1.9.0 新增）：**
 
 ```yaml
 server:
@@ -309,13 +310,15 @@ server:
         message-max-size-bytes: 1048576     # 超限消息不发往集群（本地投递不受影响）
         on-redis-loss: degrade-to-local     # degrade-to-local（默认） | close-all
         on-publish-failure: log             # log（默认） | drop
+        # --- 1.9.0 新增 ---
+        redis-loss-grace-period-ms: 5000    # Redis 失联宽限期（ms）；0 = 立即降级（1.8.0 行为）
+        session-registry-write-rate: 1000   # registry 写限速（ops/s/node）；0 = 不限速
 ```
 
-**设计全集中尚未实现的键（⏳ 1.9.x，当前设置无效，故 1.8.0 不提供）：**
+**设计全集中尚未实现的键（仍在路线图，当前设置无效）：**
 `redis.mode`、`redis.sharded-pubsub`、`pubsub-connections`、`publish-batch-size`、
 `publish-flush-interval-ms`、`max-subscribed-channels`、`subscription-hold-duration-seconds`、
-`session-registry-write-rate`、`reliable-stream-max-len`、`redis-loss-grace-period-seconds`、
-`compression`、`unicast-buffer-size`。详见本文档顶部"1.8.0 实现范围"表。
+`reliable-stream-max-len`、`compression`、`unicast-buffer-size`。详见本文档顶部"实现范围"表。
 
 ### 命名空间一致性
 
@@ -445,17 +448,28 @@ netty-spring/
 - **跨 DC 多 Redis**：本设计假设单 Redis 集群可用区；多活 / 跨 DC 复制方案在 `2.x` 评估。
 - **持久化 / 离线消息**：通过 Streams 提供原语，但消息存储 / 拉取 API 不在 `1.8.0`。
 
-### `1.8.0` 集群已知限制 → `1.9.x` 硬化项（发版评审结论）
+### 集群已知限制与硬化状态
 
-`1.8.0` 集群适用于 **≤~10 节点、配专用且加密的 Redis** 的场景。以下硬化项明确推迟到 `1.9.x`，生产用户需知悉：
+集群适用于 **≤~10 节点、配专用且加密的 Redis** 的场景。
 
-- **envelope HMAC 认证**（安全根因修复）：消除 `originNodeId` 伪造与未授权 `CLOSE`/注入。1.8.0 以文档 + 默认告警 + 入站大小上限兜底。
-- **完整 Micrometer 指标集（meter-binder）**：1.8.0 已提供 `ClusterHealthIndicator`（`/actuator/health` 下 `nettyCluster`，含节点/broker 状态 + 运行时计数）+ 程序内 `ClusterRuntimeStats`；完整的 `MeterBinder` 指标集（`netty.cluster.*` 时序）推迟到 1.9.x。
-- **envelope HMAC 认证**（安全根因修复）：消除 `originNodeId` 伪造与未授权 `CLOSE`/注入。1.8.0 以文档 + 默认告警 + 入站大小上限兜底。
-- **reconciliation 去重 / 选主**：当前每个存活节点独立清理同一死节点（幂等但有 N 倍清理流量）；1.9.x 加 `SET NX` 认领，只有赢家清理。
-- **`deregister` 原子性**：当前 HGET→DEL+SREM 非原子；理论竞态（同 sessionId 跨连接复用）因 sessionId 为每连接 UUID **实际不可能发生**，故仅作纵深防御推迟；1.9.x 改 Lua 条件删除。
-- **心跳 / 对账线程隔离 + 批量 EXISTS**：当前两者共用单线程 + 单连接 + 逐节点 EXISTS，仅在 Redis 降级且超出"≤10 节点 + 专用 Redis"envelope 时可能自我饿死；1.9.x 拆独立调度线程。（命令超时已在 1.8.0 落地,见下。）
-- **多 pub/sub 连接并行解码 / sharded pub/sub / 写 pipeline 批量 / registry 限速**：见上文实现范围表，均为规模化档位优化。
+**✅ 1.9.0 已完成的硬化项（原 1.8.0 推迟项）：**
+
+- ✅ **Redis 失联宽限期**（`redis-loss-grace-period-ms`）：亚秒级 Redis 抖动不再触发状态机降级；`0` 恢复 1.8.0 即时行为。
+- ✅ **心跳 / 对账线程隔离 + 批量 EXISTS**：两个独立调度器（`cluster-hb` / `cluster-recon`），慢扫描不再饿死心跳；`findExpiredNodes` 改管道批量。
+- ✅ **`deregister` 原子性**：改为 Lua `EVAL`（HGET→DEL→SREM 单事务），消除并发竞态理论路径。
+- ✅ **reconciliation 去重 / 选主**：`ClusterReaper` SPI，`RedisClusterReaper` 用 `SET NX` 认领清理权，死节点只被一个节点清理。
+- ✅ **registry 限速**（`session-registry-write-rate`）：token-bucket `CoalescingRegistryWriter`，防注册风暴；register 永不丢弃。
+
+**⏳ 仍推迟到后续版本的项：**
+
+- **envelope HMAC 认证**（安全根因修复）：消除 `originNodeId` 伪造与未授权 `CLOSE`/注入。当前以文档 + 默认告警 + 入站大小上限兜底。
+- **完整 Micrometer 指标集（meter-binder）**：已提供 `ClusterHealthIndicator` + 程序内 `ClusterRuntimeStats`；完整 `MeterBinder` 指标集（`netty.cluster.*` 时序）仍在路线图。
+- **多 pub/sub 连接并行解码 / sharded pub/sub / 写 pipeline 批量**：规模化档位优化，见实现范围表。
+- **Redis Cluster 客户端一等支持**：需要 `RedisClusterClient`（不同客户端类型）。
+- **NATS broker**（ADR-001 规模化档位）：`NatsBroker` SPI 实现，消除 N× 扇出放大。
+- **可靠投递（Redis Streams + offset/epoch）**：`reliableBroadcast` at-least-once 路径。
+- **W3C TraceContext 跨节点传播**：envelope 已预留 `traceparent` 字段。
+- **多节点 demo + Testcontainers**。
 
 ## 技术参考
 

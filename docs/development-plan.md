@@ -1,17 +1,25 @@
 # 开发计划与阶段状态
 
-更新时间：2026-05-30
+更新时间：2026-05-31
 
 ## 当前结论
 
-- **当前推荐版本：`1.8.0`**（WebSocket 集群支持：Redis Pub/Sub 跨节点 + 5 层 SPI + 291 测试。单机模式生产级；集群模式面向 ≤~10 节点 + 专用加密 Redis，详见 `docs/release-notes-1.8.0.md` 与 `cluster-design.md §安全模型`）。
-- 上一版本：`1.7.1`（在 `1.7.0` 之上修复架构评审发现的 CORS 通配符+credentials 安全问题、`@MessageMapping(ON_CLOSE)` 在陈旧 channel 路径上未触发的正确性问题、CompressorHandler 解析与大小写问题、AES-GCM IV 长度校验，并 pin logback 1.2.13 修复 CVE-2023-6378。详见 `docs/release-notes-1.7.1.md`）。
-- `P0`–`P7` 全部里程碑已完成；项目历经"功能建设期 → 质量深化 → 产品化 → 性能优化 → 安全稳定性加固 → 可观测性增强 → 集群水平扩展"七个阶段。
-- 下一步：**`2.0.0`** Spring Boot 3.x 迁移基线，**`2.1.0`** 企业安全准入。`2.0` / `2.1` 拆分见下方 `2.x` 路线说明。`1.9.x` 跟随项见 `1.8.0` 推迟项清单。
+- **当前推荐版本：`1.9.0`**（集群可靠性硬化：5 项 1.8.0 推迟项全部落地 + 2 个新配置项 + 304 测试全绿。单机模式与 1.7.x/1.8.0 完全一致；集群模式运维可靠性大幅提升，适用边界不变（≤~10 节点 + 专用加密 Redis），详见 `docs/release-notes-1.9.0.md`）。
+- 上一版本：`1.8.0`（WebSocket 集群支持：Redis Pub/Sub 跨节点 + 5 层 SPI + 291 测试。详见 `docs/release-notes-1.8.0.md`）。
+- `P0`–`P7` 全部里程碑已完成；项目历经"功能建设期 → 质量深化 → 产品化 → 性能优化 → 安全稳定性加固 → 可观测性增强 → 集群水平扩展 → 集群可靠性硬化"八个阶段。
+- 下一步：**`2.0.0`** Spring Boot 3.x 迁移基线，**`2.1.0`** 企业安全准入。`2.0` / `2.1` 拆分见下方 `2.x` 路线说明。集群扩展后续项（NATS / 可靠投递 / 完整指标等）见下方 backlog。
 
 ## 当前发版判断
 
-`1.8.0`（当前推荐）在 `1.7.1` 之上新增 **WebSocket 集群支持**（向后兼容，默认单机模式行为与 `1.7.x` 完全一致）：
+`1.9.0`（当前推荐）在 `1.8.0` 之上完成 **集群可靠性硬化**（向后兼容，默认单机模式行为与 `1.7.x`/`1.8.0` 完全一致）：
+
+- **5 项硬化全部落地**（原 1.8.0 推迟项）：Redis 失联宽限期（`redis-loss-grace-period-ms`）、心跳/对账线程隔离 + 批量 EXISTS、原子 Lua deregister、对账选主去重（`ClusterReaper` SPI）、registry 写合并限速（`session-registry-write-rate`，`CoalescingRegistryWriter`）。
+- **2 个新配置项**：`redis-loss-grace-period-ms`（默认 5000，即时降级设 0）、`session-registry-write-rate`（默认 1000 ops/s/node，0 = 不限速）。
+- **唯一默认行为变更**：`redis-loss-grace-period-ms` 默认 5s；设 `=0` 恢复 1.8.0 即时降级时序。
+- 304 个测试（11 模块全绿），含 `ClusterNodeManagerReliabilityTest`、`ClusterRegistryWriterTest`、+3 个 `RedisIntegrationTest`。
+- 详见 `docs/release-notes-1.9.0.md`。
+
+`1.8.0`（上一版本）在 `1.7.1` 之上新增 **WebSocket 集群支持**（向后兼容，默认单机模式行为与 `1.7.x` 完全一致）：
 
 - **两个新模块**：`netty-spring-websocket-cluster`（集群核心 + Redis 实现）、`netty-websocket-cluster-spring-boot-starter`（自动装配，`server.netty.websocket.cluster.enable=true` 时激活）。
 - **5 层可插拔 SPI**：`ClusterBroker`（跨节点传输，Redis Pub/Sub 默认）、`SessionRegistry`（分布式会话路由）、`EnvelopeCodec`（信封线格式，零依赖默认）、`MessagePayloadCodec`（消息体序列化，零依赖默认）、`ClusterNodeHeartbeat`（心跳持久化）。全部 `@ConditionalOnMissingBean` 可覆盖。
@@ -72,8 +80,8 @@
 - 节点故障：通过 heartbeat TTL + Keyspace Notification + 周期对账（第一刀）双路触发清理，发布 `NODE_LEFT`；跨节点单播目标缺失时**同步返回错误**，不再静默丢消息。
 - **分区下广播静默丢失须明示**：部分分区时 A 的广播只是 PUBLISH，连不上 Redis 的 B 收不到、其本地用户静默丢消息直到 B 被判 LEFT。这是 at-most-once 固有后果；需可靠送达走 `reliableBroadcast`（B 恢复后回放）。
 - ✅ **Redis SPOF 降级**：`on-redis-loss=degrade-to-local`（默认）——Redis 失联时本节点切 `DEGRADED`，本地 fan-out / 本地 session 保持工作；跨节点暂停。`close-all` 显式 opt-in（关闭全部本地 session）。
-- ⏳ **（推迟 1.9.x）Redis 失联宽限期**：`redis-loss-grace-period` 推迟；1.8.0 心跳失败即转 `DEGRADED`（无宽限窗口）。
-- ✅/⏳ **重连风暴控制**：✅ 恢复同步携带 `jitter(0, reconnect-jitter-max-seconds)`（默认 10s，可配）；⏳ registry 重建 token-bucket 限速推迟到 1.9.x。
+- ✅ **（1.9.0 落地）Redis 失联宽限期**：`redis-loss-grace-period-ms`（默认 5000ms）；broker `state()` 立刻翻转；`0` 恢复 1.8.0 即时降级行为。1.8.0 本身心跳失败即转 `DEGRADED`（无宽限窗口）。
+- ✅/✅ **重连风暴控制**：✅ 恢复同步携带 `jitter(0, reconnect-jitter-max-seconds)`（默认 10s，可配）；✅ registry 重建 token-bucket 限速（`session-registry-write-rate` 默认 1000 ops/s）在 1.9.0 落地。
 - ⏳ **（推迟 1.9.x）慢订阅者保护**：Lettuce 重连回调触发 `DEGRADED`（✅ 已有）；`client-output-buffer-limit pubsub` 运维章节推迟补充。
 
 ### 第四刀：API 诚实化、可观测完整化、文档与 demo
@@ -100,14 +108,23 @@
 - 跨 DC 多 Redis 多活（`2.x` 评估）。
 - Kubernetes Operator / Helm Chart（运维专项）。
 
-### `1.8.x` / `1.9.x` 跟随项 backlog
+### `1.9.x` 后续 / `2.x` 集群扩展 backlog（1.9.0 之后）
+
+以下项在 1.9.0 中**仍未实现**，推迟到后续版本：
 
 - **`NatsBroker` adapter（规模化中间件档位，ADR-001）**：在 `ClusterBroker` SPI 下新增 NATS 实现，兴趣路由消除 Redis Pub/Sub 的 N× 扇出放大；Redis 实现保留服务小集群。触发条件：有用户撞到 ≤~10 节点活跃广播天花板。
+- **Redis Streams 可靠投递**（`reliableBroadcast` / at-least-once，offset+epoch 模型）：envelope 已留 `version` 字段。
+- **完整 Micrometer 指标集**（`netty.cluster.*` meter-binder 时序）。
+- **HMAC envelope 认证**：消除 `originNodeId` 伪造与未授权 `CLOSE`/注入的安全根因。
+- **多 pub/sub 连接并行解码 / sharded pub/sub**：规模化档位优化。
+- **Redis Cluster 客户端一等支持**（`RedisClusterClient`）。
+- **W3C TraceContext 跨节点传播**：envelope 已预留 `traceparent` 字段。
+- **多节点 demo + Testcontainers 端到端 CI**。
 - 直接 node→node 单播（Slack 模式 mesh 第一步，把 Redis 移出单播热路径）。
 - 入站背压 / 速率限制（per-session token bucket + `netty.websocket.inbound.dropped` 指标）。
 - 房间 / 主题级集群 fan-out（`ClusterRoomRegistry` 含分片频道）。
 - Redis Streams 完整生命周期：消费者重平衡、死信队列、离线消息 API。
-- 完整 OpenTelemetry instrumentation（在 1.8.0 最小 TraceContext 传播之上扩展）。
+- 完整 OpenTelemetry instrumentation（在 TraceContext 传播落地之上扩展）。
 
 ## `2.x` 路线说明（Spring Boot 3.x 与企业安全分离）
 
@@ -192,8 +209,9 @@
 | `1.6.1`–`1.6.2` | 广播性能优化 + 关键 bug 修复 + 安全稳定性修复 | Phase 1 / Round 1–4 |
 | `1.7.0` | 可观测性增强 + 深度修复 + WebSocket 分片支持 | 历史版本 |
 | `1.7.1` | `1.7.0` 之上 4 项审计修复 + 依赖安全 | 上一版本 |
-| `1.8.0` | **WebSocket 集群支持（Redis Pub/Sub + 5 层 SPI）** | **当前推荐版本** |
-| `1.9.x` | 集群扩展项（NATS broker、多连接解码、可靠投递、完整指标、多节点 demo、Redis Cluster 客户端） | 规划中 |
+| `1.8.0` | WebSocket 集群支持（Redis Pub/Sub + 5 层 SPI） | 上一版本 |
+| `1.9.0` | **集群可靠性硬化（5 项硬化 + 2 新配置项 + 304 测试）** | **当前推荐版本** |
+| `1.9.x+` | 集群扩展项（NATS broker、可靠投递、完整指标、HMAC auth、多节点 demo、Redis Cluster 客户端） | 规划中 |
 | `2.0.0` | Spring Boot 3.x 迁移基线 | 远期 |
 | `2.1.0` | 企业安全准入 | 远期（在 2.0.0 之后） |
 

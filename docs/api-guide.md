@@ -1,6 +1,6 @@
 # netty-spring API Usage Guide
 
-> Version: 1.8.0 | Updated: 2026-05-30
+> Version: 1.9.0 | Updated: 2026-05-31
 
 This guide walks through the most common integration scenarios for `netty-spring`. Each section is self-contained — jump directly to the scenario that matches your use case.
 
@@ -526,7 +526,7 @@ public MessageCryptoPolicy cryptoPolicy() {
 
 ## 9. WebSocket Cluster
 
-*Since V1.8.0.* Scale WebSocket across multiple nodes via Redis Pub/Sub. **Default is single-node mode** (`cluster.enable=false`) with zero overhead and behavior identical to 1.7.x. Cluster mode is **opt-in** and targets **≤ ~10 nodes with a dedicated, secured Redis**.
+*Since V1.8.0; reliability-hardened in V1.9.0.* Scale WebSocket across multiple nodes via Redis Pub/Sub. **Default is single-node mode** (`cluster.enable=false`) with zero overhead and behavior identical to 1.7.x. Cluster mode is **opt-in** and targets **≤ ~10 nodes with a dedicated, secured Redis**.
 
 ### Enable Cluster
 
@@ -768,7 +768,7 @@ the framework substitutes a value derived from CPU count at startup.
 | `websocket.write-buffer-high-water-mark` | `65536` | Per-channel write buffer high mark; above this a channel is non-writable |
 | `websocket.flush-consolidation-threshold` | `256` | `FlushConsolidationHandler` threshold; `0` or negative disables |
 
-### WebSocket Cluster — *since V1.8.0*
+### WebSocket Cluster — *since V1.8.0; reliability-hardened in V1.9.0*
 
 Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; requires the `netty-websocket-cluster-spring-boot-starter`.
 
@@ -787,6 +787,8 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 | `cluster.message-max-size-bytes` | `1048576` | Max serialized cluster message; larger is not published cross-node (`0` = unlimited) |
 | `cluster.on-redis-loss` | `degrade-to-local` | `degrade-to-local` (keep local sessions) or `close-all` |
 | `cluster.on-publish-failure` | `log` | `log` or `drop` on publish failure |
+| `cluster.redis-loss-grace-period-ms` | `5000` | *(since V1.9.0)* Grace window before node state-machine degrades on Redis loss. Broker `state()` still flips immediately. `0` = instant (V1.8.0 behavior). **This is the only intentional default-behavior change in 1.9.0.** |
+| `cluster.session-registry-write-rate` | `1000` | *(since V1.9.0)* Max registry write ops/s/node; token-bucket passes through under the rate (zero latency change); coalesces at limit. `0` = unlimited. Register ops are never dropped. |
 
 ---
 

@@ -55,7 +55,7 @@ A Spring Boot integration for Netty, providing HTTP MVC and WebSocket capabiliti
 </dependency>
 ```
 
-Available on Maven Central as `io.github.berrywang1996:*` (versions `1.4.0`, `1.6.2`, `1.7.0`, `1.8.0`). Earlier `com.github.berrywang1996:*` artifacts were only published to a private repository — migrate by changing the groupId in your `pom.xml`.
+Available on Maven Central as `io.github.berrywang1996:*` (versions `1.4.0`, `1.6.2`, `1.7.0`, `1.8.0`, `1.9.0`). Earlier `com.github.berrywang1996:*` artifacts were only published to a private repository — migrate by changing the groupId in your `pom.xml`.
 
 #### 3. Configure
 
@@ -134,7 +134,7 @@ Handler and WebSocket lifecycle code populates SLF4J **MDC** (`netty.requestId`,
 %d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} [%X{netty.requestId}] [%X{netty.sessionId}] - %msg%n
 ```
 
-### WebSocket Cluster *(v1.8.0)*
+### WebSocket Cluster *(v1.8.0 / reliability-hardened in v1.9.0)*
 
 Scale WebSocket across multiple nodes with Redis Pub/Sub. Default is single-node mode (zero overhead). Enable cluster with one config flag:
 
@@ -143,7 +143,7 @@ Scale WebSocket across multiple nodes with Redis Pub/Sub. Default is single-node
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-websocket-cluster-spring-boot-starter</artifactId>
-    <version>1.8.0</version>
+    <version>1.9.0</version>
 </dependency>
 ```
 
@@ -304,21 +304,22 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#11-configurati
 
 ### Current Status
 
-- **Current recommended version: `1.8.0`** (WebSocket cluster support via Redis Pub/Sub + 5-layer SPI architecture + 291 tests). Single-node mode is production-grade and unchanged from 1.7.x; cluster mode targets ≤~10 nodes with a dedicated, secured Redis — see [Cluster Design §Security](docs/cluster-design.md).
-- `1.7.0` delivered, across four work streams: Micrometer metrics expansion (connection/message/broadcast/latency distributions, per-URI & thread-pool & allocator gauges), SLF4J MDC structured logging, an Actuator `/actuator/health` indicator, optional WebSocket fragmented-message aggregation, and 6 audited legacy defect fixes — all preserved in 1.8.0 and backward compatible
-- Milestones P0 through P7 are all complete; performance (1.6.x), security/stability (1.6.2) and observability (1.7.0) hardening followed
-- Next: `1.8.0` Redis Pub/Sub clustering; later `2.0.0` Spring Boot 3.x / Jakarta migration + enterprise security
+- **Current recommended version: `1.9.0`** (cluster reliability hardening — 5 deferred items shipped + 2 new config knobs + 304 tests). Single-node mode is production-grade and identical to 1.7.x/1.8.0; cluster mode reliability significantly improved — see [Release Notes 1.9.0](docs/release-notes-1.9.0.md) and [Cluster Design §Security](docs/cluster-design.md).
+- `1.8.0` delivered WebSocket cluster support (Redis Pub/Sub + 5-layer SPI architecture + 291 tests) — all preserved in 1.9.0 and backward compatible.
+- Milestones P0 through P7 are all complete; performance (1.6.x), security/stability (1.6.2), observability (1.7.0), clustering (1.8.0), and cluster hardening (1.9.0) followed.
+- Next: `2.0.0` Spring Boot 3.x / Jakarta migration + enterprise security
 
 ### Documentation
 
 - [API Usage Guide](docs/api-guide.md) — Complete integration guide with code examples
 - [Netty Configuration](docs/netty-configuration.md) — HTTP / TLS / management endpoint reference
 - [WebSocket Configuration](docs/websocket-configuration.md) — WebSocket runtime, crypto, observability
-- [Release Notes - 1.8.0](docs/release-notes-1.8.0.md) — Current recommended version (cluster)
+- [Release Notes - 1.9.0](docs/release-notes-1.9.0.md) — Current recommended version (cluster reliability hardening)
+- [Release Notes - 1.8.0](docs/release-notes-1.8.0.md) — WebSocket cluster support
 - [Release Notes - 1.7.1](docs/release-notes-1.7.1.md)
 - [Release Notes - 1.7.0](docs/release-notes-1.7.0.md)
-- [Development Plan](docs/development-plan.md) — Roadmap (1.8.0 cluster, 2.0.0 Spring Boot 3.x)
-- [Cluster Design](docs/cluster-design.md) — Redis Pub/Sub cluster architecture, 1.8.0 scope vs roadmap, and the security/trust model
+- [Development Plan](docs/development-plan.md) — Roadmap (1.9.0 cluster hardening, 2.0.0 Spring Boot 3.x)
+- [Cluster Design](docs/cluster-design.md) — Redis Pub/Sub cluster architecture, 1.8.0/1.9.0 scope vs roadmap, and the security/trust model
 - [Release Checklist](docs/release-checklist.md) — Release process & gates
 - [Dependency Governance](docs/dependency-governance.md) — SBOM, vulnerability scanning
 - Older release notes: see `docs/release-notes-*.md`
@@ -394,7 +395,7 @@ Verified on `GraalVM JDK 17.0.11` + `Apache Maven 3.9.9`. CI workflow runs full 
 </dependency>
 ```
 
-Maven Central 上以 `io.github.berrywang1996:*` 提供（版本 `1.4.0`、`1.6.2`、`1.7.0`、`1.8.0`）。早期 `com.github.berrywang1996:*` 仅发布到私有仓库——迁移时只需把 `pom.xml` 里的 groupId 改成新的即可。
+Maven Central 上以 `io.github.berrywang1996:*` 提供（版本 `1.4.0`、`1.6.2`、`1.7.0`、`1.8.0`、`1.9.0`）。早期 `com.github.berrywang1996:*` 仅发布到私有仓库——迁移时只需把 `pom.xml` 里的 groupId 改成新的即可。
 
 #### 3. 配置
 
@@ -475,7 +476,7 @@ handler 与 WebSocket 生命周期会写入 SLF4J **MDC**（`netty.requestId`、
 %d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} [%X{netty.requestId}] [%X{netty.sessionId}] - %msg%n
 ```
 
-### WebSocket 集群 *(v1.8.0)*
+### WebSocket 集群 *(v1.8.0 引入 / v1.9.0 可靠性硬化)*
 
 通过 Redis Pub/Sub 实现跨节点广播和单播。默认单机模式零开销；一个配置开关即可启用集群：
 
@@ -484,7 +485,7 @@ handler 与 WebSocket 生命周期会写入 SLF4J **MDC**（`netty.requestId`、
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-websocket-cluster-spring-boot-starter</artifactId>
-    <version>1.8.0</version>
+    <version>1.9.0</version>
 </dependency>
 ```
 
@@ -642,21 +643,22 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 
 ### 当前阶段
 
-- **当前推荐版本：`1.8.0`**（WebSocket 集群支持：Redis Pub/Sub 跨节点广播/单播 + 5 层 SPI 可插拔架构 + 291 个测试全绿）。单机模式生产级、与 1.7.x 完全一致；集群模式面向 ≤~10 节点 + 专用加密 Redis——见 [集群方案设计 §安全模型](docs/cluster-design.md)。
-- `1.7.0` 按四刀交付：Micrometer 指标扩展（连接/消息/广播/延迟分布，分 URI、线程池、allocator 内存 Gauge）、SLF4J MDC 结构化日志、Actuator `/actuator/health` 健康检查、可选 WebSocket 分片消息聚合，以及 6 项经审计的遗留缺陷修复——这些能力在 `1.8.0` 中完整保留，全部向后兼容
-- P0 至 P7 全部里程碑已完成；其后依次推进性能（1.6.x）、安全稳定性（1.6.2）、可观测性（1.7.0）加固
-- 下一步：`1.8.0` Redis Pub/Sub 集群支持；之后 `2.0.0` Spring Boot 3.x / Jakarta 迁移 + 企业安全版本
+- **当前推荐版本：`1.9.0`**（集群可靠性硬化：5 项 1.8.0 推迟项全部落地 + 2 个新配置项 + 304 个测试全绿）。单机模式生产级、与 1.7.x/1.8.0 完全一致；集群模式运维可靠性大幅提升，适用边界不变（≤~10 节点 + 专用加密 Redis）——见 [1.9.0 发布说明](docs/release-notes-1.9.0.md) 与 [集群方案设计 §安全模型](docs/cluster-design.md)。
+- `1.8.0` 交付 WebSocket 集群支持（Redis Pub/Sub 跨节点广播/单播 + 5 层 SPI 可插拔架构 + 291 个测试全绿）——在 `1.9.0` 中完整保留，全部向后兼容。
+- P0 至 P7 全部里程碑已完成；其后依次推进性能（1.6.x）、安全稳定性（1.6.2）、可观测性（1.7.0）、集群水平扩展（1.8.0）、集群可靠性硬化（1.9.0）。
+- 下一步：`2.0.0` Spring Boot 3.x / Jakarta 迁移 + 企业安全版本
 
 ### 文档
 
 - [API 使用指南](docs/api-guide.md) — 完整接入指南，含代码示例
 - [Netty 配置说明](docs/netty-configuration.md) — HTTP / TLS / 管理端点参考
 - [WebSocket 配置说明](docs/websocket-configuration.md) — WebSocket 运行时、加密、可观测性
-- [1.8.0 发布说明](docs/release-notes-1.8.0.md) — 当前推荐版本（集群）
+- [1.9.0 发布说明](docs/release-notes-1.9.0.md) — 当前推荐版本（集群可靠性硬化）
+- [1.8.0 发布说明](docs/release-notes-1.8.0.md) — WebSocket 集群支持
 - [1.7.1 发布说明](docs/release-notes-1.7.1.md)
 - [1.7.0 发布说明](docs/release-notes-1.7.0.md)
-- [开发计划与阶段状态](docs/development-plan.md) — 路线图（1.8.0 集群、2.0.0 Spring Boot 3.x）
-- [集群方案设计](docs/cluster-design.md) — Redis Pub/Sub 集群架构、1.8.0 实现范围 vs 路线图、安全/信任模型
+- [开发计划与阶段状态](docs/development-plan.md) — 路线图（1.9.0 集群硬化、2.0.0 Spring Boot 3.x）
+- [集群方案设计](docs/cluster-design.md) — Redis Pub/Sub 集群架构、1.8.0/1.9.0 实现范围 vs 路线图、安全/信任模型
 - [版本发布检查清单](docs/release-checklist.md) — 发布流程与门槛
 - [依赖治理与供应链门禁](docs/dependency-governance.md) — SBOM、漏洞扫描
 - 历史发布说明：见 `docs/release-notes-*.md`
