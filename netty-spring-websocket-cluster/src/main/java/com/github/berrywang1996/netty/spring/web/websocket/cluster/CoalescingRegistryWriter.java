@@ -19,7 +19,6 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.SessionRegistry;
 import lombok.extern.slf4j.Slf4j;
 
-import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -73,6 +72,7 @@ public class CoalescingRegistryWriter {
 
     private final ConcurrentHashMap<String, Op> pending = new ConcurrentHashMap<>();
     private final Object bucketLock = new Object();
+    private final java.util.concurrent.atomic.AtomicBoolean backlogWarned = new java.util.concurrent.atomic.AtomicBoolean();
     private double tokens;
     private long lastRefillNanos = System.nanoTime();
 
@@ -108,7 +108,14 @@ public class CoalescingRegistryWriter {
     }
 
     public void register(String uri, String sessionId, String nodeId, Map<String, String> metadata) {
-        if (maxTokens <= 0 || tryAcquire()) {
+        if (maxTokens <= 0) {
+            doRegister(uri, sessionId, nodeId, metadata);
+            return;
+        }
+        // Per-session ordering: if an op is already queued for this session, this one must queue too
+        // (coalescing) — never let a pass-through op overtake a queued predecessor for the same key.
+        String key = uri + "|" + sessionId;
+        if (!pending.containsKey(key) && tryAcquire()) {
             doRegister(uri, sessionId, nodeId, metadata);
         } else {
             enqueue(new Op(OpType.REGISTER, uri, sessionId, nodeId, metadata));
@@ -116,24 +123,34 @@ public class CoalescingRegistryWriter {
     }
 
     public void deregister(String uri, String sessionId) {
-        if (maxTokens <= 0 || tryAcquire()) {
+        if (maxTokens <= 0) {
+            doDeregister(uri, sessionId);
+            return;
+        }
+        String key = uri + "|" + sessionId;
+        if (!pending.containsKey(key) && tryAcquire()) {
             doDeregister(uri, sessionId);
         } else {
             enqueue(new Op(OpType.DEREGISTER, uri, sessionId, null, null));
         }
     }
 
-    /** Drains the coalescing map up to the tokens available this tick. Exposed for tests/manual drain. */
-    public void flush() {
+    /** Drains the coalescing map up to the tokens available this tick. Package-private for tests. */
+    void flush() {
         try {
-            Iterator<Map.Entry<String, Op>> it = pending.entrySet().iterator();
-            while (it.hasNext()) {
+            for (Map.Entry<String, Op> entry : pending.entrySet()) {
                 if (!tryAcquire()) {
                     break; // out of tokens — the rest drain next tick
                 }
-                Op op = it.next().getValue();
-                it.remove();
-                apply(op);
+                Op op = entry.getValue();
+                // Conditional remove: only drain+apply if no newer op replaced this one since we read it
+                // (a concurrent enqueue for the same session must win — never drop the newer op).
+                if (pending.remove(entry.getKey(), op)) {
+                    apply(op);
+                }
+            }
+            if (pending.size() < BACKLOG_WARN_THRESHOLD) {
+                backlogWarned.set(false);
             }
         } catch (Exception e) {
             log.warn("Cluster registry flush failed", e);
@@ -145,16 +162,22 @@ public class CoalescingRegistryWriter {
         return pending.size();
     }
 
-    /** Stops the flusher (if any) and drains everything remaining, ignoring the rate, so nothing is lost. */
+    /** Stops the flusher (if any), waits for an in-flight flush to finish, then drains everything
+     *  remaining ignoring the rate, so nothing is lost. */
     public void shutdown() {
         if (flusher != null) {
             flusher.shutdown();
+            try {
+                flusher.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
         }
-        Iterator<Map.Entry<String, Op>> it = pending.entrySet().iterator();
-        while (it.hasNext()) {
-            Op op = it.next().getValue();
-            it.remove();
-            apply(op);
+        for (Map.Entry<String, Op> entry : pending.entrySet()) {
+            Op op = entry.getValue();
+            if (pending.remove(entry.getKey(), op)) {
+                apply(op);
+            }
         }
     }
 
@@ -162,7 +185,9 @@ public class CoalescingRegistryWriter {
 
     private void enqueue(Op op) {
         pending.put(op.uri + "|" + op.sessionId, op); // coalesce: latest op per session wins
-        if (pending.size() == BACKLOG_WARN_THRESHOLD) {
+        // Warn once per backlog episode (reset by flush() when the backlog drains below the threshold);
+        // size() is approximate under concurrency, so >= + a CAS latch is robust where == would miss.
+        if (pending.size() >= BACKLOG_WARN_THRESHOLD && backlogWarned.compareAndSet(false, true)) {
             log.warn("Cluster registry write backlog reached {} (reconnect storm?) — writes are being "
                     + "rate-limited to protect Redis; no registration is dropped", BACKLOG_WARN_THRESHOLD);
         }

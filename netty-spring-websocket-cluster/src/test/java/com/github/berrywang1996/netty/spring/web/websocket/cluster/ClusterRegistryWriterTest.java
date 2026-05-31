@@ -66,4 +66,21 @@ class ClusterRegistryWriterTest {
         assertEquals(1, reg.registerCount.get(), "only the warmup register hit the registry immediately");
         assertEquals(1, reg.deregisterCount.get(), "the coalesced op for s1 is the final deregister");
     }
+
+    @Test
+    void queuedRegisterThenDeregisterDoesNotLeaveStaleRegistration() throws Exception {
+        RecordingRegistry reg = new RecordingRegistry();
+        CoalescingRegistryWriter w = new CoalescingRegistryWriter(reg, 1, 50, "test"); // rate=1 op/s
+        w.register("/ws/x", "warmup", "n", Collections.emptyMap()); // consumes the single initial token
+        w.register("/ws/x", "s1", "n", Collections.emptyMap());     // no token → queued REGISTER for s1
+        assertEquals(1, w.pendingCount());
+        Thread.sleep(1100);                                          // a token refills (rate=1 → 1/sec)
+        // s1 already has a queued op → deregister MUST coalesce into the queue, not pass through ahead of it.
+        w.deregister("/ws/x", "s1");
+        assertEquals(1, w.pendingCount(), "deregister must coalesce with the pending register, not overtake it");
+        w.shutdown();
+        // Net intent for s1 is deregister → it must NOT end up registered. Only the warmup registered.
+        assertEquals(1, reg.registerCount.get(), "s1's queued register must have been coalesced away (no stale registration)");
+        assertEquals(1, reg.deregisterCount.get(), "s1's final coalesced op is the deregister");
+    }
 }
