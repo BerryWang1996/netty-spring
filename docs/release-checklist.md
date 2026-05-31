@@ -93,11 +93,11 @@
 
 ### `1.8.0`（已发布 tag `v1.8.0`）
 
-定位：WebSocket 集群支持（Redis Pub/Sub + 5 ��� SPI），向后兼容，默认单机模式行为与 `1.7.x` 完全一致。
+定位：WebSocket 集群支持（Redis Pub/Sub + 5 层 SPI），向后兼容，默认单机模式行为与 `1.7.x` 完全一致。
 
 完成确认项：
 
-- 全量 `mvn test` ���过（**291 个测试 / 11 个模块**）；6 个 SPI 隔离 + 9 个配置/行为 + 9 个 Redis 集成（含入站大小上限安全测试）+ 3 个 auto-config 装配测试（ApplicationContextRunner）。`PerformanceBenchmark`（4 方法）是手动 harness，不计入套件。
+- 全量 `mvn test` 通过（**291 个测试 / 11 个模块**）；6 个 SPI 隔离 + 9 个配置/行为 + 9 个 Redis 集成（含入站大小上限安全测试）+ 3 个 auto-config 装配测试（ApplicationContextRunner）。`PerformanceBenchmark`（4 方法）是手动 harness，不计入套件。
 - **2 个新模块**：`netty-spring-websocket-cluster`、`netty-websocket-cluster-spring-boot-starter`。
 - **5 层可插拔 SPI**：`ClusterBroker` / `SessionRegistry` / `EnvelopeCodec` / `MessagePayloadCodec` / `ClusterNodeHeartbeat`，全部 `@ConditionalOnMissingBean` 可覆盖；集群模块**零 Jackson 依赖**（序列化用户自选）。
 - **配置诚实化**：`ClusterProperties` 只暴露有实际效果的配置项；设计文档中尚未实现的特性（多 pub/sub 连接、sharded pub/sub、可靠 streams、写 pipeline、限速、宽限期、Redis Cluster 客户端）**不暴露开关**，明确标注推迟到 `1.9.x`。
