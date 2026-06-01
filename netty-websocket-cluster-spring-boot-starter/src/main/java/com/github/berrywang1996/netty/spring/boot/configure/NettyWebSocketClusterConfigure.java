@@ -32,7 +32,9 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisCl
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterReaper;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisPubSubBroker;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisSessionRegistry;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisStreamsReliableBroker;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ReliableBroker;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.SessionRegistry;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSender;
 import io.lettuce.core.RedisClient;
@@ -176,6 +178,18 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean(destroyMethod = "shutdown")
+    @ConditionalOnMissingBean(ReliableBroker.class)
+    @ConditionalOnProperty(prefix = "server.netty.websocket.cluster.reliable", name = "enable", havingValue = "true")
+    public ReliableBroker reliableBroker(RedisClient redisClient, EnvelopeCodec envelopeCodec,
+                                         ClusterProperties properties) {
+        ClusterProperties.Reliable r = properties.getReliable();
+        log.info("Reliable broadcast ENABLED (Redis Streams; maxlen={}, block={}ms)",
+                r.getStreamMaxLen(), r.getPollBlockMs());
+        return new RedisStreamsReliableBroker(redisClient, envelopeCodec,
+                r.getStreamMaxLen(), r.getPollBlockMs(), r.getPollCount(), r.getDedupWindow());
+    }
+
+    @Bean(destroyMethod = "shutdown")
     @ConditionalOnMissingBean(SessionRegistry.class)
     public RedisSessionRegistry sessionRegistry(
             @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
@@ -231,7 +245,8 @@ public class NettyWebSocketClusterConfigure {
             SessionRegistry sessionRegistry,
             ClusterNodeManager nodeManager,
             ClusterProperties properties,
-            MessagePayloadCodec messagePayloadCodec) {
+            MessagePayloadCodec messagePayloadCodec,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) ReliableBroker reliableBroker) {
         ClusterMessageSender sender = new ClusterMessageSender(
                 localSender, broker, sessionRegistry, nodeManager,
                 properties.getRegistryReadCacheTtlMs(), messagePayloadCodec);
@@ -239,9 +254,13 @@ public class NettyWebSocketClusterConfigure {
         sender.setOnPublishFailure(properties.getOnPublishFailure());
         sender.setOnRedisLoss(properties.getOnRedisLoss());
         sender.setNodeLookupTimeoutMs(properties.getCommandTimeoutMs());
+        if (reliableBroker != null) {
+            sender.setReliableBroker(reliableBroker);
+        }
         sender.start();
-        log.info("ClusterMessageSender started — cluster mode is ACTIVE (onRedisLoss={}, onPublishFailure={}, maxMsgBytes={})",
-                properties.getOnRedisLoss(), properties.getOnPublishFailure(), properties.getMessageMaxSizeBytes());
+        log.info("ClusterMessageSender started — cluster mode is ACTIVE (onRedisLoss={}, onPublishFailure={}, maxMsgBytes={}, reliable={})",
+                properties.getOnRedisLoss(), properties.getOnPublishFailure(), properties.getMessageMaxSizeBytes(),
+                reliableBroker != null);
         return sender;
     }
 

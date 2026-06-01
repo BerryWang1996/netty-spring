@@ -613,6 +613,11 @@ public class ClusterMessageSender implements MessageSender {
     /** Invalidates the node lookup cache for a specific node (called on NODE_LEFT). */
     public void invalidateCacheForNode(String nodeId) {
         nodeCache.entrySet().removeIf(e -> nodeId.equals(e.getValue().nodeId));
+        ReliableBroker rb = reliableBroker;
+        if (rb != null) {
+            try { rb.destroyConsumerGroupsForNode(nodeId); }
+            catch (Exception e) { log.debug("reliable group cleanup for dead node {} failed", nodeId, e); }
+        }
     }
 
     private String lookupNodeCached(String uri, String sessionId) {

@@ -102,8 +102,28 @@ class NettyWebSocketClusterConfigureTest {
                             com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterReaper.class);
                     assertThat(context).hasSingleBean(
                             com.github.berrywang1996.netty.spring.web.websocket.cluster.CoalescingRegistryWriter.class);
+                    // reliable broadcast is OFF by default → no ReliableBroker bean
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ReliableBroker.class);
                 });
         // Context close here exercises the destroyMethod lifecycle (B1) without error.
+    }
+
+    @Test
+    void reliableEnabled_createsReliableBrokerBean() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-reliable-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.reliable.enable=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ReliableBroker.class);
+                    assertThat(context.getBean(MessageSender.class)).isInstanceOf(ClusterMessageSender.class);
+                });
     }
 
     @Configuration
