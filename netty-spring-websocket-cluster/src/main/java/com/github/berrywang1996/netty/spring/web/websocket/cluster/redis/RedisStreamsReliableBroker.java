@@ -105,6 +105,12 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
         String streamKey = STREAM_PREFIX + uri;
         String group = GROUP_PREFIX + nodeId;
 
+        // Register this URI in the global streams set so destroyConsumerGroupsForNode can find it even if
+        // this node is subscriber-only and never publishes. Use sync so the registration is durable
+        // before the consumer group is created (ordering guarantee for destroyConsumerGroupsForNode).
+        try { commandConnection.sync().sadd(STREAMS_SET, uri); }
+        catch (Exception ex) { log.debug("SADD of {} to reliable registry (subscribe) failed", uri, ex); }
+
         try {
             commandConnection.sync().xgroupCreate(
                     XReadArgs.StreamOffset.from(streamKey, "$"), group, XGroupCreateArgs.Builder.mkstream());
