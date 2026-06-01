@@ -139,11 +139,13 @@ server:
 
 ## 测试覆盖
 
-- **304 个测试，11 个模块，全部通过**（`mvn test`，Redis 7.4.9 live on localhost:16379）。
+- **311 个测试，11 个模块，全部通过**（`mvn test`，Redis 7.4.9 live on localhost:16379）。
 - 1.9.0 新增测试：
   - `ClusterNodeManagerReliabilityTest` — 线程隔离调度器验证、宽限期抑制逻辑、双调度器并发压测
   - `ClusterRegistryWriterTest` — token-bucket 直通路径、超速合并、零丢失断言、并发注册风暴模拟
   - 3 个 `RedisIntegrationTest` 新增用例：原子 Lua deregister 竞态验证、`ClusterReaper` 选主去重端到端、宽限期恢复路径
+  - （RC2）`ClusterReliableSenderTest` — reliableBroadcast 本地优先 fan-out、disabled 抛异常、origin 自投递抑制
+  - （RC2）`ReliableBroadcastIntegrationTest` — 真实 Redis：发布/消费、断线重连回放（replay-on-resync，5/5）、死节点消费者组清理
 
 ## 升级指南
 
