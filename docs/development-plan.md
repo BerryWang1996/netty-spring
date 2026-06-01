@@ -4,19 +4,20 @@
 
 ## 当前结论
 
-- **最新稳定版：`1.8.0`**（Maven Central）。**`1.9.0` 开发中（`1.9.0-RC1`）**：集群可靠性硬化 5 项全部落地 + 2 个新配置项 + 304 测试全绿；可靠投递（Redis Streams）为本周期下一项，最终 1.9.0 待整周期完成。单机模式与 1.7.x/1.8.0 完全一致，详见 `docs/release-notes-1.9.0.md`。
+- **最新稳定版：`1.8.0`**（Maven Central）。**`1.9.0` 开发中（`1.9.0-RC2`）**：集群可靠性硬化 5 项全部落地 + 2 个新配置项（RC1），**RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in，`reliable.*` 5 个配置项）**；最终 1.9.0 待整周期完成。单机模式与 1.7.x/1.8.0 完全一致，详见 `docs/release-notes-1.9.0.md`。
 - 上一版本：`1.8.0`（WebSocket 集群支持：Redis Pub/Sub 跨节点 + 5 层 SPI + 291 测试。详见 `docs/release-notes-1.8.0.md`）。
 - `P0`–`P7` 全部里程碑已完成；项目历经"功能建设期 → 质量深化 → 产品化 → 性能优化 → 安全稳定性加固 → 可观测性增强 → 集群水平扩展 → 集群可靠性硬化"八个阶段。
-- 下一步（1.9.0 周期内）：可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）→ 最终 1.9.0。之后：**`2.0.0`** Spring Boot 3.x 迁移基线，**`2.1.0`** 企业安全准入。集群扩展后续项（NATS / 完整指标 / HMAC 等）见下方 backlog。
+- 下一步：最终 1.9.0（RC2 已含可靠投递，待全量测试确认）。之后：**`2.0.0`** Spring Boot 3.x 迁移基线，**`2.1.0`** 企业安全准入。集群扩展后续项（NATS / 完整指标 / HMAC 等）见下方 backlog。
 
 ## 当前发版判断
 
-`1.9.0-RC1`（开发中）在 `1.8.0` 之上完成 **集群可靠性硬化**（向后兼容，默认单机模式行为与 `1.7.x`/`1.8.0` 完全一致）；本周期后续将补充可靠投递（Redis Streams），最终 1.9.0 待整周期完成：
+`1.9.0-RC2`（开发中）在 `1.8.0` 之上完成 **集群可靠性硬化**（RC1）+ **可靠投递**（RC2）（向后兼容，默认单机模式行为与 `1.7.x`/`1.8.0` 完全一致）；最终 1.9.0 待全量测试完成：
 
 - **5 项硬化全部落地**（原 1.8.0 推迟项）：Redis 失联宽限期（`redis-loss-grace-period-ms`）、心跳/对账线程隔离 + 批量 EXISTS、原子 Lua deregister、对账选主去重（`ClusterReaper` SPI）、registry 写合并限速（`session-registry-write-rate`，`CoalescingRegistryWriter`）。
-- **2 个新配置项**：`redis-loss-grace-period-ms`（默认 5000，即时降级设 0）、`session-registry-write-rate`（默认 1000 ops/s/node，0 = 不限速）。
+- **RC2 新增：可靠投递（Redis Streams）**：`clusterMessageSender.reliableBroadcast(uri, message)`，at-least-once，opt-in（`reliable.enable=false` 默认关闭）；per-URI Stream + 每节点消费者组 + replay-on-resync + `MAXLEN ~` 有界保留 + 进程内 PEL 去重；`reliable.*` 5 个配置项（`enable`、`stream-max-len`、`poll-block-ms`、`poll-count`、`dedup-window`）。
+- **2 个 RC1 配置项**：`redis-loss-grace-period-ms`（默认 5000，即时降级设 0）、`session-registry-write-rate`（默认 1000 ops/s/node，0 = 不限速）。
 - **唯一默认行为变更**：`redis-loss-grace-period-ms` 默认 5s；设 `=0` 恢复 1.8.0 即时降级时序。
-- 304 个测试（11 模块全绿），含 `ClusterNodeManagerReliabilityTest`、`ClusterRegistryWriterTest`、+3 个 `RedisIntegrationTest`。
+- 304+ 个测试（11 模块），含 `ClusterNodeManagerReliabilityTest`、`ClusterRegistryWriterTest`、可靠投递集成测试（replay-on-resync）。
 - 详见 `docs/release-notes-1.9.0.md`。
 
 `1.8.0`（上一版本）在 `1.7.1` 之上新增 **WebSocket 集群支持**（向后兼容，默认单机模式行为与 `1.7.x` 完全一致）：
@@ -27,7 +28,7 @@
 - **核心能力**：跨节点广播/单播、远程关闭、origin 自投递抑制、节点生命周期状态机（JOINING→ACTIVE→DEGRADED→RESYNC→DRAINING→LEFT）、心跳+周期对账、单播热路径缓存、集群运行时统计、`onRedisLoss`（degrade-to-local 默认 / close-all）、`onPublishFailure`、消息大小上限、重连抖动。
 - 291 个测试（含 6 SPI 隔离 + 9 配置/行为 + 9 Redis 集成 + 3 auto-config 装配；另有 4 个性能基准为手动 harness，不计入套件），11 模块全绿。详见 `docs/release-notes-1.8.0.md`。
 
-> **1.8.0 实现范围 vs 设计目标**：`docs/cluster-design.md` 描述的是**完整目标架构**，其中相当一部分能力（多 pub/sub 连接并行解码、sharded pub/sub、Redis Streams 可靠投递、写 pipeline 批量、registry 限速、Redis 失联宽限期、Redis Cluster 客户端一等支持、W3C TraceContext 跨节点传播、多节点 demo + Testcontainers）**推迟到 `1.9.x`**。1.8.0 只暴露**有实际效果**的配置项——不暴露还没实现的特性的开关（"会撒谎的配置比没有配置更糟"）。下方"四刀"为原始设计全集，标注 ✅ 已实现 / ⏳ 推迟。
+> **1.8.0 实现范围 vs 设计目标**：`docs/cluster-design.md` 描述的是**完整目标架构**，其中相当一部分能力（多 pub/sub 连接并行解码、sharded pub/sub、写 pipeline 批量、Redis Cluster 客户端一等支持、W3C TraceContext 跨节点传播、多节点 demo + Testcontainers）**推迟到 `1.9.x+`**。registry 限速 + Redis 失联宽限期已在 1.9.0 RC1 落地；Redis Streams 可靠投递已在 1.9.0 RC2 落地。1.8.0 只暴露**有实际效果**的配置项——不暴露还没实现的特性的开关（"会撒谎的配置比没有配置更糟"）。下方"四刀"为原始设计全集，标注 ✅ 已实现 / ⏳ 推迟。
 
 `1.7.1`（上一版本）在 `1.7.0` 之上做了 4 项审计驱动的安全/正确性修复（CORS 通配符+credentials、`@MessageMapping(ON_CLOSE)` 生命周期、CompressorHandler 解析、AES-GCM IV 校验）并 pin logback 1.2.13 修复 CVE-2023-6378，详见 `docs/release-notes-1.7.1.md`。
 
@@ -68,7 +69,7 @@
 - ⏳ **（推迟 1.9.x）sharded pub/sub（仅 cluster 模式）**：经典 pub/sub 在所有模式可用，sharded（`SSUBSCRIBE`/`SPUBLISH`，须 Lettuce ≥6.5.5）作为 cluster 模式优化推迟。
 - ✅ **单播热路径缓存**：`sessionId→nodeId` 本地短 TTL 缓存（`registry-read-cache-ttl-ms` 默认 5000）+ NODE_LEFT 失效；陈旧/错误时移除并回退一次实时 HGET。`ClusterRuntimeStats.cacheHitRatio`。
 - ⏳ **（推迟 1.9.x）广播频道基数边界 / `max-subscribed-channels`**：本基线仅覆盖 `@MessageMapping` URI（典型 10–100 条，订阅集在启动期即固定，不会无界增长）；房间/主题级 fan-out + 频道硬上限推迟到 `1.9.x` 的 `ClusterRoomRegistry`。
-- ⏳ **（推迟 1.9.x）可靠投递路径（offset/epoch + Redis Streams）**：1.8.0 仅 at-most-once（Pub/Sub fire-and-forget），envelope 已带 `version` 字段为未来格式演进留口；`reliableBroadcast(...)` 与 Streams 生命周期推迟。
+- ✅ **（1.9.0 RC2 落地）可靠投递（Redis Streams `reliableBroadcast`）**：at-least-once opt-in；per-URI Stream + 每节点消费者组 + replay-on-resync + `MAXLEN ~` 有界保留。完整生命周期扩展（重平衡、死信队列）推迟到后续版本。
 - ✅ **顺序契约**：单 publisher × 单 channel 保序；跨 publisher 不保序；本地 fan-out 可能先于远端（Javadoc 说明）。
 - ⏳ **（推迟 1.9.x）写放大控制 / 写 pipeline 批量**：1.8.0 registry 写为单条 async（Lettuce 连接层已自动 pipeline）；显式 `publish-batch-size`/lazy registry 推迟。
 - ⏳ **（推迟 1.9.x）W3C TraceContext 跨节点传播**：envelope 已预留 `traceparent` 字段，但订阅侧 MDC/Observation Scope 恢复推迟。
@@ -113,7 +114,6 @@
 以下项在 1.9.0 中**仍未实现**，推迟到后续版本：
 
 - **`NatsBroker` adapter（规模化中间件档位，ADR-001）**：在 `ClusterBroker` SPI 下新增 NATS 实现，兴趣路由消除 Redis Pub/Sub 的 N× 扇出放大；Redis 实现保留服务小集群。触发条件：有用户撞到 ≤~10 节点活跃广播天花板。
-- **Redis Streams 可靠投递**（`reliableBroadcast` / at-least-once，offset+epoch 模型）：envelope 已留 `version` 字段。
 - **完整 Micrometer 指标集**（`netty.cluster.*` meter-binder 时序）。
 - **HMAC envelope 认证**：消除 `originNodeId` 伪造与未授权 `CLOSE`/注入的安全根因。
 - **多 pub/sub 连接并行解码 / sharded pub/sub**：规模化档位优化。
@@ -123,7 +123,7 @@
 - 直接 node→node 单播（Slack 模式 mesh 第一步，把 Redis 移出单播热路径）。
 - 入站背压 / 速率限制（per-session token bucket + `netty.websocket.inbound.dropped` 指标）。
 - 房间 / 主题级集群 fan-out（`ClusterRoomRegistry` 含分片频道）。
-- Redis Streams 完整生命周期：消费者重平衡、死信队列、离线消息 API。
+- Redis Streams 完整生命周期扩展：消费者重平衡、死信队列、离线消息 API（基础 at-least-once 已在 1.9.0 落地）。
 - 完整 OpenTelemetry instrumentation（在 TraceContext 传播落地之上扩展）。
 
 ## `2.x` 路线说明（Spring Boot 3.x 与企业安全分离）
@@ -210,8 +210,8 @@
 | `1.7.0` | 可观测性增强 + 深度修复 + WebSocket 分片支持 | 历史版本 |
 | `1.7.1` | `1.7.0` 之上 4 项审计修复 + 依赖安全 | 上一版本 |
 | `1.8.0` | WebSocket 集群支持（Redis Pub/Sub + 5 层 SPI） | 上一版本 |
-| `1.9.0` | **集群可靠性硬化（RC1）+ 可靠投递（Redis Streams，开发中）** | **开发中（RC）** |
-| `1.9.x+` | 集群扩展项（NATS broker、可靠投递、完整指标、HMAC auth、多节点 demo、Redis Cluster 客户端） | 规划中 |
+| `1.9.0` | **集群可靠性硬化（RC1）+ 可靠投递 Redis Streams（RC2）** | **开发中（RC2）** |
+| `1.9.x+` | 集群扩展项（NATS broker、完整指标、HMAC auth、多节点 demo、Redis Cluster 客户端） | 规划中 |
 | `2.0.0` | Spring Boot 3.x 迁移基线 | 远期 |
 | `2.1.0` | 企业安全准入 | 远期（在 2.0.0 之后） |
 

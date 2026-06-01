@@ -1,15 +1,16 @@
 # Cluster Design — Redis 集群方案（设计全集 + 1.8.0 实现范围）
 
-> **本文档描述的是完整目标架构（设计全集），不是单一版本的实现清单。** `1.8.0` 实现了其中一个子集；`1.9.0` 完成了 5 项可靠性硬化项；其余能力推迟到后续版本。下方"## 实现范围"表是实现与设计的权威对照——阅读本文其余章节时，请以该表为准判断某项是否已落地。
+> **本文档描述的是完整目标架构（设计全集），不是单一版本的实现清单。** `1.8.0` 实现了其中一个子集；`1.9.0` RC1 完成了 5 项可靠性硬化项，RC2 新增了 Redis Streams 可靠投递（`reliableBroadcast`）；其余能力推迟到后续版本。下方"## 实现范围"表是实现与设计的权威对照——阅读本文其余章节时，请以该表为准判断某项是否已落地。
 > 落地进度与推迟项跟踪：`docs/development-plan.md`。
 
 ## 实现范围 vs 设计目标（1.8.0 / 1.9.0 已落地）
 
 > 原则：**只暴露有实际效果的配置项**。本文档其余章节描述的 `pubsub-connections`、
-> `sharded-pubsub`、`publish-batch-size`、`reliable-stream-max-len`、`max-subscribed-channels`、
+> `sharded-pubsub`、`publish-batch-size`、`max-subscribed-channels`、
 > `subscription-hold-duration`、`redis.mode` 等配置项**当前在 `ClusterProperties` 中不存在**
 > （其特性尚未实现，不提供会撒谎的开关），待对应特性落地时再引入。
-> `redis-loss-grace-period-ms` 和 `session-registry-write-rate` 已在 **1.9.0** 落地（见下表）。
+> `redis-loss-grace-period-ms` 和 `session-registry-write-rate` 已在 **1.9.0 RC1** 落地；
+> `reliable.*` 5 个配置项已在 **1.9.0 RC2** 落地（见下表）。
 
 | 能力 | 1.8.0 | 说明 |
 | --- | :---: | --- |
@@ -35,7 +36,7 @@
 | 多 pub/sub 连接并行解码（`pubsub-connections`） | ⏳ 未来版本 | 实测吞吐远低于单连接天花板，过早优化 |
 | sharded pub/sub（`SSUBSCRIBE`/`SPUBLISH`） | ⏳ 未来版本 | 经典 pub/sub 已覆盖所有模式 |
 | Redis Cluster 客户端一等支持（`RedisClusterClient`） | ⏳ 未来版本 | 需不同客户端类型；用户自备 bean |
-| 可靠投递（offset/epoch + Redis Streams、`reliable-stream-max-len`） | ⏳ 未来版本 | envelope 已留 `version` 字段 |
+| **可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）** | ✅ 1.9.0 RC2 | 详见下方设计注记；`reliable.*` 5 个配置项；默认关闭 |
 | 写 pipeline 批量（`publish-batch-size` / `publish-flush-interval`） | ⏳ 未来版本 | 当前单条 async（Lettuce 连接层自动 pipeline） |
 | 频道基数硬上限 / 订阅 hold（`max-subscribed-channels` / `subscription-hold-duration`） | ⏳ 未来版本 | 订阅集由 `@MessageMapping` URI 固定，不会无界增长 |
 | Actuator 集群健康（`ClusterHealthIndicator`，节点/broker 状态 + 运行时计数） | ✅ | `/actuator/health` 下 `nettyCluster`；actuator 在 classpath 时启用 |
@@ -263,7 +264,7 @@ netty:broadcast:{uri}  → 每个 @MessageMapping URI 一个 Pub/Sub 频道
 | `getClusterSessionIds(uri)` | ✅ 1.8.0 — 全集群 | `CompletionStage<Set<String>>` |
 | `isSessionAliveCluster(uri, ids…)` | ✅ 1.8.0 — 全集群 | `CompletionStage<Boolean>` |
 | `closeSessionCluster(uri, sessionId)`（等目标节点 ACK） | ⏳ 1.9.x（1.8.0 用上面 fire-and-forget 的 `closeSession`） | `CompletionStage<Boolean>` |
-| `reliableBroadcast(uri, msg)` / `broadcast(uri, msg, DeliveryHint.atLeastOnce())` | ⏳ 1.9.x（Streams + offset/epoch，1.8.0 **不存在**此方法） | 显式 at-least-once |
+| `reliableBroadcast(uri, msg)` | ✅ 1.9.0 RC2（Streams，opt-in `reliable.enable=true`） | At-least-once 广播，保留窗口内。`reliable.enable=false` 时抛 `IllegalStateException`。 |
 
 控制器代码：
 
@@ -278,7 +279,8 @@ public class ChatController {
         messageSender.broadcastJson("/ws/chat", response);
         // 本地直发 / 跨节点路由（送不到的 session 会抛 MessageSessionClosedException）
         messageSender.sendJsonToSession("/ws/chat", pm, targetSessionId);
-        // 需要 at-least-once（重放）的可靠广播是 1.9.x 的 reliableBroadcast(...)，1.8.0 暂无
+        // 需要 at-least-once（重放）的可靠广播：启用 reliable.enable=true 后调用 reliableBroadcast(...)
+        // clusterMessageSender.reliableBroadcast("/ws/chat", response);
     }
 }
 ```
@@ -318,7 +320,7 @@ server:
 **设计全集中尚未实现的键（仍在路线图，当前设置无效）：**
 `redis.mode`、`redis.sharded-pubsub`、`pubsub-connections`、`publish-batch-size`、
 `publish-flush-interval-ms`、`max-subscribed-channels`、`subscription-hold-duration-seconds`、
-`reliable-stream-max-len`、`compression`、`unicast-buffer-size`。详见本文档顶部"实现范围"表。
+`compression`、`unicast-buffer-size`。详见本文档顶部"实现范围"表。
 
 ### 命名空间一致性
 
@@ -459,6 +461,7 @@ netty-spring/
 - ✅ **`deregister` 原子性**：改为 Lua `EVAL`（HGET→DEL→SREM 单事务），消除并发竞态理论路径。
 - ✅ **reconciliation 去重 / 选主**：`ClusterReaper` SPI，`RedisClusterReaper` 用 `SET NX` 认领清理权，死节点只被一个节点清理。
 - ✅ **registry 限速**（`session-registry-write-rate`）：token-bucket `CoalescingRegistryWriter`，防注册风暴；register 永不丢弃。
+- ✅ **可靠投递（Redis Streams `reliableBroadcast`）**（RC2）：per-URI Redis Stream `netty:cluster:rstream:{uri}`；每节点一个消费者组（`g:{nodeId}`）；断线重连自动 replay-on-resync；`MAXLEN ~` 有界保留；进程内 PEL 去重；origin 自投递抑制；死节点消费者组随 `ClusterReaper` 清理。详见 §3 可靠投递设计注记。
 
 **⏳ 仍推迟到后续版本的项：**
 
@@ -467,9 +470,20 @@ netty-spring/
 - **多 pub/sub 连接并行解码 / sharded pub/sub / 写 pipeline 批量**：规模化档位优化，见实现范围表。
 - **Redis Cluster 客户端一等支持**：需要 `RedisClusterClient`（不同客户端类型）。
 - **NATS broker**（ADR-001 规模化档位）：`NatsBroker` SPI 实现，消除 N× 扇出放大。
-- **可靠投递（Redis Streams + offset/epoch）**：`reliableBroadcast` at-least-once 路径。
 - **W3C TraceContext 跨节点传播**：envelope 已预留 `traceparent` 字段。
 - **多节点 demo + Testcontainers**。
+
+### 可靠投递设计注记（1.9.0 RC2）
+
+`reliableBroadcast(uri, message)` 提供 at-least-once 广播，以 Redis Streams 为存储原语。关键设计点：
+
+- **每 URI 一条 Stream**（`netty:cluster:rstream:{uri}`），`MAXLEN ~` 近似裁剪（`stream-max-len`，默认 10 000 条）。
+- **每节点一个消费者组**（`g:{nodeId}`）：节点在线时持续推进游标；节点下线时游标冻结；重连后 `XREADGROUP >` 从上次位置续读，无需应用层介入——即 replay-on-resync。
+- **专用阻塞 Lettuce 连接**：消费循环与 Pub/Sub 连接、命令连接完全隔离，不抢占 event loop。
+- **进程内 PEL 去重**（`dedup-window` 滑动窗口，默认 1 024）：覆盖跨重连的重复条目，不覆盖跨进程崩溃重复（调用方负责幂等）。
+- **Origin 自投递抑制**：消费侧比对 `originNodeId`，本节点发布的条目不重复 fan-out。
+- **保留窗口有界缺口**：节点离线时间超过 `stream-max-len` 条目对应的时间窗口，被 `MAXLEN ~` 裁剪的条目不可回放（bounded gap）。这是 at-least-once 在有界保留下的固有契约，不同于无限重放语义。
+- **默认关闭**（`reliable.enable=false`）：无额外连接/线程，`reliableBroadcast()` 抛 `IllegalStateException`。启用后仅影响 `reliableBroadcast()` 调用路径；现有 `topicMessage()`（Pub/Sub）完全不变。
 
 ## 技术参考
 

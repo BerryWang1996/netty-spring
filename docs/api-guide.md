@@ -564,7 +564,59 @@ public void onMessage(String text, MessageSession session) {
 | Cross-node broadcast | **At-most-once** — Redis Pub/Sub is fire-and-forget; a node offline at publish time misses the message (no replay). Industry-standard default (same as Socket.IO Redis adapter / Spring STOMP relay) |
 | Cross-node unicast | Undeliverable sessions are reported to the caller via `MessageSessionClosedException` |
 
-An at-least-once replay path (`reliableBroadcast`, Redis Streams + offset/epoch) is roadmap for 1.9.x; it does **not** exist in 1.8.0.
+For at-least-once cross-node broadcast, use `reliableBroadcast` (Redis Streams, added in 1.9.0-RC2) — see [§9.1 Reliable Broadcast](#91-reliable-broadcast-at-least-once) below.
+
+### 9.1 Reliable Broadcast (at-least-once)
+
+*Since V1.9.0-RC2.* An opt-in, at-least-once cross-node broadcast backed by Redis Streams. Existing `broadcastText`/`broadcastJson` (Pub/Sub, at-most-once) are **unchanged**.
+
+#### Enable
+
+```yaml
+server:
+  netty:
+    websocket:
+      cluster:
+        enable: true
+        reliable:
+          enable: true          # default false — gated off until explicitly opted in
+```
+
+When `reliable.enable=false` (the default), no consumer threads or extra Redis connections are created, and calling `reliableBroadcast()` throws `IllegalStateException`.
+
+#### Usage
+
+```java
+// Cast MessageSender to ClusterMessageSender, or inject it directly
+clusterMessageSender.reliableBroadcast("/ws/chat", message);
+```
+
+The call performs an `XADD` to `netty:cluster:rstream:{uri}` and returns after the entry is written. Each live node consumes from its own consumer group (`g:{nodeId}`) via a dedicated blocking Lettuce connection.
+
+#### How replay-on-resync works
+
+A node that was offline when messages were published has its consumer-group cursor frozen at the last-consumed position. On reconnect, `XREADGROUP >` returns the backlog in order — the node processes all missed messages without any application-level intervention.
+
+#### Delivery contract (read before enabling)
+
+| Property | Detail |
+| --- | --- |
+| Guarantee | **At-least-once within the retention window** |
+| Retention window | `stream-max-len` entries (default 10 000) per URI. A node offline longer than this window will miss trimmed entries — a bounded gap, not silent data loss. |
+| Durability | Depends on your Redis persistence (AOF/RDB). Redis restart without persistence loses stream data. |
+| Duplicates | In-process PEL dedup (`dedup-window`) handles replay duplicates within a process lifetime. Cross-crash duplicates are possible — **application handlers should be idempotent**. |
+| Publish-time Redis | `XADD` requires Redis to be reachable. Failure triggers the existing `on-publish-failure` policy (`log`/`drop`) — never silent. |
+| Latency | Slightly above Pub/Sub (consumer poll delay). This is why the feature is opt-in. |
+
+#### Configuration reference (`server.netty.websocket.cluster.reliable.*`)
+
+| Property | Default | Description |
+| --- | --- | --- |
+| `enable` | `false` | Master switch. `false` = zero overhead; `reliableBroadcast()` throws `IllegalStateException`. |
+| `stream-max-len` | `10000` | Max entries per URI stream (`MAXLEN ~` approximate trim). Older entries are trimmed automatically. |
+| `poll-block-ms` | `2000` | Blocking-read timeout on the consumer connection (ms). |
+| `poll-count` | `64` | Max entries fetched per `XREADGROUP` call. |
+| `dedup-window` | `1024` | In-process sliding-window size for PEL dedup. |
 
 ### Cluster-Wide Queries
 
@@ -789,6 +841,11 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 | `cluster.on-publish-failure` | `log` | `log` or `drop` on publish failure |
 | `cluster.redis-loss-grace-period-ms` | `5000` | *(since V1.9.0)* Grace window before node state-machine degrades on Redis loss. Broker `state()` still flips immediately. `0` = instant (V1.8.0 behavior). **This is the only intentional default-behavior change in 1.9.0.** |
 | `cluster.session-registry-write-rate` | `1000` | *(since V1.9.0)* Max registry write ops/s/node; token-bucket passes through under the rate (zero latency change); coalesces at limit. `0` = unlimited. Register ops are never dropped. |
+| `cluster.reliable.enable` | `false` | *(since V1.9.0-RC2)* Enable Redis Streams reliable broadcast. `false` = zero overhead; `reliableBroadcast()` throws `IllegalStateException`. |
+| `cluster.reliable.stream-max-len` | `10000` | *(since V1.9.0-RC2)* Max entries per URI stream (`MAXLEN ~` approximate trim). |
+| `cluster.reliable.poll-block-ms` | `2000` | *(since V1.9.0-RC2)* Blocking-read timeout on the consumer connection (ms). |
+| `cluster.reliable.poll-count` | `64` | *(since V1.9.0-RC2)* Max entries per `XREADGROUP` call. |
+| `cluster.reliable.dedup-window` | `1024` | *(since V1.9.0-RC2)* In-process PEL dedup sliding-window size. |
 
 ---
 

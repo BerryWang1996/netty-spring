@@ -1,6 +1,6 @@
 # Release Notes — v1.9.0 (开发中 / in development)
 
-> 状态：**开发中（1.9.0-RC1，2026-05-31）** — 本文档随 1.9.0 周期累积。RC1 含下述 5 项可靠性硬化；后续 RC 将补充可靠投递（Redis Streams `reliableBroadcast`）等。最终 1.9.0 发布日期待整个周期完成后确定。
+> 状态：**开发中（1.9.0-RC2，2026-06-01）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）。最终 1.9.0 发布日期待整个周期完成后确定。
 
 ## 版本定位
 
@@ -55,6 +55,39 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 - 专用线程 `cluster-regwriter-{node}` 异步处理排队写入。
 - 防御滚动部署或 LB 排空触发的 10k+ ops/s 注册/注销风暴，保护 Redis 写路径。
 
+### ⑥ 可靠投递（Redis Streams）— `reliableBroadcast`
+
+新增 **opt-in** 的 `clusterMessageSender.reliableBroadcast(uri, message)` 方法，提供跨节点广播的 **at-least-once** 投递保障。现有 `topicMessage()`（Pub/Sub，at-most-once）行为完全不变。
+
+**默认关闭**：`server.netty.websocket.cluster.reliable.enable` 默认 `false`。未启用时：无消费线程、无额外 Redis 连接；调用 `reliableBroadcast()` 抛出 `IllegalStateException`。
+
+#### 机制
+
+- **每 URI 一个 Redis Stream**：key 格式为 `netty:cluster:rstream:{uri}`，带 `MAXLEN ~` 上限（`stream-max-len`，默认 10 000 条）控制存储。
+- **每节点一个消费者组**：消费者组名 `g:{nodeId}`。节点下线期间组游标不前进；节点重连后执行 `XREADGROUP >` 即可拉取积压消息，实现**断线重连自动回放（replay-on-resync）**。
+- **专用阻塞 Lettuce 连接**：消费循环使用独立的阻塞连接，不占用 Pub/Sub 或命令连接。
+- **进程内 PEL 去重**：in-process 滑动窗口（`dedup-window`，默认 1024 条）过滤重连后可能出现的跨崩溃重复。
+- **Origin 自投递抑制**：发布节点本地已 fan-out，消费侧通过 `originNodeId` 抑制自身重复消费。
+- **死节点消费者组清理**：`ClusterReaper` 现有的 dead-node 清理流程同步清理对应节点的 Stream 消费者组，防止孤儿 PEL 积压。
+
+#### 投递契约（重要）
+
+- **At-least-once（保留窗口内）**：仅在 Stream 的 `stream-max-len` 条目保留窗口内保证。节点离线时间过长、对应积压条目已被 `MAXLEN ~` 修剪，则这部分消息**不可回放**（有界缺口）。
+- **耐久性 = 你的 Redis**：消息持久化依赖 Redis 的 AOF/RDB 配置；Redis 宕机且无持久化则流内消息丢失。
+- **发布时 Redis 必须可达**：`XADD` 失败（Redis 不可达）会触发现有的 `on-publish-failure` 策略（`log`/`drop`），不静默。
+- **允许跨崩溃重复**：应用层处理函数应设计为**幂等**，因为 PEL 去重窗口仅覆盖进程内，跨进程崩溃可能产生重复。
+- **延迟略高于 Pub/Sub**：消费侧有轮询延迟（`poll-block-ms`），故为显式 opt-in 而非默认。
+
+#### 配置项（`server.netty.websocket.cluster.reliable.*`）
+
+| 配置项 | 默认 | 说明 |
+|---|---|---|
+| `enable` | `false` | 可靠投递总开关；`false` 时无额外连接/线程 |
+| `stream-max-len` | `10000` | 每个 Stream 的最大条目数（`MAXLEN ~` 近似裁剪） |
+| `poll-block-ms` | `2000` | 消费侧阻塞等待超时（ms） |
+| `poll-count` | `64` | 每次 `XREADGROUP` 最多读取条目数 |
+| `dedup-window` | `1024` | 进程内 PEL 去重滑动窗口大小 |
+
 ## 新增配置项（1.9.0）
 
 命名空间 `server.netty.websocket.cluster.*`：
@@ -63,6 +96,11 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 |---|---|---|
 | `redis-loss-grace-period-ms` | `5000` | Redis 失联后节点状态机降级前的宽限窗口（ms）；`0` = 即时降级（1.8.0 行为）。**唯一的默认行为变更。** |
 | `session-registry-write-rate` | `1000` | Registry 写限速（ops/s/node）；`0` = 不限速。token-bucket 透传，超速时合并写入，register 永不丢弃。 |
+| `reliable.enable` | `false` | （RC2 新增）可靠投递（Redis Streams）总开关；`false` 时零额外开销，调用 `reliableBroadcast()` 抛异常。 |
+| `reliable.stream-max-len` | `10000` | （RC2 新增）每 URI Stream 最大条目（`MAXLEN ~` 近似），超限自动裁剪旧条目。 |
+| `reliable.poll-block-ms` | `2000` | （RC2 新增）消费侧阻塞轮询超时（ms）。 |
+| `reliable.poll-count` | `64` | （RC2 新增）每次 `XREADGROUP` 最多读取条目数。 |
+| `reliable.dedup-window` | `1024` | （RC2 新增）进程内 PEL 去重滑动窗口大小。 |
 
 ### 完整配置参考（1.9.0）
 
@@ -87,9 +125,16 @@ server:
         message-max-size-bytes: 1048576
         on-redis-loss: degrade-to-local
         on-publish-failure: log
-        # --- 1.9.0 新增 ---
+        # --- 1.9.0 RC1 新增 ---
         redis-loss-grace-period-ms: 5000      # 0 = 恢复 1.8.0 即时降级行为
         session-registry-write-rate: 1000     # 0 = 不限速
+        # --- 1.9.0 RC2 新增（可靠投递）---
+        reliable:
+          enable: false                       # true = 启用 Redis Streams 可靠投递
+          stream-max-len: 10000              # 每 URI Stream 最大条目（MAXLEN ~）
+          poll-block-ms: 2000               # 消费侧阻塞轮询超时（ms）
+          poll-count: 64                    # 每次 XREADGROUP 最多读取条目数
+          dedup-window: 1024                # 进程内 PEL 去重滑动窗口
 ```
 
 ## 测试覆盖
@@ -137,7 +182,6 @@ server:
 以下能力在 1.9.0 中**仍未实现**，推迟到 1.9.x 后续版本或 2.x：
 
 - **NATS broker**（ADR-001 规模化档位）
-- **Redis Streams 可靠投递**（`reliableBroadcast` / at-least-once，含 offset+epoch 模型）
 - **完整 Micrometer 指标集**（`netty.cluster.*` meter-binder 时序）
 - **HMAC envelope 认证**（消除 `originNodeId` 伪造与未授权 `CLOSE`/注入）
 - **多 pub/sub 连接并行解码 / sharded pub/sub**
