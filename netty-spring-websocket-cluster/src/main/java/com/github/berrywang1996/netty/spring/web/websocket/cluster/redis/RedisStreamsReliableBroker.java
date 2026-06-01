@@ -33,7 +33,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -66,7 +65,9 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
 
     private final StatefulRedisConnection<String, String> commandConnection;
     private final AtomicReference<BrokerState> state = new AtomicReference<>(BrokerState.ACTIVE);
-    private final ConcurrentHashMap<String, Consumer> consumers = new ConcurrentHashMap<>();
+    /** All per-subscription blocking connections, so shutdown() can close them (interrupts XREADGROUP BLOCK). */
+    private final java.util.List<StatefulRedisConnection<String, String>> blockingConnections =
+            java.util.Collections.synchronizedList(new java.util.ArrayList<>());
 
     public RedisStreamsReliableBroker(RedisClient redisClient, EnvelopeCodec codec,
                                       int streamMaxLen, long pollBlockMs, int pollCount, int dedupWindow) {
@@ -88,9 +89,11 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
         }
         String streamKey = STREAM_PREFIX + uri;
         String data = codec.encode(envelope);
-        commandConnection.async().sadd(STREAMS_SET, uri);
+        commandConnection.async().sadd(STREAMS_SET, uri)
+                .exceptionally(ex -> { log.debug("SADD of {} to reliable registry failed", uri, ex); return null; });
         commandConnection.async()
-                .xadd(streamKey, XAddArgs.Builder.maxlen(streamMaxLen), Collections.singletonMap(FIELD, data))
+                .xadd(streamKey, XAddArgs.Builder.maxlen(streamMaxLen).approximateTrimming(),
+                        Collections.singletonMap(FIELD, data))
                 .exceptionally(ex -> {
                     log.warn("Reliable XADD to {} failed — not persisted for remotes", streamKey, ex);
                     return null;
@@ -101,7 +104,6 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
     public ClusterSubscription reliableSubscribe(String uri, String nodeId, ClusterMessageListener listener) {
         String streamKey = STREAM_PREFIX + uri;
         String group = GROUP_PREFIX + nodeId;
-        consumers.putIfAbsent(uri, Consumer.from(group, nodeId));
 
         try {
             commandConnection.sync().xgroupCreate(
@@ -115,6 +117,7 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
         AtomicBoolean running = new AtomicBoolean(true);
         StatefulRedisConnection<String, String> blockingConn = redisClient.connect();
         blockingConn.setTimeout(Duration.ofMillis(pollBlockMs + 5000));
+        blockingConnections.add(blockingConn);
 
         Thread t = new Thread(() -> consumeLoop(uri, streamKey, group, nodeId, listener, blockingConn, running),
                 "cluster-rstream-" + nodeId.substring(0, Math.min(8, nodeId.length())) + "-" + Integer.toHexString(uri.hashCode()));
@@ -124,7 +127,7 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
         return new ClusterSubscription() {
             @Override public void unsubscribe() {
                 if (running.compareAndSet(true, false)) {
-                    consumers.remove(uri);
+                    blockingConnections.remove(blockingConn);
                     try { blockingConn.close(); } catch (Exception ignored) {}
                 }
             }
@@ -171,14 +174,22 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
     private void deliver(String streamKey, String group, StreamMessage<String, String> m,
                          ClusterMessageListener listener, Map<String, Boolean> seen) {
         String id = m.getId();
-        if (seen.containsKey(id)) { ack(streamKey, group, id); return; }
+        if (seen.containsKey(id)) { ack(streamKey, group, id); return; } // in-process redelivery → drop, re-ack
         String data = m.getBody() == null ? null : m.getBody().get(FIELD);
-        if (data != null) {
+        if (data == null) {
+            log.warn("Reliable entry {} on {} has no '{}' field — acking to clear PEL (skipped)", id, streamKey, FIELD);
+        } else {
             try {
                 ClusterEnvelope env = codec.decode(data);
-                if (env != null) listener.onMessage(env);
-            } catch (Exception ex) {
-                log.warn("Failed to decode reliable entry {} on {}", id, streamKey, ex);
+                if (env != null) {
+                    listener.onMessage(env); // listener does origin self-suppression + delivery
+                } else {
+                    log.warn("Codec returned null for reliable entry {} on {} — acking to clear PEL", id, streamKey);
+                }
+            } catch (Throwable ex) {
+                // Catch Throwable so a single poison entry (or an Error from a handler) can't kill the
+                // consume thread or silently consume the entry without a trace. Ack to clear the PEL.
+                log.warn("Failed to decode/deliver reliable entry {} on {} — acking to clear PEL", id, streamKey, ex);
             }
         }
         seen.put(id, Boolean.TRUE);
@@ -202,7 +213,7 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
             }
             log.info("Destroyed reliable consumer group {} across {} streams", group, uris.size());
         } catch (Exception e) {
-            log.debug("destroyConsumerGroupsForNode({}) failed", nodeId, e);
+            log.warn("destroyConsumerGroupsForNode({}) failed", nodeId, e);
         }
     }
 
@@ -211,6 +222,14 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
     @Override
     public void shutdown() {
         state.set(BrokerState.SHUTDOWN);
+        // Close all blocking connections — interrupts any in-flight XREADGROUP BLOCK so the daemon
+        // consume threads exit promptly (the SPI contract: shutdown stops loops + releases connections).
+        java.util.List<StatefulRedisConnection<String, String>> snapshot;
+        synchronized (blockingConnections) { snapshot = new java.util.ArrayList<>(blockingConnections); }
+        for (StatefulRedisConnection<String, String> c : snapshot) {
+            try { c.close(); } catch (Exception ignored) {}
+        }
+        blockingConnections.clear();
         try { commandConnection.close(); } catch (Exception e) { log.warn("Error closing reliable cmd conn", e); }
         log.info("RedisStreamsReliableBroker shut down");
     }
