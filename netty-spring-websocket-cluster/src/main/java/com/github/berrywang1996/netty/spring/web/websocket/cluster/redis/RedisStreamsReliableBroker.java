@@ -16,6 +16,7 @@
 
 package com.github.berrywang1996.netty.spring.web.websocket.cluster.redis;
 
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.NoOpMessageAuthenticator;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.*;
 import io.lettuce.core.Consumer;
 import io.lettuce.core.RedisClient;
@@ -58,6 +59,7 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
 
     private final RedisClient redisClient;
     private final EnvelopeCodec codec;
+    private final MessageAuthenticator authenticator;
     private final int streamMaxLen;
     private final long pollBlockMs;
     private final int pollCount;
@@ -69,10 +71,18 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
     private final java.util.List<StatefulRedisConnection<String, String>> blockingConnections =
             java.util.Collections.synchronizedList(new java.util.ArrayList<>());
 
+    /** Backward-compat constructor — no authentication (NoOp). */
     public RedisStreamsReliableBroker(RedisClient redisClient, EnvelopeCodec codec,
                                       int streamMaxLen, long pollBlockMs, int pollCount, int dedupWindow) {
+        this(redisClient, codec, streamMaxLen, pollBlockMs, pollCount, dedupWindow, new NoOpMessageAuthenticator());
+    }
+
+    public RedisStreamsReliableBroker(RedisClient redisClient, EnvelopeCodec codec,
+                                      int streamMaxLen, long pollBlockMs, int pollCount, int dedupWindow,
+                                      MessageAuthenticator authenticator) {
         this.redisClient = redisClient;
         this.codec = codec;
+        this.authenticator = authenticator;
         this.streamMaxLen = streamMaxLen;
         this.pollBlockMs = pollBlockMs;
         this.pollCount = pollCount;
@@ -88,7 +98,7 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
             throw new ClusterBrokerException("Reliable broker shut down");
         }
         String streamKey = STREAM_PREFIX + uri;
-        String data = codec.encode(envelope);
+        String data = authenticator.wrap(codec.encode(envelope));
         commandConnection.async().sadd(STREAMS_SET, uri)
                 .exceptionally(ex -> { log.debug("SADD of {} to reliable registry failed", uri, ex); return null; });
         commandConnection.async()
@@ -182,8 +192,11 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
         String id = m.getId();
         if (seen.containsKey(id)) { ack(streamKey, group, id); return; } // in-process redelivery → drop, re-ack
         String data = m.getBody() == null ? null : m.getBody().get(FIELD);
+        if (data != null) {
+            data = authenticator.unwrap(data); // null = rejected (missing/invalid HMAC)
+        }
         if (data == null) {
-            log.warn("Reliable entry {} on {} has no '{}' field — acking to clear PEL (skipped)", id, streamKey, FIELD);
+            log.warn("Reliable entry {} on {} dropped (no field, or rejected HMAC) — acking to clear PEL", id, streamKey);
         } else {
             try {
                 ClusterEnvelope env = codec.decode(data);
