@@ -1,6 +1,6 @@
 # Cluster Design — Redis 集群方案（设计全集 + 1.8.0 实现范围）
 
-> **本文档描述的是完整目标架构（设计全集），不是单一版本的实现清单。** `1.8.0` 实现了其中一个子集；`1.9.0` RC1 完成了 5 项可靠性硬化项，RC2 新增了 Redis Streams 可靠投递（`reliableBroadcast`）；其余能力推迟到后续版本。下方"## 实现范围"表是实现与设计的权威对照——阅读本文其余章节时，请以该表为准判断某项是否已落地。
+> **本文档描述的是完整目标架构（设计全集），不是单一版本的实现清单。** `1.8.0` 实现了其中一个子集；`1.9.0` RC1 完成了 5 项可靠性硬化项，RC2 新增了 Redis Streams 可靠投递（`reliableBroadcast`），RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；其余能力推迟到后续版本。下方"## 实现范围"表是实现与设计的权威对照——阅读本文其余章节时，请以该表为准判断某项是否已落地。
 > 落地进度与推迟项跟踪：`docs/development-plan.md`。
 
 ## 实现范围 vs 设计目标（1.8.0 / 1.9.0 已落地）
@@ -37,6 +37,7 @@
 | sharded pub/sub（`SSUBSCRIBE`/`SPUBLISH`） | ⏳ 未来版本 | 经典 pub/sub 已覆盖所有模式 |
 | Redis Cluster 客户端一等支持（`RedisClusterClient`） | ⏳ 未来版本 | 需不同客户端类型；用户自备 bean |
 | **可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）** | ✅ 1.9.0 RC2 | 详见下方设计注记；`reliable.*` 5 个配置项；默认关闭 |
+| **HMAC envelope 认证**（`MessageAuthenticator` SPI，HMAC-SHA256，anti-forgery，opt-in） | ✅ 1.9.0 RC3 | 传输层 SPI，与 codec 无关；广播/单播/CLOSE/Streams 统一签名；`auth.*` 3 个配置项；默认关闭；NoOp 剥离 `H1:` 标签；三阶段滚动升级；仅 anti-forgery，不含重放保护 |
 | 写 pipeline 批量（`publish-batch-size` / `publish-flush-interval`） | ⏳ 未来版本 | 当前单条 async（Lettuce 连接层自动 pipeline） |
 | 频道基数硬上限 / 订阅 hold（`max-subscribed-channels` / `subscription-hold-duration`） | ⏳ 未来版本 | 订阅集由 `@MessageMapping` URI 固定，不会无界增长 |
 | Actuator 集群健康（`ClusterHealthIndicator`，节点/broker 状态 + 运行时计数） | ✅ | `/actuator/health` 下 `nettyCluster`；actuator 在 classpath 时启用 |
@@ -441,7 +442,7 @@ netty-spring/
 
 **加密边界提示**：应用层 AES-GCM 加密作用在浏览器↔节点的 WebSocket 帧上。集群广播/单播把**解密后的明文** `AbstractMessage` 放上 Redis 再扇出到远端会话——所以"端到端加密"的保证**不延伸过 Redis**。需要跨集群也保密时，依赖 `rediss://` + 专用 Redis 的网络层保护。
 
-**1.9.x 计划的纵深防御**：envelope HMAC 共享密钥（`cluster.auth-secret`），接收端拒绝伪造/重放的 envelope，杜绝 `originNodeId` 伪造与 `CLOSE` 滥用。这是根因层面的修复,1.8.0 先以"文档 + 默认告警 + 入站上限"兜底。
+**1.9.0 RC3 纵深防御（已落地）**：`MessageAuthenticator` SPI，默认实现 `HmacMessageAuthenticator`（HMAC-SHA256）。接收端对缺失或不匹配的标签直接丢弃消息（计数 + 日志），杜绝 `originNodeId` 伪造与未授权 `CLOSE`/注入。默认关闭（`auth.enable=false`），通过三阶段滚动升级可零停机开启（见 `docs/api-guide.md` §9.2）。**仅防伪造，不防重放**（重放需 Redis 读权限，属更强前提；时间窗口与 reliable replay-on-resync 冲突）——该限制已文档化。
 
 ## 已知未覆盖项（明确推迟）
 
@@ -462,10 +463,10 @@ netty-spring/
 - ✅ **reconciliation 去重 / 选主**：`ClusterReaper` SPI，`RedisClusterReaper` 用 `SET NX` 认领清理权，死节点只被一个节点清理。
 - ✅ **registry 限速**（`session-registry-write-rate`）：token-bucket `CoalescingRegistryWriter`，防注册风暴；register 永不丢弃。
 - ✅ **可靠投递（Redis Streams `reliableBroadcast`）**（RC2）：per-URI Redis Stream `netty:cluster:rstream:{uri}`；每节点一个消费者组（`g:{nodeId}`）；断线重连自动 replay-on-resync；`MAXLEN ~` 有界保留；进程内 PEL 去重；origin 自投递抑制；死节点消费者组随 `ClusterReaper` 清理。详见 §3 可靠投递设计注记。
+- ✅ **HMAC envelope 认证**（RC3）：传输层 `MessageAuthenticator` SPI，默认实现 `HmacMessageAuthenticator`（HMAC-SHA256，常量时间比较）；线格式 `H1:{base64url(hmac)}:{payload}`；广播/单播/CLOSE/Streams 路径统一签名；`auth.*` 3 个配置项（`enable`、`secret`、`permissive`）；默认关闭（`auth.enable=false`），零额外开销；NoOp 剥离 `H1:` 标签以兼容混合滚动期；三阶段零停机滚动升级；**仅防伪造（anti-forgery）**，不防重放（详见 `docs/api-guide.md` §9.2）。
 
 **⏳ 仍推迟到后续版本的项：**
 
-- **envelope HMAC 认证**（安全根因修复）：消除 `originNodeId` 伪造与未授权 `CLOSE`/注入。当前以文档 + 默认告警 + 入站大小上限兜底。
 - **完整 Micrometer 指标集（meter-binder）**：已提供 `ClusterHealthIndicator` + 程序内 `ClusterRuntimeStats`；完整 `MeterBinder` 指标集（`netty.cluster.*` 时序）仍在路线图。
 - **多 pub/sub 连接并行解码 / sharded pub/sub / 写 pipeline 批量**：规模化档位优化，见实现范围表。
 - **Redis Cluster 客户端一等支持**：需要 `RedisClusterClient`（不同客户端类型）。

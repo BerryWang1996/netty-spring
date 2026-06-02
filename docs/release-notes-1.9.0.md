@@ -1,6 +1,6 @@
 # Release Notes — v1.9.0 (开发中 / in development)
 
-> 状态：**开发中（1.9.0-RC2，2026-06-01）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）。最终 1.9.0 发布日期待整个周期完成后确定。
+> 状态：**开发中（1.9.0-RC3，2026-06-01）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）。最终 1.9.0 发布日期待整个周期完成后确定。
 
 ## 版本定位
 
@@ -88,7 +88,50 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 | `poll-count` | `64` | 每次 `XREADGROUP` 最多读取条目数 |
 | `dedup-window` | `1024` | 进程内 PEL 去重滑动窗口大小 |
 
-## 新增配置项（1.9.0）
+### ⑦ HMAC envelope 认证 / HMAC Envelope Authentication
+
+*Since V1.9.0-RC3.* 跨节点信封的传输层 **HMAC-SHA256** 认证，通过 `MessageAuthenticator` SPI 实现（与 codec 无关，不改变 envelope 线格式）。广播、单播、CLOSE 以及可靠投递（Redis Streams）路径统一签名/验证。
+
+**默认关闭**：`server.netty.websocket.cluster.auth.enable=false` — 不签名，零额外开销；禁用状态下 NoOp 认证器仍会静默剥离 `H1:` 标签，不会拒绝已签名流量，便于滚动升级期间兼容。
+
+#### 机制
+
+- **线格式**：`H1:{base64url(hmac)}:{payload}`（前缀 `H1:` 标识版本和算法）。
+- **签名**：发送前对原始 payload 字节计算 HMAC-SHA256，base64url 编码后前置于信封。
+- **验证**：接收端提取标签、重算 HMAC，使用**常量时间比较**（防时序攻击）。验证失败（标签缺失或不匹配）→ 消息丢弃 + 计数（`HmacMessageAuthenticator.getRejectedCount()`）+ 日志告警；不抛异常、不关闭连接。
+- **范围**：仅防伪造（anti-forgery），不提供重放保护。重放攻击需要 Redis 读权限，已是更强的安全前提；时间窗口方案与可靠投递的 replay-on-resync 语义冲突，故不引入。该限制已在文档中明示。
+
+#### 关闭的威胁
+
+任何能向集群 Redis `PUBLISH` 的主体，在 1.8.0 中可以：伪造 `originNodeId`（绕过自投递抑制）、注入任意广播/单播消息、或通过发送 CLOSE 控制指令强制关闭任意 WebSocket 会话。启用 HMAC 后，缺少共享密钥的攻击者无法构造合法信封，上述攻击面被消除。
+
+#### 配置项（`server.netty.websocket.cluster.auth.*`）
+
+| 配置项 | 默认 | 说明 |
+|---|---|---|
+| `auth.enable` | `false` | 认证总开关；`false` = NoOp（不签名，剥离 `H1:` 标签但不验证） |
+| `auth.secret` | （无默认，启用时必填） | 共享 HMAC 密钥（≥32 字符，通过 `${ENV_VAR}` 外部化，日志中脱敏，不得明文写入 YAML） |
+| `auth.permissive` | `false` | 宽容模式：`true` = 签名发出但允许接收无签名流量（滚动升级用）；`false` = 严格模式（拒绝无签名或签名错误的入站消息） |
+
+#### 三阶段零停机滚动升级
+
+| 阶段 | 配置 | 行为 |
+|---|---|---|
+| ① 全集群 `auth.enable=false` | 默认，所有节点互通明文；NoOp 剥离 `H1:` 标签 | 基线，全量互操作 |
+| ② 滚动 `auth.enable=true, auth.permissive=true` | 已翻转节点签名发出 + 接受明文/签名两种入站；未翻转节点 NoOp 剥离标签并正常读取 | 混合期，零跨节点消息丢失 |
+| ③ 滚动 `auth.permissive=false` | 全部节点切严格模式，拒绝无签名入站 | 认证完全生效 |
+
+**密钥轮换**：本版本单密钥，无双密钥重叠窗口；密钥轮换需短暂维护窗口（同时更新所有节点 `auth.secret` 并重启），或按上述三阶段流程执行一次重新升级。
+
+#### 注意事项
+
+- `auth.secret` **必须**通过环境变量或 Secret 管理系统注入（`${CLUSTER_AUTH_SECRET}`），禁止明文写入配置文件。
+- HMAC 仅保护 Redis 传输层（跨节点信封），不扩展至浏览器↔节点的 WebSocket 帧（见应用层加密 §8）。
+- 启用后日志中 `auth.secret` 值被脱敏（输出为 `[REDACTED]`）。
+
+---
+
+
 
 命名空间 `server.netty.websocket.cluster.*`：
 
@@ -101,6 +144,9 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 | `reliable.poll-block-ms` | `2000` | （RC2 新增）消费侧阻塞轮询超时（ms）。 |
 | `reliable.poll-count` | `64` | （RC2 新增）每次 `XREADGROUP` 最多读取条目数。 |
 | `reliable.dedup-window` | `1024` | （RC2 新增）进程内 PEL 去重滑动窗口大小。 |
+| `auth.enable` | `false` | （RC3 新增）HMAC envelope 认证总开关；`false` = NoOp（不签名，剥离 `H1:` 标签但不验证）。 |
+| `auth.secret` | （必填） | （RC3 新增）共享 HMAC-SHA256 密钥（≥32 字符，通过环境变量注入，日志脱敏）；`auth.enable=true` 时必须配置。 |
+| `auth.permissive` | `false` | （RC3 新增）宽容模式；`true` = 签名发出 + 允许无签名入站（滚动升级用）；`false` = 严格（拒绝无效/缺失标签）。 |
 
 ### 完整配置参考（1.9.0）
 
@@ -135,6 +181,11 @@ server:
           poll-block-ms: 2000               # 消费侧阻塞轮询超时（ms）
           poll-count: 64                    # 每次 XREADGROUP 最多读取条目数
           dedup-window: 1024                # 进程内 PEL 去重滑动窗口
+        # --- 1.9.0 RC3 新增（HMAC envelope 认证）---
+        auth:
+          enable: false                       # true = 启用 HMAC-SHA256 信封认证
+          secret: ${CLUSTER_AUTH_SECRET}      # 共享密钥，≥32 字符，禁止明文，日志脱敏
+          permissive: false                   # true = 宽容模式（签名+接受无签名，滚动升级用）
 ```
 
 ## 测试覆盖
@@ -175,7 +226,7 @@ server:
 ## 向后兼容性声明
 
 - **单机模式**（`cluster.enable=false`，默认）：与 1.7.x / 1.8.0 **字节级行为完全一致**。零集群开销。
-- **集群模式 SPI**：`ClusterBroker` / `SessionRegistry` / `EnvelopeCodec` / `MessagePayloadCodec` / `ClusterNodeHeartbeat` 签名**全部不变**；`ClusterReaper` 是**新增** SPI（additive，不破坏任何现有实现）。
+- **集群模式 SPI**：`ClusterBroker` / `SessionRegistry` / `EnvelopeCodec` / `MessagePayloadCodec` / `ClusterNodeHeartbeat` 签名**全部不变**；`ClusterReaper` 和 `MessageAuthenticator` 是**新增** SPI（additive，不破坏任何现有实现）。
 - **配置项**：所有 1.8.0 配置项默认值不变（除 `redis-loss-grace-period-ms` 从"无宽限"变为 5 000 ms，已在上文突出标注）。
 - **Java API**：`MessageSender` / `ClusterMessageSender` 接口无变化；`deregister` 内部原子化，对调用方透明。
 
@@ -185,7 +236,6 @@ server:
 
 - **NATS broker**（ADR-001 规模化档位）
 - **完整 Micrometer 指标集**（`netty.cluster.*` meter-binder 时序）
-- **HMAC envelope 认证**（消除 `originNodeId` 伪造与未授权 `CLOSE`/注入）
 - **多 pub/sub 连接并行解码 / sharded pub/sub**
 - **Redis Cluster 客户端一等支持**（`RedisClusterClient`）
 - **W3C TraceContext 跨节点传播**（envelope 已预留 `traceparent` 字段）

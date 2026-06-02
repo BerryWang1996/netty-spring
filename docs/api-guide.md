@@ -526,7 +526,7 @@ public MessageCryptoPolicy cryptoPolicy() {
 
 ## 9. WebSocket Cluster
 
-*Since V1.8.0; reliability-hardened in V1.9.0.* Scale WebSocket across multiple nodes via Redis Pub/Sub. **Default is single-node mode** (`cluster.enable=false`) with zero overhead and behavior identical to 1.7.x. Cluster mode is **opt-in** and targets **≤ ~10 nodes with a dedicated, secured Redis**.
+*Since V1.8.0; reliability-hardened in V1.9.0; HMAC envelope auth added in V1.9.0-RC3.* Scale WebSocket across multiple nodes via Redis Pub/Sub. **Default is single-node mode** (`cluster.enable=false`) with zero overhead and behavior identical to 1.7.x. Cluster mode is **opt-in** and targets **≤ ~10 nodes with a dedicated, secured Redis**.
 
 ### Enable Cluster
 
@@ -618,6 +618,62 @@ A node that was offline when messages were published has its consumer-group curs
 | `poll-count` | `64` | Max entries fetched per `XREADGROUP` call. |
 | `dedup-window` | `1024` | In-process sliding-window size for PEL dedup. |
 
+### 9.2 HMAC Envelope Authentication
+
+*Since V1.9.0-RC3.* Transport-layer **HMAC-SHA256** authentication of cross-node envelopes via the `MessageAuthenticator` SPI. Applies to broadcast, unicast, CLOSE, and the reliable Streams path uniformly. **Gated off by default** — zero overhead until explicitly enabled.
+
+#### The threat closed
+
+In 1.8.0 any party that can write to the cluster Redis can forge `originNodeId` (bypassing self-delivery suppression), inject arbitrary broadcasts or unicasts, or force-close any WebSocket session via a CLOSE control envelope. Enabling HMAC authentication eliminates these attack vectors for parties that lack the shared secret.
+
+#### Enable
+
+```yaml
+server:
+  netty:
+    websocket:
+      cluster:
+        enable: true
+        auth:
+          enable: true
+          secret: ${CLUSTER_AUTH_SECRET}    # required when enabled; ≥32 chars; externalize via env var
+          permissive: false                 # strict mode: reject unsigned/invalid inbound
+```
+
+When `auth.enable=false` (the default), no signing or verification happens. The NoOp authenticator still strips an `H1:` tag silently so that a disabled node can read signed traffic during a rolling upgrade — no messages are dropped.
+
+#### Wire format
+
+```
+H1:{base64url(hmac)}:{payload}
+```
+
+`H1:` identifies the algorithm version. The receiver extracts the tag, recomputes HMAC-SHA256 over the payload bytes, and compares using constant-time equality. Verification failures (missing or invalid tag) result in the message being **dropped + counted** (accessible via `HmacMessageAuthenticator.getRejectedCount()`) + logged at WARN. No exception is thrown and no connection is closed.
+
+#### Scope — anti-forgery only
+
+HMAC provides anti-forgery protection. It does **not** provide replay protection: replay requires Redis read access (an already stronger position), and a timestamp window would conflict with the reliable-delivery replay-on-resync semantics. This limitation is documented.
+
+#### Three-phase zero-downtime rolling upgrade
+
+| Phase | Configuration | Behavior |
+| --- | --- | --- |
+| ① All nodes `auth.enable=false` | Default — all plain; NoOp strips `H1:` | Full interoperability |
+| ② Rolling `auth.enable=true, permissive=true` | Flipped nodes sign outbound + accept both plain and signed inbound; unflipped nodes strip and read | Mixed-mode, zero cross-node loss |
+| ③ Rolling `permissive=false` | All nodes in strict mode; unsigned/invalid inbound rejected | Full enforcement |
+
+**Secret rotation** requires a brief maintenance window in this version (single shared key, no two-secret overlap). Execute a new three-phase rollout to rotate.
+
+#### Configuration reference (`server.netty.websocket.cluster.auth.*`)
+
+| Property | Default | Description |
+| --- | --- | --- |
+| `auth.enable` | `false` | Master switch. `false` = NoOp (strips `H1:` tag but does not verify). |
+| `auth.secret` | *(no default; required when enabled)* | Shared HMAC key (≥ 32 chars). Must be externalized via `${ENV_VAR}` — never plain-text in YAML. Redacted in logs. |
+| `auth.permissive` | `false` | `true` = sign outbound but accept unsigned inbound (rolling upgrade); `false` = strict (reject missing/invalid tag). |
+
+---
+
 ### Cluster-Wide Queries
 
 `ClusterMessageSender` adds async, network-backed queries (cast `MessageSender` to `ClusterMessageSender`, or inject it directly):
@@ -634,7 +690,9 @@ Local queries (`getSessionIds`, `isSessionAlive`, `getSessionNums`) remain **loc
 
 ### Security (must read)
 
-> Redis is the cluster **control plane**. Anyone who can `PUBLISH` to it can inject messages into, or force-close, any WebSocket session. For production: use a **dedicated, network-isolated Redis** with a **password** (`redis://:secret@host`) and **TLS** (`rediss://`). 1.8.0 redacts the URI password in logs and warns when the URI has no TLS/auth. Application-layer AES-GCM does **not** extend across Redis — plaintext is fanned out to remote nodes.
+> Redis is the cluster **control plane**. For production: use a **dedicated, network-isolated Redis** with a **password** (`redis://:secret@host`) and **TLS** (`rediss://`). The URI password is redacted in logs and a WARN is emitted when TLS/auth is absent. Application-layer AES-GCM does **not** extend across Redis — plaintext is fanned out to remote nodes.
+>
+> **Since V1.9.0-RC3**: Enable `cluster.auth.enable=true` with a shared `auth.secret` to add **HMAC-SHA256 envelope authentication**. This closes the forgery attack surface: a party that can write to Redis but lacks the secret can no longer forge `originNodeId`, inject broadcasts/unicasts, or force-close sessions. Network isolation + auth + TLS + HMAC provides defense-in-depth. See [§9.2 HMAC Envelope Authentication](#92-hmac-envelope-authentication) for the rolling-upgrade procedure.
 
 ### Pluggable Serialization (zero Jackson)
 
@@ -846,6 +904,9 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 | `cluster.reliable.poll-block-ms` | `2000` | *(since V1.9.0-RC2)* Blocking-read timeout on the consumer connection (ms). |
 | `cluster.reliable.poll-count` | `64` | *(since V1.9.0-RC2)* Max entries per `XREADGROUP` call. |
 | `cluster.reliable.dedup-window` | `1024` | *(since V1.9.0-RC2)* In-process PEL dedup sliding-window size. |
+| `cluster.auth.enable` | `false` | *(since V1.9.0-RC3)* Enable HMAC-SHA256 envelope authentication. `false` = NoOp (strips `H1:` tag, no signing/verification). |
+| `cluster.auth.secret` | *(required when enabled)* | *(since V1.9.0-RC3)* Shared HMAC key (≥ 32 chars). Externalize via `${ENV_VAR}`. Redacted in logs. Never plain-text in YAML. |
+| `cluster.auth.permissive` | `false` | *(since V1.9.0-RC3)* `true` = sign outbound + accept unsigned inbound (rolling upgrade); `false` = strict (reject invalid/missing tag). |
 
 ---
 
