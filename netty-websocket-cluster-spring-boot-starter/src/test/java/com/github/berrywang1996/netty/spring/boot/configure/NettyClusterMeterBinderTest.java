@@ -1,0 +1,80 @@
+package com.github.berrywang1996.netty.spring.boot.configure;
+
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterMessageSender;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterRuntimeStats;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.HmacMessageAuthenticator;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.NoOpMessageAuthenticator;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.NodeState;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.BrokerState;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+class NettyClusterMeterBinderTest {
+
+    @Test
+    void bindsCountersAndPerStateGauges() {
+        ClusterRuntimeStats stats = mock(ClusterRuntimeStats.class);
+        when(stats.getBroadcastPublished()).thenReturn(5L);
+        when(stats.getUnicastSent()).thenReturn(2L);
+        when(stats.getReliablePublished()).thenReturn(7L);
+        when(stats.getPublishFailures()).thenReturn(1L);
+        // unstubbed long getters default to 0 (Mockito) -> those meters read 0.0
+
+        ClusterMessageSender sender = mock(ClusterMessageSender.class);
+        when(sender.getClusterRuntimeStats()).thenReturn(stats);
+        ClusterNodeManager nodeManager = mock(ClusterNodeManager.class);
+        when(nodeManager.getState()).thenReturn(NodeState.ACTIVE);
+        ClusterBroker broker = mock(ClusterBroker.class);
+        when(broker.state()).thenReturn(BrokerState.ACTIVE);
+
+        // a real HMAC authenticator with 2 rejections (strict rejects untagged input)
+        HmacMessageAuthenticator auth =
+                new HmacMessageAuthenticator("a-32-char-secret-for-the-test!!!".getBytes(), true);
+        auth.unwrap("untagged-1");
+        auth.unwrap("untagged-2");
+
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        NettyClusterMeterBinder binder = new NettyClusterMeterBinder(sender, nodeManager, broker, auth);
+        binder.bindTo(registry);
+
+        assertEquals(5.0, registry.get("netty.cluster.broadcast.published").functionCounter().count());
+        assertEquals(2.0, registry.get("netty.cluster.unicast.sent").functionCounter().count());
+        assertEquals(7.0, registry.get("netty.cluster.reliable.published").functionCounter().count());
+        assertEquals(1.0, registry.get("netty.cluster.publish.failures").functionCounter().count());
+        assertEquals(0.0, registry.get("netty.cluster.cache.hits").functionCounter().count());
+        assertEquals(2.0, registry.get("netty.cluster.auth.rejected").functionCounter().count());
+
+        // per-state gauges: ACTIVE=1.0, others=0.0
+        assertEquals(1.0, registry.get("netty.cluster.node.state").tag("state", "active").gauge().value());
+        assertEquals(0.0, registry.get("netty.cluster.node.state").tag("state", "degraded").gauge().value());
+        assertEquals(0.0, registry.get("netty.cluster.node.state").tag("state", "left").gauge().value());
+        assertEquals(1.0, registry.get("netty.cluster.broker.state").tag("state", "active").gauge().value());
+        assertEquals(0.0, registry.get("netty.cluster.broker.state").tag("state", "shutdown").gauge().value());
+
+        // idempotent re-bind: no duplicate meters
+        int before = registry.getMeters().size();
+        binder.bindTo(registry);
+        assertEquals(before, registry.getMeters().size(), "re-binding the same registry must not duplicate meters");
+    }
+
+    @Test
+    void noOpAuthenticatorReportsZeroRejections() {
+        ClusterMessageSender sender = mock(ClusterMessageSender.class);
+        when(sender.getClusterRuntimeStats()).thenReturn(mock(ClusterRuntimeStats.class));
+        ClusterNodeManager nodeManager = mock(ClusterNodeManager.class);
+        when(nodeManager.getState()).thenReturn(NodeState.ACTIVE);
+        ClusterBroker broker = mock(ClusterBroker.class);
+        when(broker.state()).thenReturn(BrokerState.ACTIVE);
+
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        new NettyClusterMeterBinder(sender, nodeManager, broker, new NoOpMessageAuthenticator())
+                .bindTo(registry);
+
+        assertEquals(0.0, registry.get("netty.cluster.auth.rejected").functionCounter().count());
+    }
+}

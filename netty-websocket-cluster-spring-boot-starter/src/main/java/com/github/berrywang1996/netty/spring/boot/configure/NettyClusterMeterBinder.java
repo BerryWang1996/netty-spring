@@ -1,0 +1,122 @@
+/*
+ * Copyright 2018 berrywang1996
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.github.berrywang1996.netty.spring.boot.configure;
+
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterMessageSender;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterRuntimeStats;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.HmacMessageAuthenticator;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.NodeState;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.BrokerState;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MessageAuthenticator;
+import io.micrometer.core.instrument.FunctionCounter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.binder.MeterBinder;
+
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
+import java.util.function.ToDoubleFunction;
+
+/**
+ * Bridges WebSocket-cluster runtime signals to a Micrometer {@link MeterRegistry} as
+ * {@code netty.cluster.*} meters (read-throughs over the existing counters — no hot-path cost).
+ *
+ * <p>Counters: broadcast published/received/self_dropped/skipped_degraded, unicast sent, publish
+ * failures, reliable published/received, cache hits/misses, auth rejected. Gauges: per-state up/down
+ * for node state and broker state (tagged {@code state}). Aggregate-only (no per-URI tags).
+ *
+ * @author berrywang1996
+ * @since V1.9.0
+ * @see NettyClusterMetricsConfigure
+ */
+public class NettyClusterMeterBinder implements MeterBinder {
+
+    private final ClusterMessageSender sender;
+    private final ClusterNodeManager nodeManager;
+    private final ClusterBroker broker;
+    private final MessageAuthenticator authenticator;
+
+    /** Registries already bound, by identity, so a repeated bindTo does not duplicate meters. */
+    private final Set<MeterRegistry> boundRegistries =
+            Collections.newSetFromMap(new IdentityHashMap<MeterRegistry, Boolean>());
+
+    public NettyClusterMeterBinder(ClusterMessageSender sender, ClusterNodeManager nodeManager,
+                                   ClusterBroker broker, MessageAuthenticator authenticator) {
+        this.sender = sender;
+        this.nodeManager = nodeManager;
+        this.broker = broker;
+        this.authenticator = authenticator;
+    }
+
+    @Override
+    public void bindTo(MeterRegistry registry) {
+        synchronized (boundRegistries) {
+            if (!boundRegistries.add(registry)) {
+                return;
+            }
+        }
+        ClusterRuntimeStats stats = sender.getClusterRuntimeStats();
+
+        counter(registry, "netty.cluster.broadcast.published", stats,
+                ClusterRuntimeStats::getBroadcastPublished, "Broadcasts handed to the cluster broker for publish");
+        counter(registry, "netty.cluster.broadcast.received", stats,
+                ClusterRuntimeStats::getCrossNodeBroadcastReceived, "Broadcasts received from other nodes and delivered locally");
+        counter(registry, "netty.cluster.broadcast.self_dropped", stats,
+                ClusterRuntimeStats::getSelfDeliveryDropped, "Self-delivered broadcasts suppressed (origin == local node)");
+        counter(registry, "netty.cluster.broadcast.skipped_degraded", stats,
+                ClusterRuntimeStats::getBroadcastsSkippedDegraded, "Cross-node broadcasts skipped because the node was not ACTIVE");
+        counter(registry, "netty.cluster.unicast.sent", stats,
+                ClusterRuntimeStats::getUnicastSent, "Unicast messages sent to remote nodes");
+        counter(registry, "netty.cluster.publish.failures", stats,
+                ClusterRuntimeStats::getPublishFailures, "Cluster publishes that failed or were dropped");
+        counter(registry, "netty.cluster.reliable.published", stats,
+                ClusterRuntimeStats::getReliablePublished, "Reliable broadcasts published (XADD)");
+        counter(registry, "netty.cluster.reliable.received", stats,
+                ClusterRuntimeStats::getReliableReceived, "Reliable broadcasts received and delivered locally");
+        counter(registry, "netty.cluster.cache.hits", stats,
+                ClusterRuntimeStats::getCacheHits, "Node lookup cache hits");
+        counter(registry, "netty.cluster.cache.misses", stats,
+                ClusterRuntimeStats::getCacheMisses, "Node lookup cache misses");
+
+        FunctionCounter.builder("netty.cluster.auth.rejected", authenticator,
+                        a -> (a instanceof HmacMessageAuthenticator)
+                                ? (double) ((HmacMessageAuthenticator) a).getRejectedCount() : 0.0)
+                .description("Inbound cluster envelopes rejected for a missing/invalid HMAC tag")
+                .register(registry);
+
+        for (NodeState s : NodeState.values()) {
+            Gauge.builder("netty.cluster.node.state", nodeManager, nm -> nm.getState() == s ? 1.0 : 0.0)
+                    .tag("state", s.name().toLowerCase())
+                    .description("1.0 when this node is in the tagged state, else 0.0")
+                    .register(registry);
+        }
+        for (BrokerState s : BrokerState.values()) {
+            Gauge.builder("netty.cluster.broker.state", broker, b -> b.state() == s ? 1.0 : 0.0)
+                    .tag("state", s.name().toLowerCase())
+                    .description("1.0 when the cluster broker is in the tagged state, else 0.0")
+                    .register(registry);
+        }
+    }
+
+    private static void counter(MeterRegistry registry, String name, ClusterRuntimeStats stats,
+                                ToDoubleFunction<ClusterRuntimeStats> f, String description) {
+        FunctionCounter.builder(name, stats, f).description(description).register(registry);
+    }
+}

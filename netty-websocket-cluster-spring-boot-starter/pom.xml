@@ -73,6 +73,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Micrometer (optional): enables the cluster MeterBinder when present -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
