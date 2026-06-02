@@ -58,4 +58,13 @@ class MessageAuthenticatorTest {
         assertEquals(PAYLOAD, noop.unwrap(signed));
         assertEquals(PAYLOAD, noop.unwrap(PAYLOAD), "plain passes through");
     }
+
+    @Test
+    void malformedH1WireIsRejected() {
+        HmacMessageAuthenticator a = new HmacMessageAuthenticator(SECRET.getBytes(), true);
+        assertNull(a.unwrap("H1:notag"), "H1: with no second colon must be rejected");
+        assertEquals(1, a.getRejectedCount());
+        assertNull(a.unwrap("H1::somepayload"), "H1: with an empty tag must be rejected");
+        assertEquals(2, a.getRejectedCount());
+    }
 }

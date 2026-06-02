@@ -24,6 +24,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Base64;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -65,6 +66,7 @@ public class HmacMessageAuthenticator implements MessageAuthenticator {
 
     @Override
     public String wrap(String encoded) {
+        Objects.requireNonNull(encoded, "encoded");
         return PREFIX + tag(encoded) + ":" + encoded;
     }
 
