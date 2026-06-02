@@ -20,6 +20,8 @@ class NettyClusterMeterBinderTest {
     void bindsCountersAndPerStateGauges() {
         ClusterRuntimeStats stats = mock(ClusterRuntimeStats.class);
         when(stats.getBroadcastPublished()).thenReturn(5L);
+        when(stats.getCrossNodeBroadcastReceived()).thenReturn(3L);
+        when(stats.getSelfDeliveryDropped()).thenReturn(4L);
         when(stats.getUnicastSent()).thenReturn(2L);
         when(stats.getReliablePublished()).thenReturn(7L);
         when(stats.getPublishFailures()).thenReturn(1L);
@@ -43,6 +45,8 @@ class NettyClusterMeterBinderTest {
         binder.bindTo(registry);
 
         assertEquals(5.0, registry.get("netty.cluster.broadcast.published").functionCounter().count());
+        assertEquals(3.0, registry.get("netty.cluster.broadcast.received").functionCounter().count());
+        assertEquals(4.0, registry.get("netty.cluster.broadcast.self_dropped").functionCounter().count());
         assertEquals(2.0, registry.get("netty.cluster.unicast.sent").functionCounter().count());
         assertEquals(7.0, registry.get("netty.cluster.reliable.published").functionCounter().count());
         assertEquals(1.0, registry.get("netty.cluster.publish.failures").functionCounter().count());
@@ -60,6 +64,26 @@ class NettyClusterMeterBinderTest {
         int before = registry.getMeters().size();
         binder.bindTo(registry);
         assertEquals(before, registry.getMeters().size(), "re-binding the same registry must not duplicate meters");
+    }
+
+    @Test
+    void gaugesTrackNonDefaultState() {
+        ClusterMessageSender sender = mock(ClusterMessageSender.class);
+        when(sender.getClusterRuntimeStats()).thenReturn(mock(ClusterRuntimeStats.class));
+        ClusterNodeManager nodeManager = mock(ClusterNodeManager.class);
+        when(nodeManager.getState()).thenReturn(NodeState.DEGRADED);
+        ClusterBroker broker = mock(ClusterBroker.class);
+        when(broker.state()).thenReturn(BrokerState.RESYNC);
+
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        new NettyClusterMeterBinder(sender, nodeManager, broker, new NoOpMessageAuthenticator())
+                .bindTo(registry);
+
+        // the tagged gauge for the current (non-default) state reads 1.0, all others 0.0
+        assertEquals(1.0, registry.get("netty.cluster.node.state").tag("state", "degraded").gauge().value());
+        assertEquals(0.0, registry.get("netty.cluster.node.state").tag("state", "active").gauge().value());
+        assertEquals(1.0, registry.get("netty.cluster.broker.state").tag("state", "resync").gauge().value());
+        assertEquals(0.0, registry.get("netty.cluster.broker.state").tag("state", "active").gauge().value());
     }
 
     @Test
