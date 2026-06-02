@@ -104,6 +104,9 @@ public class ClusterProperties {
     /** Opt-in reliable (at-least-once) broadcast over Redis Streams. Disabled by default. */
     private Reliable reliable = new Reliable();
 
+    /** Opt-in HMAC authentication of cross-node envelopes. Disabled by default. */
+    private Auth auth = new Auth();
+
     // ---- Getters / Setters ----
 
     public boolean isEnable() { return enable; }
@@ -154,6 +157,9 @@ public class ClusterProperties {
     public Reliable getReliable() { return reliable; }
     public void setReliable(Reliable reliable) { this.reliable = reliable; }
 
+    public Auth getAuth() { return auth; }
+    public void setAuth(Auth auth) { this.auth = auth; }
+
     // ---- Nested classes ----
 
     /**
@@ -200,6 +206,27 @@ public class ClusterProperties {
         public void setPollCount(int v) { this.pollCount = v; }
         public int getDedupWindow() { return dedupWindow; }
         public void setDedupWindow(int v) { this.dedupWindow = v; }
+    }
+
+    /**
+     * HMAC envelope authentication. Off by default. When {@code enable=true}, every cross-node envelope
+     * is signed (HMAC-SHA256) and inbound envelopes with a missing/invalid tag are rejected.
+     */
+    public static class Auth {
+        /** Master gate. Default false (no signing; pass-through). */
+        private boolean enable = false;
+        /** Shared HMAC secret (UTF-8). Required when enable=true. Externalize via ${ENV}; never hardcode. */
+        private String secret;
+        /** Migration: when true, accept UNSIGNED inbound (still signing outbound) — for rolling rollout.
+         *  When false (default), reject unsigned inbound. */
+        private boolean permissive = false;
+
+        public boolean isEnable() { return enable; }
+        public void setEnable(boolean enable) { this.enable = enable; }
+        public String getSecret() { return secret; }
+        public void setSecret(String secret) { this.secret = secret; }
+        public boolean isPermissive() { return permissive; }
+        public void setPermissive(boolean permissive) { this.permissive = permissive; }
     }
 
     /** Behavior when the cluster transport (Redis) is lost. */

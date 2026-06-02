@@ -118,6 +118,23 @@
       "type": "java.lang.Integer",
       "description": "Per-URI ring size of recently-acked stream entry ids, to de-duplicate in-process redelivery (at-least-once still allows cross-crash duplicates; handlers should be idempotent).",
       "defaultValue": 1024
+    },
+    {
+      "name": "server.netty.websocket.cluster.auth.enable",
+      "type": "java.lang.Boolean",
+      "description": "Opt-in HMAC authentication of cross-node envelopes (anti-forgery). Disabled by default. When true, every envelope is signed (HMAC-SHA256) and inbound envelopes with a missing/invalid tag are rejected — closing the threat where a Redis writer forges originNodeId / injects / force-closes sessions. Enable cluster-wide (shared secret); see the rolling-upgrade note in the release notes.",
+      "defaultValue": false
+    },
+    {
+      "name": "server.netty.websocket.cluster.auth.secret",
+      "type": "java.lang.String",
+      "description": "Shared HMAC secret (UTF-8). REQUIRED when auth.enable=true. Externalize via an environment variable or secret manager (e.g. ${CLUSTER_AUTH_SECRET}); never hardcode. Use >= 32 chars. Redacted in logs."
+    },
+    {
+      "name": "server.netty.websocket.cluster.auth.permissive",
+      "type": "java.lang.Boolean",
+      "description": "Migration mode: when true, UNSIGNED inbound envelopes are accepted (while still signing outbound) so HMAC can be rolled out node-by-node without cross-node message loss; flip to false (strict) once all nodes sign. Default false.",
+      "defaultValue": false
     }
   ],
   "hints": [
