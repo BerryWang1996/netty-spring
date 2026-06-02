@@ -16,6 +16,7 @@
 
 package com.github.berrywang1996.netty.spring.web.websocket.cluster.redis;
 
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.NoOpMessageAuthenticator;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.*;
 import io.lettuce.core.RedisChannelHandler;
 import io.lettuce.core.RedisClient;
@@ -52,6 +53,7 @@ public class RedisPubSubBroker implements ClusterBroker {
     private static final String UNICAST_PREFIX = "netty:unicast:";
 
     private final EnvelopeCodec codec;
+    private final MessageAuthenticator authenticator;
     private final AtomicReference<BrokerState> state = new AtomicReference<>(BrokerState.ACTIVE);
 
     /** Connection for PUBLISH commands (shared, thread-safe in Lettuce). */
@@ -70,14 +72,14 @@ public class RedisPubSubBroker implements ClusterBroker {
     /** Notified the instant the Redis connection drops/recovers (event-driven degrade/recover). */
     private volatile TransportStateListener transportStateListener;
 
-    /**
-     * Creates a new broker with the given Redis client and envelope codec.
-     *
-     * @param redisClient the Lettuce Redis client
-     * @param codec       the envelope serializer/deserializer
-     */
+    /** Backward-compat constructor — no authentication (NoOp). */
     public RedisPubSubBroker(RedisClient redisClient, EnvelopeCodec codec) {
+        this(redisClient, codec, new NoOpMessageAuthenticator());
+    }
+
+    public RedisPubSubBroker(RedisClient redisClient, EnvelopeCodec codec, MessageAuthenticator authenticator) {
         this.codec = codec;
+        this.authenticator = authenticator;
 
         // Event-driven transport health: flip broker state the instant Redis drops/recovers and
         // notify the listener (the cluster degrades/recovers immediately, not up to a heartbeat
@@ -129,8 +131,13 @@ public class RedisPubSubBroker implements ClusterBroker {
                 }
                 ClusterMessageListener listener = channelListeners.get(channel);
                 if (listener != null) {
+                    String inner = authenticator.unwrap(message);
+                    if (inner == null) {
+                        log.warn("Rejected inbound cluster message on channel {} — missing/invalid HMAC tag", channel);
+                        return;
+                    }
                     try {
-                        ClusterEnvelope envelope = codec.decode(message);
+                        ClusterEnvelope envelope = codec.decode(inner);
                         if (envelope != null) { // null = unsupported version, already logged
                             listener.onMessage(envelope);
                         }
@@ -153,7 +160,7 @@ public class RedisPubSubBroker implements ClusterBroker {
     public void publish(String uri, ClusterEnvelope envelope) {
         checkActive();
         String channel = BROADCAST_PREFIX + uri;
-        String data = codec.encode(envelope);
+        String data = authenticator.wrap(codec.encode(envelope));
         publishConnection.async().publish(channel, data)
                 .exceptionally(ex -> logAsyncPublishFailure(channel, ex));
     }
@@ -162,7 +169,7 @@ public class RedisPubSubBroker implements ClusterBroker {
     public void unicast(String targetNodeId, ClusterEnvelope envelope) {
         checkActive();
         String channel = UNICAST_PREFIX + targetNodeId;
-        String data = codec.encode(envelope);
+        String data = authenticator.wrap(codec.encode(envelope));
         publishConnection.async().publish(channel, data)
                 .exceptionally(ex -> logAsyncPublishFailure(channel, ex));
     }
