@@ -54,7 +54,7 @@ public interface MessageAuthenticator {
 - **Receive:** `String inner = authenticator.unwrap(wire); if (inner == null) { drop + authRejected++ + warn; return; } ClusterEnvelope e = codec.decode(inner);`
 - The inbound size guard (RedisPubSubBroker) runs on the *wire* string before unwrap (cheap pre-check), unchanged.
 
-`authRejected` is a new `ClusterRuntimeStats` counter (envelopes dropped for missing/invalid tag), surfaced in `/actuator/health` `nettyCluster` like the other counters.
+The reject **counter lives on `HmacMessageAuthenticator`** (`getRejectedCount()`) — it makes the reject decision, is the single shared bean across both brokers, and is available at broker-construction time (unlike `ClusterRuntimeStats`, which `ClusterMessageSender` owns and constructs later). Brokers `log.warn` the drop with channel/stream context. Surfacing it under `/actuator/health` is a small follow-up (read the bean's count); the count is observable directly for tests now.
 
 ## Config (`server.netty.websocket.cluster.auth.*`)
 
@@ -93,5 +93,5 @@ Part of the 1.9.0 cycle (RC line). Develops on `1.9.0-RC2`; completing it cuts *
 ## Files (for the plan)
 
 - New: `spi/MessageAuthenticator.java`, `cluster/auth/NoOpMessageAuthenticator.java`, `cluster/auth/HmacMessageAuthenticator.java`.
-- Modified: `RedisPubSubBroker` + `RedisStreamsReliableBroker` (authenticator param + compat overload + wrap/unwrap), `ClusterProperties` (`Auth` nested config), `ClusterRuntimeStats` (`authRejected`), `NettyWebSocketClusterConfigure` (authenticator bean + inject), metadata JSON, docs.
+- Modified: `RedisPubSubBroker` + `RedisStreamsReliableBroker` (authenticator param + compat overload + wrap/unwrap), `ClusterProperties` (`Auth` nested config), `NettyWebSocketClusterConfigure` (authenticator bean + inject), metadata JSON, docs. (Reject counter lives on `HmacMessageAuthenticator`, not `ClusterRuntimeStats`.)
 - Tests: `MessageAuthenticatorTest` (unit), `ClusterAuthIntegrationTest` (real Redis), context-test additions.
