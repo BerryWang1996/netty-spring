@@ -22,7 +22,10 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterSessio
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.CoalescingRegistryWriter;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.DefaultMessagePayloadCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.HmacMessageAuthenticator;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.NoOpMessageAuthenticator;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.EnvelopeCodec;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MessageAuthenticator;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MessagePayloadCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.context.ClusterSessionHook;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeHeartbeat;
@@ -165,11 +168,33 @@ public class NettyWebSocketClusterConfigure {
         return new DefaultMessagePayloadCodec();
     }
 
+    @Bean
+    @ConditionalOnMissingBean(MessageAuthenticator.class)
+    public MessageAuthenticator messageAuthenticator(ClusterProperties properties) {
+        ClusterProperties.Auth auth = properties.getAuth();
+        if (!auth.isEnable()) {
+            return new NoOpMessageAuthenticator();
+        }
+        String secret = auth.getSecret();
+        if (secret == null || secret.trim().isEmpty()) {
+            throw new IllegalStateException("server.netty.websocket.cluster.auth.enable=true requires "
+                    + "a non-empty server.netty.websocket.cluster.auth.secret");
+        }
+        if (secret.length() < 32) {
+            log.warn("Cluster auth secret is short ({} chars) — use >= 32 chars of high-entropy secret "
+                    + "for HMAC-SHA256.", secret.length());
+        }
+        log.info("Cluster envelope HMAC authentication ENABLED (mode={})",
+                auth.isPermissive() ? "permissive" : "strict");
+        return new HmacMessageAuthenticator(secret.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                !auth.isPermissive());
+    }
+
     @Bean(destroyMethod = "shutdown")
     @ConditionalOnMissingBean(ClusterBroker.class)
     public RedisPubSubBroker clusterBroker(RedisClient redisClient, EnvelopeCodec envelopeCodec,
-                                           ClusterProperties properties) {
-        RedisPubSubBroker broker = new RedisPubSubBroker(redisClient, envelopeCodec);
+                                           ClusterProperties properties, MessageAuthenticator messageAuthenticator) {
+        RedisPubSubBroker broker = new RedisPubSubBroker(redisClient, envelopeCodec, messageAuthenticator);
         // Inbound guard: reject received messages larger than the outbound cap + headroom
         // (Base64 ~+33% + envelope metadata). 0 (unlimited) outbound => unlimited inbound.
         int maxOut = properties.getMessageMaxSizeBytes();
@@ -181,12 +206,12 @@ public class NettyWebSocketClusterConfigure {
     @ConditionalOnMissingBean(ReliableBroker.class)
     @ConditionalOnProperty(prefix = "server.netty.websocket.cluster.reliable", name = "enable", havingValue = "true")
     public ReliableBroker reliableBroker(RedisClient redisClient, EnvelopeCodec envelopeCodec,
-                                         ClusterProperties properties) {
+                                         ClusterProperties properties, MessageAuthenticator messageAuthenticator) {
         ClusterProperties.Reliable r = properties.getReliable();
         log.info("Reliable broadcast ENABLED (Redis Streams; maxlen={}, block={}ms)",
                 r.getStreamMaxLen(), r.getPollBlockMs());
         return new RedisStreamsReliableBroker(redisClient, envelopeCodec,
-                r.getStreamMaxLen(), r.getPollBlockMs(), r.getPollCount(), r.getDedupWindow());
+                r.getStreamMaxLen(), r.getPollBlockMs(), r.getPollCount(), r.getDedupWindow(), messageAuthenticator);
     }
 
     @Bean(destroyMethod = "shutdown")

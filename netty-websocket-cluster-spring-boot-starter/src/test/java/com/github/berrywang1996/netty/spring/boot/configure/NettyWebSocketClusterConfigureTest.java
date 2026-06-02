@@ -105,6 +105,10 @@ class NettyWebSocketClusterConfigureTest {
                     // reliable broadcast is OFF by default → no ReliableBroker bean
                     assertThat(context).doesNotHaveBean(
                             com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ReliableBroker.class);
+                    // auth off by default → the NoOp authenticator is wired
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MessageAuthenticator.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.NoOpMessageAuthenticator.class);
                 });
         // Context close here exercises the destroyMethod lifecycle (B1) without error.
     }
@@ -124,6 +128,35 @@ class NettyWebSocketClusterConfigureTest {
                             com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ReliableBroker.class);
                     assertThat(context.getBean(MessageSender.class)).isInstanceOf(ClusterMessageSender.class);
                 });
+    }
+
+    @Test
+    void authEnabled_wiresHmacAuthenticator() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-auth-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.auth.enable=true",
+                        "server.netty.websocket.cluster.auth.secret=this-is-a-32+char-cluster-secret!!")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MessageAuthenticator.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.HmacMessageAuthenticator.class);
+                });
+    }
+
+    @Test
+    void authEnabledWithoutSecret_failsContext() {
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-auth-nosecret",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.auth.enable=true")
+                .run(context -> assertThat(context).hasFailed());
     }
 
     @Configuration
