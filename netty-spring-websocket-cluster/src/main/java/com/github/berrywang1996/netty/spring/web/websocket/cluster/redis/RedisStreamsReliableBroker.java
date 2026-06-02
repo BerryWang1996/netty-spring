@@ -82,7 +82,7 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
                                       MessageAuthenticator authenticator) {
         this.redisClient = redisClient;
         this.codec = codec;
-        this.authenticator = authenticator;
+        this.authenticator = java.util.Objects.requireNonNull(authenticator, "authenticator");
         this.streamMaxLen = streamMaxLen;
         this.pollBlockMs = pollBlockMs;
         this.pollCount = pollCount;

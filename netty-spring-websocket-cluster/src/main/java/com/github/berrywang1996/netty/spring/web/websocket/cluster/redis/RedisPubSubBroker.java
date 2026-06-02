@@ -79,7 +79,7 @@ public class RedisPubSubBroker implements ClusterBroker {
 
     public RedisPubSubBroker(RedisClient redisClient, EnvelopeCodec codec, MessageAuthenticator authenticator) {
         this.codec = codec;
-        this.authenticator = authenticator;
+        this.authenticator = java.util.Objects.requireNonNull(authenticator, "authenticator");
 
         // Event-driven transport health: flip broker state the instant Redis drops/recovers and
         // notify the listener (the cluster degrades/recovers immediately, not up to a heartbeat
