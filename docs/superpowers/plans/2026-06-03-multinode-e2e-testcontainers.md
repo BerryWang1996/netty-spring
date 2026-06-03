@@ -18,7 +18,7 @@
 - Match on quoted code, not line numbers.
 
 ## Confirmed facts (verified — do not re-derive)
-- The parent imports `spring-boot-dependencies` 2.7.18, which **manages Testcontainers versions** → declare `org.testcontainers:testcontainers` with **no `<version>`**.
+- Spring Boot 2.7.x does **not** manage testcontainers (Boot 3.1+ does), so the parent `pom.xml` imports `testcontainers-bom` (via a `<testcontainers.version>` property) in `dependencyManagement`; child test deps then declare `org.testcontainers:testcontainers` with **no `<version>`**.
 - A `test-jar` is NOT used (its `package`-phase binding breaks the project's `mvn test` flow) — `ClusterTestRedis` is **duplicated** in both modules' test trees (a ~60-line test util; deliberate).
 - Starting a real node: `new SpringApplicationBuilder(App.class).run("--server.netty.port=N")` (see `DemoApplicationSmokeTest`). Free port: `try (ServerSocket s = new ServerSocket(0)) { return s.getLocalPort(); }` (see `NettyServerBootstrapConfigureTest.findAvailablePort`).
 - WS endpoint URL = `ws://host:port/<mapping-uri>` (path is the `@MessageMapping` value; query optional — see the demo's `/ws/chat?nickname=`).

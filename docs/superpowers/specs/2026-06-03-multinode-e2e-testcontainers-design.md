@@ -72,7 +72,7 @@ Both methods run with HMAC enabled, so a passing test also proves cross-node sig
 
 ### 3. Dependencies
 
-- Add `org.testcontainers:testcontainers` (core, for `GenericContainer`) — test scope, **no explicit version** — to `netty-spring-websocket-cluster` and `netty-websocket-cluster-spring-boot-starter`. The version is already managed by the `spring-boot-dependencies` BOM the parent imports, so **no separate `testcontainers-bom` is needed**.
+- Add `org.testcontainers:testcontainers` (core, for `GenericContainer`) — test scope, **no explicit version** — to `netty-spring-websocket-cluster` and `netty-websocket-cluster-spring-boot-starter`. Spring Boot 2.7.x's BOM does **not** manage testcontainers (that began in Boot 3.1), so the parent imports `testcontainers-bom` (a `<testcontainers.version>` property) in `dependencyManagement`, mirroring its existing `netty-bom` / `spring-framework-bom` imports; the child test deps then stay version-free. (TEST scope only — never on a main/runtime classpath.)
 - `ClusterTestRedis` is **duplicated** in both modules' test trees (cluster module package `…cluster`, starter package `…boot.configure`). A Maven `test-jar` was considered for sharing but rejected: its goal binds to the `package` phase, and the project's CI/local workflow is `mvn test` (which stops before `package`), so a test-jar dependency would make the starter's tests unresolvable. A ~60-line duplicated test util is the lower-risk choice and keeps `mvn test` green.
 
 ### 4. CI impact

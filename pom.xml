@@ -61,6 +61,8 @@
         <!-- runtime  -->
         <netty.version>4.1.134.Final</netty.version>
         <spring-boot.version>2.7.18</spring-boot.version>
+        <!-- test only: Spring Boot 2.7.x BOM does not manage testcontainers (Boot 3.1+ does) -->
+        <testcontainers.version>1.20.4</testcontainers.version>
         <!-- activation -->
         <activation.version>1.1.1</activation.version>
         <!-- provided -->
@@ -146,6 +148,20 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
                 <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!--
+              testcontainers managed versions — TEST scope only. Spring Boot 2.7.x's BOM does NOT
+              manage testcontainers (that began in Boot 3.1), so we import its BOM here. Used solely
+              by the two cluster modules' integration tests to provision a fallback Redis in CI; it
+              never appears on any main/runtime classpath or in a published artifact.
+            -->
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>${testcontainers.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
