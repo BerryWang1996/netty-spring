@@ -129,6 +129,41 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 - HMAC 仅保护 Redis 传输层（跨节点信封），不扩展至浏览器↔节点的 WebSocket 帧（见应用层加密 §8）。
 - 启用后日志中 `auth.secret` 值被脱敏（输出为 `[REDACTED]`）。
 
+### ⑧ 完整 Micrometer 集群指标 / Full Micrometer Cluster Metrics
+
+*Since V1.9.0-RC4.* 把集群已有的程序内运行时信号桥接为 **`netty.cluster.*` Micrometer 时序指标**，补全 1.7.0 起的可观测性体系（`netty.websocket.*` / `netty.http.*`）。沿用 1.7.0 的 `MeterBinder` 模式（`NettyWebSocketMeterBinder`）：`NettyClusterMeterBinder` 用 `FunctionCounter`/`Gauge` **只读直通**已有计数器，**不改动任何自增点**，热路径零开销。
+
+**可选 + 门控**：`micrometer-core` 在 classpath 且 `cluster.enable=true` 时才注册（`@ConditionalOnClass(MeterRegistry)` + `@ConditionalOnBean`）；缺失或集群关闭时零注册、零报错。**聚合粒度**（无 per-URI/per-session 标签，基数有界）。与既有 `ClusterHealthIndicator`（`/actuator/health`，point-in-time）互补，提供时序。
+
+#### 指标集（`netty.cluster.*`）
+
+11 个 counter：
+
+| 指标 | 含义 |
+|---|---|
+| `broadcast.published` | 交给 broker 发布的广播数 |
+| `broadcast.received` | 收到并本地投递的跨节点广播数 |
+| `broadcast.self_dropped` | 抑制的自投递广播数（origin == 本节点） |
+| `broadcast.skipped_degraded` | 因节点非 ACTIVE 跳过的跨节点广播数 |
+| `unicast.sent` | 发往远端节点的单播数 |
+| `publish.failures` | 失败/丢弃的集群发布数 |
+| `reliable.published` | 可靠广播发布数（XADD） |
+| `reliable.received` | 收到并本地投递的可靠广播数 |
+| `cache.hits` / `cache.misses` | 单播节点查找缓存命中/未命中 |
+| `auth.rejected` | 因缺失/无效 HMAC 标签被拒的入站信封数（未启用 HMAC 时恒为 0） |
+
+按 `state` 标签的状态 gauge（当前态为 `1.0`，其余为 `0.0`）：
+
+- `netty.cluster.node.state{state=joining|active|degraded|resync|draining|left}`（6 态）— 源 `ClusterNodeManager.getState()`
+- `netty.cluster.broker.state{state=active|degraded|resync|shutdown}`（4 态）— 源 `ClusterBroker.state()`
+
+比率（如缓存命中率）留给查询层计算（`hits/(hits+misses)`）。仪表盘可对 `netty_cluster_node_state{state="degraded"} == 1` 告警。
+
+#### 注意事项
+
+- 纯加性、可选；无 SPI/签名/行为变更；无新配置项（开关复用既有 `micrometer-core` classpath 探测 + `cluster.enable`）。
+- 指标为每节点本地视图（无 `node.id` 标签）；跨节点聚合在采集端（如 Prometheus）完成。
+
 ---
 
 
@@ -198,6 +233,7 @@ server:
   - （RC2）`ClusterReliableSenderTest` — reliableBroadcast 本地优先 fan-out、disabled 抛异常、origin 自投递抑制
   - （RC2）`ReliableBroadcastIntegrationTest` — 真实 Redis：发布/消费、断线重连回放（replay-on-resync，5/5）、死节点消费者组清理
   - （RC3）`MessageAuthenticatorTest` + `ClusterAuthIntegrationTest` — HMAC 签名/验签往返、篡改/错误密钥/缺签名拒绝、真实 Redis 同密钥接受 + 异密钥拒绝
+  - （RC4）`NettyClusterMeterBinderTest`（`SimpleMeterRegistry` 单测：counter 值、节点/broker 状态 gauge 选态、HMAC 拒绝计数、重复 bind 幂等）+ `NettyWebSocketClusterConfigureTest` 上下文用例（micrometer + `cluster.enable=true` 时 `NettyClusterMeterBinder` bean 装配）
 
 ## 升级指南
 
@@ -236,7 +272,6 @@ server:
 以下能力在 1.9.0 中**仍未实现**，推迟到 1.9.x 后续版本或 2.x：
 
 - **NATS broker**（ADR-001 规模化档位）
-- **完整 Micrometer 指标集**（`netty.cluster.*` meter-binder 时序）
 - **多 pub/sub 连接并行解码 / sharded pub/sub**
 - **Redis Cluster 客户端一等支持**（`RedisClusterClient`）
 - **W3C TraceContext 跨节点传播**（envelope 已预留 `traceparent` 字段）

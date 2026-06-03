@@ -7,7 +7,7 @@
 - **最新稳定版：`1.8.0`**（Maven Central）。**`1.9.0` 开发中（`1.9.0-RC3`）**：集群可靠性硬化 5 项全部落地 + 2 个新配置项（RC1），**RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in，`reliable.*` 5 个配置项）**，**RC3 新增 HMAC envelope 认证（`MessageAuthenticator` SPI，HMAC-SHA256，`auth.*` 3 个配置项）**；最终 1.9.0 待整周期完成。单机模式与 1.7.x/1.8.0 完全一致，详见 `docs/release-notes-1.9.0.md`。
 - 上一版本：`1.8.0`（WebSocket 集群支持：Redis Pub/Sub 跨节点 + 5 层 SPI + 291 测试。详见 `docs/release-notes-1.8.0.md`）。
 - `P0`–`P7` 全部里程碑已完成；项目历经"功能建设期 → 质量深化 → 产品化 → 性能优化 → 安全稳定性加固 → 可观测性增强 → 集群水平扩展 → 集群可靠性硬化"八个阶段。
-- 下一步：最终 1.9.0（RC3 已含可靠投递 + HMAC envelope 认证，待全量测试确认）。之后：**`2.0.0`** Spring Boot 3.x 迁移基线，**`2.1.0`** 企业安全准入。集群扩展后续项（NATS / 完整指标等）见下方 backlog。
+- 下一步：最终 1.9.0（RC4 已含可靠投递 + HMAC envelope 认证 + 完整 Micrometer 集群指标，待全量测试确认）。之后：**`2.0.0`** Spring Boot 3.x 迁移基线，**`2.1.0`** 企业安全准入。集群扩展后续项（NATS 等）见下方 backlog。
 
 ## 当前发版判断
 
@@ -89,7 +89,7 @@
 ### 第四刀：API 诚实化、可观测完整化、文档与 demo
 
 - ✅ `MessageSender` 接口设计修正：本地接口语义不变；集群查询作为新异步接口提供（`getClusterSessionIds` / `isSessionAliveCluster` 返回 `CompletionStage`）。
-- ✅/⏳ **运行时统计 + 健康**：✅ 1.8.0 提供 `ClusterRuntimeStats`（broadcastPublished / crossNodeReceived / selfDeliveryDropped / unicastSent / publishFailures / cacheHitRatio）+ `ClusterHealthIndicator`（`/actuator/health` 下 `nettyCluster`，节点/broker 状态 + 计数，actuator 在 classpath 时启用）；⏳ 完整 Micrometer meter-binder 指标集（`netty.cluster.*` 时序）推迟到 1.9.x。
+- ✅ **运行时统计 + 健康**：✅ 1.8.0 提供 `ClusterRuntimeStats`（broadcastPublished / crossNodeReceived / selfDeliveryDropped / unicastSent / publishFailures / cacheHitRatio）+ `ClusterHealthIndicator`（`/actuator/health` 下 `nettyCluster`，节点/broker 状态 + 计数，actuator 在 classpath 时启用）；✅ 完整 Micrometer meter-binder 指标集（`netty.cluster.*` 时序）已落地（1.9.0 RC4，`NettyClusterMeterBinder`：11 counter + 节点/broker 状态 gauge，聚合粒度，门控可选）。
 - ⏳ **（推迟 1.9.x）多节点 demo + Docker Compose + Testcontainers 端到端**：1.8.0 用真实 Redis（Docker）跑了 8 项 `RedisIntegrationTest` + 4 项性能基准，但多节点 demo 与 Testcontainers CI 阻塞项推迟。
 - ✅ 文档：`cluster-design.md` 标注实现范围与推迟项，README 增加集群快速接入 + 性能基准 + 选型/容量表，`release-notes-1.8.0.md` 覆盖兼容/迁移。
 
@@ -115,7 +115,6 @@
 以下项在 1.9.0 中**仍未实现**，推迟到后续版本：
 
 - **`NatsBroker` adapter（规模化中间件档位，ADR-001）**：在 `ClusterBroker` SPI 下新增 NATS 实现，兴趣路由消除 Redis Pub/Sub 的 N× 扇出放大；Redis 实现保留服务小集群。触发条件：有用户撞到 ≤~10 节点活跃广播天花板。
-- **完整 Micrometer 指标集**（`netty.cluster.*` meter-binder 时序）。
 - **多 pub/sub 连接并行解码 / sharded pub/sub**：规模化档位优化。
 - **Redis Cluster 客户端一等支持**（`RedisClusterClient`）。
 - **W3C TraceContext 跨节点传播**：envelope 已预留 `traceparent` 字段。
@@ -211,7 +210,7 @@
 | `1.7.1` | `1.7.0` 之上 4 项审计修复 + 依赖安全 | 上一版本 |
 | `1.8.0` | WebSocket 集群支持（Redis Pub/Sub + 5 层 SPI） | 上一版本 |
 | `1.9.0` | **集群可靠性硬化（RC1）+ 可靠投递 Redis Streams（RC2）+ HMAC envelope 认证（RC3）** | **开发中（RC3）** |
-| `1.9.x+` | 集群扩展项（NATS broker、完整指标、多节点 demo、Redis Cluster 客户端） | 规划中 |
+| `1.9.x+` | 集群扩展项（NATS broker、多节点 demo、Redis Cluster 客户端） | 规划中 |
 | `2.0.0` | Spring Boot 3.x 迁移基线 | 远期 |
 | `2.1.0` | 企业安全准入 | 远期（在 2.0.0 之后） |
 

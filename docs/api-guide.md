@@ -756,6 +756,19 @@ Add `spring-boot-starter-actuator` to your dependencies. Netty metrics are autom
 
 Distribution metrics (duration / size / fanout / latency) are routed to every bound `MeterRegistry`, so they work correctly alongside a `CompositeMeterRegistry` or multiple registries.
 
+**Cluster metrics** — *since V1.9.0* (requires cluster mode `server.netty.websocket.cluster.enable=true` with `micrometer-core` on the classpath; registered by `NettyClusterMeterBinder`):
+
+- `netty.cluster.broadcast.published` / `.received` / `.self_dropped` / `.skipped_degraded` (counters)
+- `netty.cluster.unicast.sent` (counter)
+- `netty.cluster.publish.failures` (counter)
+- `netty.cluster.reliable.published` / `.received` (counters — the reliable Redis Streams path)
+- `netty.cluster.cache.hits` / `.misses` (counters — unicast node-lookup cache)
+- `netty.cluster.auth.rejected` (counter — inbound envelopes rejected for a missing/invalid HMAC tag; stays `0` unless HMAC auth is enabled)
+- `netty.cluster.node.state` (gauge, tagged `state=joining|active|degraded|resync|draining|left` — `1.0` for the node's current state, `0.0` otherwise)
+- `netty.cluster.broker.state` (gauge, tagged `state=active|degraded|resync|shutdown` — `1.0` for the broker's current transport state, `0.0` otherwise)
+
+These read the existing in-process cluster counters (no hot-path cost) and are aggregate-only (no per-URI / per-session tags, so cardinality is bounded). They add time-series alongside the point-in-time `ClusterHealthIndicator` at `/actuator/health`. When the cluster is disabled or `micrometer-core` is absent, no cluster meters are registered.
+
 ### Structured Logging (MDC) — *since V1.7.0*
 
 The framework populates SLF4J [MDC](http://www.slf4j.org/manual.html#mdc) for the duration of each request / WebSocket frame and clears it afterwards. Available keys:

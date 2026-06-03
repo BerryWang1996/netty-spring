@@ -41,7 +41,7 @@
 | 写 pipeline 批量（`publish-batch-size` / `publish-flush-interval`） | ⏳ 未来版本 | 当前单条 async（Lettuce 连接层自动 pipeline） |
 | 频道基数硬上限 / 订阅 hold（`max-subscribed-channels` / `subscription-hold-duration`） | ⏳ 未来版本 | 订阅集由 `@MessageMapping` URI 固定，不会无界增长 |
 | Actuator 集群健康（`ClusterHealthIndicator`，节点/broker 状态 + 运行时计数） | ✅ | `/actuator/health` 下 `nettyCluster`；actuator 在 classpath 时启用 |
-| 完整 Micrometer 指标集（meter-binder） | ⏳ 1.9.x | 1.8.0 提供程序内 `ClusterRuntimeStats` + 上面的 health indicator |
+| 完整 Micrometer 指标集（meter-binder） | ✅ 1.9.0 RC4 | `NettyClusterMeterBinder`：11 个 counter + 节点/broker 状态 gauge（按 `state` 标签）；聚合粒度（无 per-URI 标签）；只读 `ClusterRuntimeStats`；需 `micrometer-core` + `cluster.enable=true` |
 | auto-config 装配测试（ApplicationContextRunner） | ✅ | 验证 enable=true→`@Primary` 为 ClusterMessageSender + health indicator；enable=false→零集群 bean |
 | W3C TraceContext 跨节点传播 | ⏳ 1.9.x | envelope 已留 `traceparent` 字段 |
 | NATS broker（ADR-001 规模化档位） | ⏳ 1.9.x | SPI 下新增实现，非替换 |
@@ -464,10 +464,10 @@ netty-spring/
 - ✅ **registry 限速**（`session-registry-write-rate`）：token-bucket `CoalescingRegistryWriter`，防注册风暴；register 永不丢弃。
 - ✅ **可靠投递（Redis Streams `reliableBroadcast`）**（RC2）：per-URI Redis Stream `netty:cluster:rstream:{uri}`；每节点一个消费者组（`g:{nodeId}`）；断线重连自动 replay-on-resync；`MAXLEN ~` 有界保留；进程内 PEL 去重；origin 自投递抑制；死节点消费者组随 `ClusterReaper` 清理。详见 §3 可靠投递设计注记。
 - ✅ **HMAC envelope 认证**（RC3）：传输层 `MessageAuthenticator` SPI，默认实现 `HmacMessageAuthenticator`（HMAC-SHA256，常量时间比较）；线格式 `H1:{base64url(hmac)}:{payload}`；广播/单播/CLOSE/Streams 路径统一签名；`auth.*` 3 个配置项（`enable`、`secret`、`permissive`）；默认关闭（`auth.enable=false`），零额外开销；NoOp 剥离 `H1:` 标签以兼容混合滚动期；三阶段零停机滚动升级；**仅防伪造（anti-forgery）**，不防重放（详见 `docs/api-guide.md` §9.2）。
+- ✅ **完整 Micrometer 指标集（meter-binder）**（RC4）：`NettyClusterMeterBinder` 把程序内 `ClusterRuntimeStats` 计数器 + 节点/broker 状态 + HMAC 拒绝计数桥接为 `netty.cluster.*` 时序——11 个 counter（broadcast published/received/self_dropped/skipped_degraded、unicast sent、publish failures、reliable published/received、cache hits/misses、auth rejected）+ 按 `state` 标签的 `netty.cluster.node.state`（6 态）/`netty.cluster.broker.state`（4 态）gauge。沿用 1.7.0 的 `MeterBinder` 模式（`FunctionCounter`/`Gauge` 只读直通，无热路径开销）；**聚合粒度**（无 per-URI/per-session 标签，基数有界）；`@ConditionalOnClass(MeterRegistry)` + `@ConditionalOnBean` 门控，缺 `micrometer-core` 或 `cluster.enable=false` 时零注册。与既有 `ClusterHealthIndicator`（point-in-time）互补。
 
 **⏳ 仍推迟到后续版本的项：**
 
-- **完整 Micrometer 指标集（meter-binder）**：已提供 `ClusterHealthIndicator` + 程序内 `ClusterRuntimeStats`；完整 `MeterBinder` 指标集（`netty.cluster.*` 时序）仍在路线图。
 - **多 pub/sub 连接并行解码 / sharded pub/sub / 写 pipeline 批量**：规模化档位优化，见实现范围表。
 - **Redis Cluster 客户端一等支持**：需要 `RedisClusterClient`（不同客户端类型）。
 - **NATS broker**（ADR-001 规模化档位）：`NatsBroker` SPI 实现，消除 N× 扇出放大。

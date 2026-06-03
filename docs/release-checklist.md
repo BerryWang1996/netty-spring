@@ -122,4 +122,4 @@
 
 ### `1.9.x+`（规划中）
 
-集群扩展项（仍推迟）：NATS broker（ADR-001）、Redis Streams 可靠投递（`reliableBroadcast`）、完整 Micrometer 指标集、HMAC envelope 认证、多 pub/sub 连接并行解码、sharded pub/sub、Redis Cluster 客户端一等支持、W3C TraceContext 跨节点传播、多节点 demo + Testcontainers。详见 `development-plan.md`。
+集群扩展项（仍推迟）：NATS broker（ADR-001）、多 pub/sub 连接并行解码、sharded pub/sub、Redis Cluster 客户端一等支持、W3C TraceContext 跨节点传播、多节点 demo + Testcontainers。详见 `development-plan.md`。（已落地并移出本列表：可靠投递 `reliableBroadcast` → RC2；HMAC envelope 认证 → RC3；完整 Micrometer 集群指标 → RC4。）
