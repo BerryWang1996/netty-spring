@@ -16,15 +16,18 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Real-Redis integration for HMAC envelope auth over the Pub/Sub broker. Skipped without localhost:16379. */
 class ClusterAuthIntegrationTest {
 
-    private static final String REDIS_URI = "redis://localhost:16379";
+    private static String REDIS_URI;
     private static final String SECRET = "this-is-a-32+char-cluster-secret!!";
     private static boolean redisAvailable;
     private static RedisClient probe;
 
     @BeforeAll
     static void check() {
-        try { probe = RedisClient.create(REDIS_URI); StatefulRedisConnection<String,String> c = probe.connect();
-            c.sync().ping(); c.close(); redisAvailable = true; } catch (Exception e) { redisAvailable = false; }
+        redisAvailable = ClusterTestRedis.available();
+        if (redisAvailable) {
+            REDIS_URI = ClusterTestRedis.uri();
+            probe = RedisClient.create(REDIS_URI);
+        }
     }
     @AfterAll static void done() { if (probe != null) try { probe.shutdown(); } catch (Exception ignored) {} }
 

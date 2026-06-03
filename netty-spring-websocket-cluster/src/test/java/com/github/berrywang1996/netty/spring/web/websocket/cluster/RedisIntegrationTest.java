@@ -38,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class RedisIntegrationTest {
 
-    private static final String REDIS_URI = "redis://localhost:16379";
+    private static String REDIS_URI;
 
     private static RedisClient redisClient;
     private static StatefulRedisConnection<String, String> connection;
@@ -46,18 +46,17 @@ class RedisIntegrationTest {
 
     @BeforeAll
     static void checkRedis() {
-        try {
-            redisClient = RedisClient.create(REDIS_URI);
-            connection = redisClient.connect();
-            connection.sync().ping();
-            redisAvailable = true;
-            // Clean up any leftover keys from previous test runs
-            connection.sync().eval("for _,k in ipairs(redis.call('keys','netty:*')) do redis.call('del',k) end",
-                    io.lettuce.core.ScriptOutputType.INTEGER);
-        } catch (Exception e) {
-            System.out.println("Redis not available at " + REDIS_URI + " — skipping integration tests: " + e.getMessage());
-            redisAvailable = false;
+        redisAvailable = ClusterTestRedis.available();
+        if (!redisAvailable) {
+            System.out.println("No Redis and no Docker — skipping integration tests");
+            return;
         }
+        REDIS_URI = ClusterTestRedis.uri();
+        redisClient = RedisClient.create(REDIS_URI);
+        connection = redisClient.connect();
+        // Clean up any leftover keys from previous test runs
+        connection.sync().eval("for _,k in ipairs(redis.call('keys','netty:*')) do redis.call('del',k) end",
+                io.lettuce.core.ScriptOutputType.INTEGER);
     }
 
     @AfterAll

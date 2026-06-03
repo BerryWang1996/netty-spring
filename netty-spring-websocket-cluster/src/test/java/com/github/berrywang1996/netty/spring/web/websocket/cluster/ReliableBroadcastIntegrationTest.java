@@ -16,20 +16,19 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Real-Redis integration for reliable broadcast (Redis Streams). Skipped without localhost:16379. */
 class ReliableBroadcastIntegrationTest {
 
-    private static final String REDIS_URI = "redis://localhost:16379";
     private static RedisClient client;
     private static StatefulRedisConnection<String, String> conn;
     private static boolean redisAvailable;
 
     @BeforeAll
     static void check() {
-        try {
-            client = RedisClient.create(REDIS_URI);
-            conn = client.connect();
-            conn.sync().ping();
-            redisAvailable = true;
-            wipe();
-        } catch (Exception e) { redisAvailable = false; }
+        redisAvailable = ClusterTestRedis.available();
+        if (!redisAvailable) {
+            return;
+        }
+        client = ClusterTestRedis.newClient();
+        conn = client.connect();
+        wipe();
     }
 
     @AfterAll

@@ -3,8 +3,6 @@ package com.github.berrywang1996.netty.spring.boot.configure;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterMessageSender;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
 import com.github.berrywang1996.netty.spring.web.websocket.context.*;
-import io.lettuce.core.RedisClient;
-import io.lettuce.core.api.StatefulRedisConnection;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -31,20 +29,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class NettyWebSocketClusterConfigureTest {
 
-    private static final String REDIS_URI = "redis://localhost:16379";
+    private static String REDIS_URI = "redis://localhost:16379";
     private static boolean redisAvailable;
 
     @BeforeAll
     static void checkRedis() {
-        try {
-            RedisClient c = RedisClient.create(REDIS_URI);
-            StatefulRedisConnection<String, String> conn = c.connect();
-            conn.sync().ping();
-            conn.close();
-            c.shutdown();
-            redisAvailable = true;
-        } catch (Exception e) {
-            redisAvailable = false;
+        redisAvailable = ClusterTestRedis.available();
+        if (redisAvailable) {
+            REDIS_URI = ClusterTestRedis.uri();
         }
     }
 
