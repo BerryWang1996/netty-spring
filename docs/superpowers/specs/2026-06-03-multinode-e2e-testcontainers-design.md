@@ -72,9 +72,8 @@ Both methods run with HMAC enabled, so a passing test also proves cross-node sig
 
 ### 3. Dependencies
 
-- Add `org.testcontainers:testcontainers-bom` (import scope) to the **parent** `dependencyManagement` so versions are centralized.
-- Add `org.testcontainers:testcontainers` (core, for `GenericContainer`) — test scope — to `netty-spring-websocket-cluster` and `netty-websocket-cluster-spring-boot-starter`.
-- The shared `ClusterTestRedis` lives in `netty-spring-websocket-cluster/src/test`; the starter consumes it via a Maven **`test-jar`** dependency (standard cross-module test-util sharing: add a `maven-jar-plugin` `test-jar` execution to the cluster module, and a `<type>test-jar</type>` test dependency in the starter). The starter still declares its own Testcontainers test dep (test-jar deps are not transitive).
+- Add `org.testcontainers:testcontainers` (core, for `GenericContainer`) — test scope, **no explicit version** — to `netty-spring-websocket-cluster` and `netty-websocket-cluster-spring-boot-starter`. The version is already managed by the `spring-boot-dependencies` BOM the parent imports, so **no separate `testcontainers-bom` is needed**.
+- `ClusterTestRedis` is **duplicated** in both modules' test trees (cluster module package `…cluster`, starter package `…boot.configure`). A Maven `test-jar` was considered for sharing but rejected: its goal binds to the `package` phase, and the project's CI/local workflow is `mvn test` (which stops before `package`), so a test-jar dependency would make the starter's tests unresolvable. A ~60-line duplicated test util is the lower-risk choice and keeps `mvn test` green.
 
 ### 4. CI impact
 
@@ -109,7 +108,7 @@ Part of the 1.9.0 cycle (RC line). Develops on `1.9.0-RC4`; completing it cuts *
 
 ## Files (for the plan)
 
-- **New:** `netty-spring-websocket-cluster/src/test/java/.../cluster/ClusterTestRedis.java` (resolver); `netty-websocket-cluster-spring-boot-starter/src/test/java/.../ClusterMultiNodeE2ETest.java` (+ its inner `E2ETestApp` + test WS controller).
+- **New:** `netty-spring-websocket-cluster/src/test/java/.../cluster/ClusterTestRedis.java` (resolver) + a self-test; the same `ClusterTestRedis.java` **duplicated** at `netty-websocket-cluster-spring-boot-starter/src/test/java/.../boot/configure/`; `netty-websocket-cluster-spring-boot-starter/src/test/java/.../ClusterMultiNodeE2ETest.java` (+ its inner `E2ETestApp` + test WS controller).
 - **Modified (test-only):** `RedisIntegrationTest`, `ReliableBroadcastIntegrationTest`, `ClusterAuthIntegrationTest`, `NettyWebSocketClusterConfigureTest` (retrofit to `ClusterTestRedis`).
-- **Modified (poms):** parent `pom.xml` (Testcontainers BOM import); `netty-spring-websocket-cluster/pom.xml` (Testcontainers test dep + `test-jar` execution); `netty-websocket-cluster-spring-boot-starter/pom.xml` (Testcontainers test dep + cluster-module `test-jar` test dep).
+- **Modified (poms):** `netty-spring-websocket-cluster/pom.xml` + `netty-websocket-cluster-spring-boot-starter/pom.xml` (each: `org.testcontainers:testcontainers` test dep, no version — Boot-managed). No parent/BOM/test-jar change.
 - **Modified (CI/docs):** `.github/workflows/ci.yml` (clarifying comment); `docs/release-notes-1.9.0.md` (RC5 section + test count), `docs/cluster-design.md` + `docs/development-plan.md` + `docs/release-checklist.md` (move "多节点 demo + Testcontainers" item to ✅ for the Testcontainers/E2E half; note the runnable Docker demo remains deferred).
