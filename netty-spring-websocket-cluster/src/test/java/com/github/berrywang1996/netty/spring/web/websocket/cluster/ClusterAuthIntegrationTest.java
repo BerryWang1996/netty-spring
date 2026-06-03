@@ -5,7 +5,6 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleT
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisPubSubBroker;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope;
 import io.lettuce.core.RedisClient;
-import io.lettuce.core.api.StatefulRedisConnection;
 import org.junit.jupiter.api.*;
 
 import java.util.List;
