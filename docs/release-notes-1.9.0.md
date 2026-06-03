@@ -1,6 +1,6 @@
 # Release Notes — v1.9.0 (开发中 / in development)
 
-> 状态：**开发中（1.9.0-RC4，2026-06-03）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）。最终 1.9.0 发布日期待整个周期完成后确定。
+> 状态：**开发中（1.9.0-RC5，2026-06-03）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）。最终 1.9.0 发布日期待整个周期完成后确定。
 
 ## 版本定位
 
@@ -244,7 +244,7 @@ server:
 
 ## 测试覆盖
 
-- **324 个测试，11 个模块，全部通过**（`mvn test`，Redis 7.4.9 live on localhost:16379）。
+- **327 个测试，11 个模块，全部通过**（`mvn test`，Redis + Docker/Testcontainers live；CI 用 Testcontainers 自带 Redis）。
 - 1.9.0 新增测试：
   - `ClusterNodeManagerReliabilityTest` — 线程隔离调度器验证、宽限期抑制逻辑、双调度器并发压测
   - `ClusterRegistryWriterTest` — token-bucket 直通路径、超速合并、零丢失断言、并发注册风暴模拟
