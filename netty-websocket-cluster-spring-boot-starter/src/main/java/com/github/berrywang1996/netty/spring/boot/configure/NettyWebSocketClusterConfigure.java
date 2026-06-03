@@ -45,6 +45,7 @@ import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSender
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -326,9 +327,14 @@ public class NettyWebSocketClusterConfigure {
      * safely visible with no race in practice.
      */
     @Bean
-    public SmartInitializingSingleton clusterSessionHookResolverWiring(NettyServerBootstrap nettyServer,
-                                                                       ClusterSessionHook clusterSessionHook) {
+    public SmartInitializingSingleton clusterSessionHookResolverWiring(
+            ObjectProvider<NettyServerBootstrap> nettyServerProvider, ClusterSessionHook clusterSessionHook) {
         return () -> {
+            NettyServerBootstrap nettyServer = nettyServerProvider.getIfAvailable();
+            if (nettyServer == null) {
+                // No embedded Netty server in this context (e.g. a slice/context test) — nothing to wire.
+                return;
+            }
             Map<String, ?> resolvers = nettyServer.getWebSocketMappingResolverMap();
             if (resolvers == null) {
                 return;
