@@ -39,10 +39,13 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisSt
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ReliableBroker;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.SessionRegistry;
+import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
+import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSender;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -52,6 +55,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+
+import java.util.Map;
 
 /**
  * Spring Boot auto-configuration for WebSocket cluster support.
@@ -306,5 +311,37 @@ public class NettyWebSocketClusterConfigure {
             ClusterMessageSender clusterSender) {
         log.info("Registering cluster session hook for distributed session lifecycle");
         return new ClusterSessionHookImpl(clusterRegistryWriter, nodeManager, clusterSender);
+    }
+
+    /**
+     * Wires the {@link ClusterSessionHook} onto the live WebSocket resolvers AFTER all singletons
+     * are instantiated. This is required because {@code NettyServerBootstrapConfigure.nettyServer()}
+     * eagerly starts the server — running the resolver scan and its one-shot
+     * {@code getBeansOfType(ClusterSessionHook.class)} lookup — during its own bean creation, at
+     * which point this config's {@code clusterSessionHook} bean is not yet resolvable (it
+     * transitively depends on the local {@code messageSender}/server beans then mid-creation, so the
+     * lookup returns empty). Without this late wiring the distributed session registry is never
+     * populated, so cross-node unicast and targeted-close cannot route. The resolver's hook field is
+     * {@code volatile}, and external clients only connect after startup completes, so this set is
+     * safely visible with no race in practice.
+     */
+    @Bean
+    public SmartInitializingSingleton clusterSessionHookResolverWiring(NettyServerBootstrap nettyServer,
+                                                                       ClusterSessionHook clusterSessionHook) {
+        return () -> {
+            Map<String, ?> resolvers = nettyServer.getWebSocketMappingResolverMap();
+            if (resolvers == null) {
+                return;
+            }
+            int wired = 0;
+            for (Object resolver : resolvers.values()) {
+                if (resolver instanceof MessageMappingResolver) {
+                    ((MessageMappingResolver) resolver).setClusterSessionHook(clusterSessionHook);
+                    wired++;
+                }
+            }
+            log.info("Wired cluster session hook onto {} websocket resolver(s) after startup "
+                    + "(the eager server scan runs before the cluster hook bean exists; this closes that gap)", wired);
+        };
     }
 }
