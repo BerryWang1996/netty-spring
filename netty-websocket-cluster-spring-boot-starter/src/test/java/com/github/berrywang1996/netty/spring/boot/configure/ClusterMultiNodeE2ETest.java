@@ -116,9 +116,10 @@ class ClusterMultiNodeE2ETest {
 
             // The distributed session registry is written asynchronously (CoalescingRegistryWriter),
             // so node B may not see the just-connected session immediately. Wait until node B can
-            // resolve it through the registry (ground truth — this bypasses ClusterMessageSender's
-            // lookup cache, which would otherwise cache a not-found miss if we sent too early), then
-            // issue the unicast once.
+            // resolve it through the registry (queried directly here as ground truth) before issuing
+            // the unicast, so the single send routes deterministically instead of racing the async
+            // registration. (ClusterMessageSender does NOT cache lookup misses — it self-heals on the
+            // next send — but gating on the registry keeps this test from flaking on timing.)
             SessionRegistry registryB = nodeB.getBean(SessionRegistry.class);
             waitUntil(() -> "e2e-node-A".equals(lookupNode(registryB, sid)), 8000);
             assertEquals("e2e-node-A", lookupNode(registryB, sid),
