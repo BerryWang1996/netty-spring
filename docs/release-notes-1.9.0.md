@@ -164,6 +164,25 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 - 纯加性、可选；无 SPI/签名/行为变更；无新配置项（开关复用既有 `micrometer-core` classpath 探测 + `cluster.enable`）。
 - 指标为每节点本地视图（无 `node.id` 标签）；跨节点聚合在采集端（如 Prometheus）完成。
 
+### ⑨ 多节点 E2E + Testcontainers CI / Multi-Node E2E + Testcontainers CI
+
+*Since V1.9.0-RC5.* 让集群行为在 CI 中**真正被验证**，并新增一个全栈双节点端到端测试。
+
+**Testcontainers-Redis 解析器（`ClusterTestRedis`）**：集群集成测试此前依赖手工启动的 `localhost:16379`，在 CI（无 Redis）中被 `assumeTrue` 静默跳过——集群跨节点行为从未在 CI 验证过。新增解析器按序选用 Redis：环境变量 `CLUSTER_TEST_REDIS_URI` → 可达的 `localhost:16379`（保留本地快速回路）→ Testcontainers `redis:7-alpine`（让 CI 拉起容器）→ 都没有则跳过。3 个既有集成测试 + 上下文测试改用它，**现在每次提交都在 CI 真实运行**（GitHub `ubuntu-latest` 自带 Docker，无需在 workflow 里加 Redis service）。
+
+**双节点 E2E（`ClusterMultiNodeE2ETest`）**：进程内启动**两个完整 Spring Boot 节点**（真实 Netty WebSocket server + `ClusterMessageSender`，集群开启，HMAC 开启，共享一个 Redis），用 JDK `java.net.http.WebSocket` 客户端连到节点 A，断言：(a) 节点 B 广播 → A 的客户端收到（跨节点 fan-out）+ 节点 B `netty.cluster.broadcast.published` 指标自增；(b) 节点 B 单播到 A 的会话 → A 的客户端收到（跨节点路由）。证明完整的 `MessageSender → broker → registry → 活跃会话` 路径跨节点可用。
+
+#### 🐛 修复：跨节点单播在自动装配下从未生效（影响 1.8.0 ~ 1.9.0-RC4）
+
+上面的 E2E 暴露并修复了一个**真实的高严重度缺陷**：集群模式下，**跨节点单播（`sendMessage` / `sendTextToSession` 到其他节点的会话）与跨节点定向关闭一直不生效**——分布式会话注册表从未被写入。
+
+- **根因**：`NettyServerBootstrapConfigure.nettyServer()` 在自身 bean 创建期间**急切启动** Netty server（同时跑 resolver 扫描 + 一次性 `getBeansOfType(ClusterSessionHook)` 查找）；而集群配置 `@AutoConfigureAfter` server 配置（1.8.0 为修 `@Primary` 顺序而引入），此刻 `clusterSessionHook` bean 尚不可解析（它传递依赖正在创建中的 `messageSender`/server bean），查找返回空 → hook 从未挂到 resolver → 注册表为空 → 单播无法路由。**广播不受影响**（Pub/Sub 不查注册表），所以此前测试与 demo 都未发现。
+- **修复**：集群配置新增一个 `SmartInitializingSingleton`，在**所有单例创建完成后**把 `ClusterSessionHook` 挂到已建好的 WebSocket resolver 上（resolver 的 hook 字段为 `volatile`，外部客户端只在启动完成后接入，无实际竞态）。不改动急切启动时序，也不触碰敏感的 `@Primary` 装配顺序。
+- **回归保护**：`ClusterMultiNodeE2ETest` 的单播断言现在是永久回归门（借 Testcontainers 在 CI 运行）。经对抗式验证：临时禁用修复 → 单播失败、广播仍通过，与根因吻合。
+- **单机模式不受影响**：修复仅在 `cluster.enable=true` 时激活。
+
+> ⚠️ **集群用户务必升级**：若你在 1.8.0 ~ 1.9.0-RC4 的集群模式下依赖跨节点单播或定向关闭，请升级到本版本——这些操作此前是静默失效的。
+
 ---
 
 
@@ -234,6 +253,7 @@ server:
   - （RC2）`ReliableBroadcastIntegrationTest` — 真实 Redis：发布/消费、断线重连回放（replay-on-resync，5/5）、死节点消费者组清理
   - （RC3）`MessageAuthenticatorTest` + `ClusterAuthIntegrationTest` — HMAC 签名/验签往返、篡改/错误密钥/缺签名拒绝、真实 Redis 同密钥接受 + 异密钥拒绝
   - （RC4）`NettyClusterMeterBinderTest`（`SimpleMeterRegistry` 单测：counter 值、节点/broker 状态 gauge 选态、HMAC 拒绝计数、重复 bind 幂等）+ `NettyWebSocketClusterConfigureTest` 上下文用例（micrometer + `cluster.enable=true` 时 `NettyClusterMeterBinder` bean 装配）
+  - （RC5）`ClusterTestRedis` 解析器（localhost-first → Testcontainers `redis:7-alpine` 回退）+ 4 个集群集成测试改用它（CI 真实运行，不再跳过）；`ClusterMultiNodeE2ETest` 双节点全栈 E2E（跨节点广播 + 单播 + `netty.cluster.*` 指标断言，HMAC 开启，真实 Redis）—— 同时锁定跨节点单播 hook-wiring 修复的回归门
 
 ## 升级指南
 
@@ -246,6 +266,7 @@ server:
    server.netty.websocket.cluster.redis-loss-grace-period-ms=0
    ```
 4. 单机模式（`cluster.enable=false` 或缺省）无任何变化。
+5. **（RC5 重要修复）跨节点单播 / 定向关闭**：1.8.0 ~ 1.9.0-RC4 的集群模式下，跨节点单播（`sendMessage` / `sendTextToSession` 到其他节点会话）与跨节点定向关闭因 `ClusterSessionHook` 装配顺序缺陷而**静默失效**（广播不受影响）。本版本已修复，无需任何代码或配置改动——升级即生效。详见上文 §⑨。
 
 ```xml
 <!-- 集群 starter 版本号改为 1.9.0 -->
@@ -275,6 +296,6 @@ server:
 - **多 pub/sub 连接并行解码 / sharded pub/sub**
 - **Redis Cluster 客户端一等支持**（`RedisClusterClient`）
 - **W3C TraceContext 跨节点传播**（envelope 已预留 `traceparent` 字段）
-- **多节点 demo + Testcontainers 端到端 CI**
+- **可运行的多节点 Docker 示例**（docker-compose + 负载均衡 + 浏览器跨节点演示）。注：Testcontainers 端到端 CI + 进程内双节点 E2E 已在 RC5 落地，仍推迟的只是面向人工运行的 Docker 示例
 
 详见 `docs/cluster-design.md` 与 `docs/development-plan.md`。

@@ -35,6 +35,9 @@ jobs:
           cache: maven
 
       - name: Run tests
+        # Cluster integration tests self-provision Redis via Testcontainers (ClusterTestRedis prefers
+        # a reachable localhost:16379 and otherwise starts a redis:7-alpine container using the
+        # runner's Docker). Do NOT add a Redis service here — it would be unused.
         run: bash ./mvnw $MAVEN_ARGS test
 
   sbom:

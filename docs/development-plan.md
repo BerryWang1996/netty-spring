@@ -4,14 +4,14 @@
 
 ## 当前结论
 
-- **最新稳定版：`1.8.0`**（Maven Central）。**`1.9.0` 开发中（`1.9.0-RC4`）**：集群可靠性硬化 5 项全部落地 + 2 个新配置项（RC1），**RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in，`reliable.*` 5 个配置项）**，**RC3 新增 HMAC envelope 认证（`MessageAuthenticator` SPI，HMAC-SHA256，`auth.*` 3 个配置项）**，**RC4 新增完整 Micrometer 集群指标（`NettyClusterMeterBinder`，`netty.cluster.*` 时序，opt-in + 门控）**；最终 1.9.0 待整周期完成。单机模式与 1.7.x/1.8.0 完全一致，详见 `docs/release-notes-1.9.0.md`。
+- **最新稳定版：`1.8.0`**（Maven Central）。**`1.9.0` 开发中（`1.9.0-RC5`）**：集群可靠性硬化 5 项全部落地 + 2 个新配置项（RC1），**RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in，`reliable.*` 5 个配置项）**，**RC3 新增 HMAC envelope 认证（`MessageAuthenticator` SPI，HMAC-SHA256，`auth.*` 3 个配置项）**，**RC4 新增完整 Micrometer 集群指标（`NettyClusterMeterBinder`，`netty.cluster.*` 时序，opt-in + 门控）**，**RC5 新增多节点 E2E + Testcontainers CI（集群测试在 CI 真实运行）并修复跨节点单播 hook-wiring 缺陷（影响 1.8.0~RC4，仅集群模式）**；最终 1.9.0 待整周期完成。单机模式与 1.7.x/1.8.0 完全一致，详见 `docs/release-notes-1.9.0.md`。
 - 上一版本：`1.8.0`（WebSocket 集群支持：Redis Pub/Sub 跨节点 + 5 层 SPI + 291 测试。详见 `docs/release-notes-1.8.0.md`）。
 - `P0`–`P7` 全部里程碑已完成；项目历经"功能建设期 → 质量深化 → 产品化 → 性能优化 → 安全稳定性加固 → 可观测性增强 → 集群水平扩展 → 集群可靠性硬化"八个阶段。
-- 下一步：最终 1.9.0（RC4 已含可靠投递 + HMAC envelope 认证 + 完整 Micrometer 集群指标，待全量测试确认）。之后：**`2.0.0`** Spring Boot 3.x 迁移基线，**`2.1.0`** 企业安全准入。集群扩展后续项（NATS 等）见下方 backlog。
+- 下一步：最终 1.9.0（RC5 已含可靠投递 + HMAC envelope 认证 + 完整 Micrometer 集群指标 + 多节点 E2E/Testcontainers CI + 跨节点单播修复，待全量测试确认）。之后：**`2.0.0`** Spring Boot 3.x 迁移基线，**`2.1.0`** 企业安全准入。集群扩展后续项（NATS 等）见下方 backlog。
 
 ## 当前发版判断
 
-`1.9.0-RC4`（开发中）在 `1.8.0` 之上完成 **集群可靠性硬化**（RC1）+ **可靠投递**（RC2）+ **HMAC envelope 认证**（RC3）+ **完整 Micrometer 集群指标**（RC4）（向后兼容，默认单机模式行为与 `1.7.x`/`1.8.0` 完全一致）；最终 1.9.0 待全量测试完成：
+`1.9.0-RC5`（开发中）在 `1.8.0` 之上完成 **集群可靠性硬化**（RC1）+ **可靠投递**（RC2）+ **HMAC envelope 认证**（RC3）+ **完整 Micrometer 集群指标**（RC4）+ **多节点 E2E + Testcontainers CI / 跨节点单播 hook-wiring 修复**（RC5）（向后兼容，默认单机模式行为与 `1.7.x`/`1.8.0` 完全一致）；最终 1.9.0 待全量测试完成：
 
 - **5 项硬化全部落地**（原 1.8.0 推迟项）：Redis 失联宽限期（`redis-loss-grace-period-ms`）、心跳/对账线程隔离 + 批量 EXISTS、原子 Lua deregister、对账选主去重（`ClusterReaper` SPI）、registry 写合并限速（`session-registry-write-rate`，`CoalescingRegistryWriter`）。
 - **RC2 新增：可靠投递（Redis Streams）**：`clusterMessageSender.reliableBroadcast(uri, message)`，at-least-once，opt-in（`reliable.enable=false` 默认关闭）；per-URI Stream + 每节点消费者组 + replay-on-resync + `MAXLEN ~` 有界保留 + 进程内 PEL 去重；`reliable.*` 5 个配置项（`enable`、`stream-max-len`、`poll-block-ms`、`poll-count`、`dedup-window`）。
@@ -90,17 +90,17 @@
 
 - ✅ `MessageSender` 接口设计修正：本地接口语义不变；集群查询作为新异步接口提供（`getClusterSessionIds` / `isSessionAliveCluster` 返回 `CompletionStage`）。
 - ✅ **运行时统计 + 健康**：✅ 1.8.0 提供 `ClusterRuntimeStats`（broadcastPublished / crossNodeReceived / selfDeliveryDropped / unicastSent / publishFailures / cacheHitRatio）+ `ClusterHealthIndicator`（`/actuator/health` 下 `nettyCluster`，节点/broker 状态 + 计数，actuator 在 classpath 时启用）；✅ 完整 Micrometer meter-binder 指标集（`netty.cluster.*` 时序）已落地（1.9.0 RC4，`NettyClusterMeterBinder`：11 counter + 节点/broker 状态 gauge，聚合粒度，门控可选）。
-- ⏳ **（推迟 1.9.x）多节点 demo + Docker Compose + Testcontainers 端到端**：1.8.0 用真实 Redis（Docker）跑了 8 项 `RedisIntegrationTest` + 4 项性能基准，但多节点 demo 与 Testcontainers CI 阻塞项推迟。
+- ✅/⏳ **多节点 E2E + Testcontainers CI**：✅ RC5 落地——`ClusterTestRedis` 让集群集成测试在 CI 真实运行 + `ClusterMultiNodeE2ETest` 进程内双节点全栈 E2E（跨节点广播/单播 + 指标，HMAC 开启），并借此**修复了一个跨节点单播 hook-wiring 高严重度缺陷**（影响 1.8.0 ~ RC4）；⏳ 可运行的多节点 Docker 示例（Compose + LB + 浏览器）仍推迟。
 - ✅ 文档：`cluster-design.md` 标注实现范围与推迟项，README 增加集群快速接入 + 性能基准 + 选型/容量表，`release-notes-1.8.0.md` 覆盖兼容/迁移。
 
 `1.8.0` 完成标准（实际达成情况）：
 
-- ⏳ 多节点 demo（推迟）；✅ 用真实 Redis 跑通双节点跨节点广播端到端测试 + Redis 故障降级路径（`onRedisLoss`）。
+- ⏳ 可运行的多节点 Docker 示例（推迟）；✅ 用真实 Redis 跑通双节点跨节点广播 + 单播全栈端到端测试（RC5 `ClusterMultiNodeE2ETest`）+ Redis 故障降级路径（`onRedisLoss`）。
 - ✅ **origin 自投递抑制有回归测试**：集群下本地用户对一条广播只收一次（不重复）。
 - ✅ 不启用集群时行为与 `1.7.x` 完全一致；启用集群仅修改依赖坐标 + 一个配置开关。
 - ✅ `ClusterBroker` / `SessionRegistry` SPI 边界清晰：`InMemoryBroker` / `InMemorySessionRegistry` 非 Redis stub 证明 `ClusterMessageSender` 不漏依赖 Lettuce。
 - ✅ 容量表与节点数适用边界（≤~10 节点活跃广播）写入文档，并用 `redis-benchmark` + Java 基准实测校准。
-- ✅ 全量 `mvn test` 通过（291 测试 / 11 模块）；✅ 集群路径有真实 Redis 集成测试 + auto-config 装配测试（⏳ Testcontainers 化推迟）。
+- ✅ 全量 `mvn test` 通过（291 测试 / 11 模块，1.8.0 当时）；✅ 集群路径有真实 Redis 集成测试 + auto-config 装配测试（✅ RC5 已 Testcontainers 化，CI 真实运行）。
 - ⏳ W3C TraceContext 跨节点端到端串联（推迟 1.9.x，envelope 已预留字段）。
 
 `1.8.0` 不作为阻塞项的内容：
@@ -118,7 +118,7 @@
 - **多 pub/sub 连接并行解码 / sharded pub/sub**：规模化档位优化。
 - **Redis Cluster 客户端一等支持**（`RedisClusterClient`）。
 - **W3C TraceContext 跨节点传播**：envelope 已预留 `traceparent` 字段。
-- **多节点 demo + Testcontainers 端到端 CI**。
+- **可运行的多节点 Docker 示例（Compose + LB + 浏览器）**（Testcontainers CI + 进程内双节点 E2E 已在 RC5 落地）。
 - 直接 node→node 单播（Slack 模式 mesh 第一步，把 Redis 移出单播热路径）。
 - 入站背压 / 速率限制（per-session token bucket + `netty.websocket.inbound.dropped` 指标）。
 - 房间 / 主题级集群 fan-out（`ClusterRoomRegistry` 含分片频道）。
@@ -209,7 +209,7 @@
 | `1.7.0` | 可观测性增强 + 深度修复 + WebSocket 分片支持 | 历史版本 |
 | `1.7.1` | `1.7.0` 之上 4 项审计修复 + 依赖安全 | 上一版本 |
 | `1.8.0` | WebSocket 集群支持（Redis Pub/Sub + 5 层 SPI） | 上一版本 |
-| `1.9.0` | **集群可靠性硬化（RC1）+ 可靠投递 Redis Streams（RC2）+ HMAC envelope 认证（RC3）+ 完整 Micrometer 集群指标（RC4）** | **开发中（RC4）** |
+| `1.9.0` | **集群可靠性硬化（RC1）+ 可靠投递 Redis Streams（RC2）+ HMAC envelope 认证（RC3）+ 完整 Micrometer 集群指标（RC4）+ 多节点 E2E/Testcontainers CI + 跨节点单播修复（RC5）** | **开发中（RC5）** |
 | `1.9.x+` | 集群扩展项（NATS broker、多节点 demo、Redis Cluster 客户端） | 规划中 |
 | `2.0.0` | Spring Boot 3.x 迁移基线 | 远期 |
 | `2.1.0` | 企业安全准入 | 远期（在 2.0.0 之后） |

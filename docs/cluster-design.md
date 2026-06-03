@@ -45,7 +45,8 @@
 | auto-config 装配测试（ApplicationContextRunner） | ✅ | 验证 enable=true→`@Primary` 为 ClusterMessageSender + health indicator；enable=false→零集群 bean |
 | W3C TraceContext 跨节点传播 | ⏳ 1.9.x | envelope 已留 `traceparent` 字段 |
 | NATS broker（ADR-001 规模化档位） | ⏳ 1.9.x | SPI 下新增实现，非替换 |
-| 多节点 demo + Docker Compose + Testcontainers | ⏳ 1.9.x | 1.8.0 已有真实 Redis 集成测试 |
+| Testcontainers 端到端 CI + 进程内双节点 E2E（`ClusterMultiNodeE2ETest`） | ✅ 1.9.0 RC5 | 集群集成测试在 CI 真实运行（不再跳过）；E2E 证明跨节点广播/单播；锁定跨节点单播 hook-wiring 修复 |
+| 可运行的多节点 Docker 示例（Compose + 负载均衡 + 浏览器） | ⏳ 未来版本 | 面向人工演示；CI 验证已由上一行覆盖 |
 
 ## 目标
 
@@ -465,6 +466,7 @@ netty-spring/
 - ✅ **可靠投递（Redis Streams `reliableBroadcast`）**（RC2）：per-URI Redis Stream `netty:cluster:rstream:{uri}`；每节点一个消费者组（`g:{nodeId}`）；断线重连自动 replay-on-resync；`MAXLEN ~` 有界保留；进程内 PEL 去重；origin 自投递抑制；死节点消费者组随 `ClusterReaper` 清理。详见 §3 可靠投递设计注记。
 - ✅ **HMAC envelope 认证**（RC3）：传输层 `MessageAuthenticator` SPI，默认实现 `HmacMessageAuthenticator`（HMAC-SHA256，常量时间比较）；线格式 `H1:{base64url(hmac)}:{payload}`；广播/单播/CLOSE/Streams 路径统一签名；`auth.*` 3 个配置项（`enable`、`secret`、`permissive`）；默认关闭（`auth.enable=false`），零额外开销；NoOp 剥离 `H1:` 标签以兼容混合滚动期；三阶段零停机滚动升级；**仅防伪造（anti-forgery）**，不防重放（详见 `docs/api-guide.md` §9.2）。
 - ✅ **完整 Micrometer 指标集（meter-binder）**（RC4）：`NettyClusterMeterBinder` 把程序内 `ClusterRuntimeStats` 计数器 + 节点/broker 状态 + HMAC 拒绝计数桥接为 `netty.cluster.*` 时序——11 个 counter（broadcast published/received/self_dropped/skipped_degraded、unicast sent、publish failures、reliable published/received、cache hits/misses、auth rejected）+ 按 `state` 标签的 `netty.cluster.node.state`（6 态）/`netty.cluster.broker.state`（4 态）gauge。沿用 1.7.0 的 `MeterBinder` 模式（`FunctionCounter`/`Gauge` 只读直通，无热路径开销）；**聚合粒度**（无 per-URI/per-session 标签，基数有界）；`@ConditionalOnClass(MeterRegistry)` + `@ConditionalOnBean` 门控，缺 `micrometer-core` 或 `cluster.enable=false` 时零注册。与既有 `ClusterHealthIndicator`（point-in-time）互补。
+- ✅ **多节点 E2E + Testcontainers CI + 跨节点单播修复**（RC5）：`ClusterTestRedis` 解析器（localhost-first → Testcontainers `redis:7-alpine` 回退）让集群集成测试在 CI 真实运行；`ClusterMultiNodeE2ETest` 进程内双节点全栈 E2E 证明跨节点广播 + 单播 + 指标（HMAC 开启）。**该 E2E 暴露并修复了一个高严重度缺陷**：自动装配下 `ClusterSessionHook` 因装配顺序（server 急切启动早于 `@AutoConfigureAfter` 的 hook bean）从未挂到 resolver，分布式注册表为空 → 跨节点单播/定向关闭静默失效（影响 1.8.0 ~ RC4，广播不受影响）。修复用 `SmartInitializingSingleton` 在单例全部就绪后挂 hook；E2E 单播断言为永久回归门。
 
 **⏳ 仍推迟到后续版本的项：**
 
@@ -472,7 +474,7 @@ netty-spring/
 - **Redis Cluster 客户端一等支持**：需要 `RedisClusterClient`（不同客户端类型）。
 - **NATS broker**（ADR-001 规模化档位）：`NatsBroker` SPI 实现，消除 N× 扇出放大。
 - **W3C TraceContext 跨节点传播**：envelope 已预留 `traceparent` 字段。
-- **多节点 demo + Testcontainers**。
+- **可运行的多节点 Docker 示例（Compose + 负载均衡 + 浏览器）**（Testcontainers CI + 进程内双节点 E2E 已在 RC5 落地）。
 
 ### 可靠投递设计注记（1.9.0 RC2）
 

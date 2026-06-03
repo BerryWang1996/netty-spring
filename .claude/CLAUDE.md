@@ -5,8 +5,8 @@
 - **Owner**: BerryWang1996 (wangbor@yeah.net), single maintainer
 - **License**: Apache 2.0
 - **Maven Central**: `io.github.berrywang1996:netty-*` (namespace verified at central.sonatype.com)
-- **Current version**: 1.9.0-RC1 (IN DEVELOPMENT — cluster reliability hardening 5 items done + tagged `v1.9.0-RC1`; reliable delivery via Redis Streams is next, then final 1.9.0 once the cycle completes. NOT pushed/deployed). Latest stable on Central: 1.8.0. Earlier published: 1.4.0, 1.6.2, 1.7.0, 1.7.1, 1.8.0
-- **Next (this 1.9.0 cycle)**: reliable broadcast via Redis Streams (`reliableBroadcast`, at-least-once, opt-in) → then final 1.9.0. Later: NATS, full metrics, HMAC auth → 2.0.0 (Boot 3.x)
+- **Current version**: 1.9.0-RC5 (IN DEVELOPMENT — multi-RC cycle, tagged `v1.9.0-RC1`..`v1.9.0-RC5`, NOT pushed/deployed. RC1 reliability hardening (5 items); RC2 reliable broadcast (Redis Streams); RC3 HMAC envelope auth; RC4 full Micrometer cluster metrics; RC5 multi-node E2E + Testcontainers CI + a **cross-node unicast hook-wiring fix** — the E2E found that cluster-mode cross-node unicast/targeted-close were silently broken in 1.8.0~RC4 (ClusterSessionHook never wired onto resolvers due to eager-server-start vs `@AutoConfigureAfter` ordering); fixed via a `SmartInitializingSingleton` that wires the hook post-startup. Final 1.9.0 cut only when the user says the cycle is complete). Latest stable on Central: 1.8.0. Earlier published: 1.4.0, 1.6.2, 1.7.0, 1.7.1, 1.8.0
+- **Next (this 1.9.0 cycle)**: user picks one at a time, or cut final 1.9.0. Remaining roadmap: runnable multi-node Docker demo (Compose+LB+browser), W3C TraceContext propagation, NATS broker, multi/sharded pub/sub, Redis Cluster client → later 2.0.0 (Boot 3.x).
 - **Spring Boot**: 2.7.18 (Boot 3.x migration planned for 2.0.0)
 - **JDK**: 17 (GraalVM JDK 17.0.11)
 - **Build**: Maven 3.9.9, 11 modules (including 2 new cluster modules)
