@@ -1,17 +1,17 @@
 # 开发计划与阶段状态
 
-更新时间：2026-05-31
+更新时间：2026-06-03
 
 ## 当前结论
 
-- **最新稳定版：`1.8.0`**（Maven Central）。**`1.9.0` 开发中（`1.9.0-RC3`）**：集群可靠性硬化 5 项全部落地 + 2 个新配置项（RC1），**RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in，`reliable.*` 5 个配置项）**，**RC3 新增 HMAC envelope 认证（`MessageAuthenticator` SPI，HMAC-SHA256，`auth.*` 3 个配置项）**；最终 1.9.0 待整周期完成。单机模式与 1.7.x/1.8.0 完全一致，详见 `docs/release-notes-1.9.0.md`。
+- **最新稳定版：`1.8.0`**（Maven Central）。**`1.9.0` 开发中（`1.9.0-RC4`）**：集群可靠性硬化 5 项全部落地 + 2 个新配置项（RC1），**RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in，`reliable.*` 5 个配置项）**，**RC3 新增 HMAC envelope 认证（`MessageAuthenticator` SPI，HMAC-SHA256，`auth.*` 3 个配置项）**，**RC4 新增完整 Micrometer 集群指标（`NettyClusterMeterBinder`，`netty.cluster.*` 时序，opt-in + 门控）**；最终 1.9.0 待整周期完成。单机模式与 1.7.x/1.8.0 完全一致，详见 `docs/release-notes-1.9.0.md`。
 - 上一版本：`1.8.0`（WebSocket 集群支持：Redis Pub/Sub 跨节点 + 5 层 SPI + 291 测试。详见 `docs/release-notes-1.8.0.md`）。
 - `P0`–`P7` 全部里程碑已完成；项目历经"功能建设期 → 质量深化 → 产品化 → 性能优化 → 安全稳定性加固 → 可观测性增强 → 集群水平扩展 → 集群可靠性硬化"八个阶段。
 - 下一步：最终 1.9.0（RC4 已含可靠投递 + HMAC envelope 认证 + 完整 Micrometer 集群指标，待全量测试确认）。之后：**`2.0.0`** Spring Boot 3.x 迁移基线，**`2.1.0`** 企业安全准入。集群扩展后续项（NATS 等）见下方 backlog。
 
 ## 当前发版判断
 
-`1.9.0-RC3`（开发中）在 `1.8.0` 之上完成 **集群可靠性硬化**（RC1）+ **可靠投递**（RC2）+ **HMAC envelope 认证**（RC3）（向后兼容，默认单机模式行为与 `1.7.x`/`1.8.0` 完全一致）；最终 1.9.0 待全量测试完成：
+`1.9.0-RC4`（开发中）在 `1.8.0` 之上完成 **集群可靠性硬化**（RC1）+ **可靠投递**（RC2）+ **HMAC envelope 认证**（RC3）+ **完整 Micrometer 集群指标**（RC4）（向后兼容，默认单机模式行为与 `1.7.x`/`1.8.0` 完全一致）；最终 1.9.0 待全量测试完成：
 
 - **5 项硬化全部落地**（原 1.8.0 推迟项）：Redis 失联宽限期（`redis-loss-grace-period-ms`）、心跳/对账线程隔离 + 批量 EXISTS、原子 Lua deregister、对账选主去重（`ClusterReaper` SPI）、registry 写合并限速（`session-registry-write-rate`，`CoalescingRegistryWriter`）。
 - **RC2 新增：可靠投递（Redis Streams）**：`clusterMessageSender.reliableBroadcast(uri, message)`，at-least-once，opt-in（`reliable.enable=false` 默认关闭）；per-URI Stream + 每节点消费者组 + replay-on-resync + `MAXLEN ~` 有界保留 + 进程内 PEL 去重；`reliable.*` 5 个配置项（`enable`、`stream-max-len`、`poll-block-ms`、`poll-count`、`dedup-window`）。
@@ -209,7 +209,7 @@
 | `1.7.0` | 可观测性增强 + 深度修复 + WebSocket 分片支持 | 历史版本 |
 | `1.7.1` | `1.7.0` 之上 4 项审计修复 + 依赖安全 | 上一版本 |
 | `1.8.0` | WebSocket 集群支持（Redis Pub/Sub + 5 层 SPI） | 上一版本 |
-| `1.9.0` | **集群可靠性硬化（RC1）+ 可靠投递 Redis Streams（RC2）+ HMAC envelope 认证（RC3）** | **开发中（RC3）** |
+| `1.9.0` | **集群可靠性硬化（RC1）+ 可靠投递 Redis Streams（RC2）+ HMAC envelope 认证（RC3）+ 完整 Micrometer 集群指标（RC4）** | **开发中（RC4）** |
 | `1.9.x+` | 集群扩展项（NATS broker、多节点 demo、Redis Cluster 客户端） | 规划中 |
 | `2.0.0` | Spring Boot 3.x 迁移基线 | 远期 |
 | `2.1.0` | 企业安全准入 | 远期（在 2.0.0 之后） |
