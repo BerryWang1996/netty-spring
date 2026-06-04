@@ -67,6 +67,13 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- Mockito (test): unit-test the Redis-Cluster registry's command sequence without a live cluster -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Testcontainers (test): fallback Redis when no localhost Redis is reachable (CI) -->
         <dependency>
             <groupId>org.testcontainers</groupId>
