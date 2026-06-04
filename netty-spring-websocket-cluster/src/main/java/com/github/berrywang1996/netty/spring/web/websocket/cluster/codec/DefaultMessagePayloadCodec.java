@@ -16,6 +16,7 @@
 
 package com.github.berrywang1996.netty.spring.web.websocket.cluster.codec;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MessagePayloadCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.context.*;
 import lombok.extern.slf4j.Slf4j;
@@ -29,7 +30,8 @@ import java.util.Base64;
  * <p>Wire format: single-character type prefix + colon + content.
  * <ul>
  *   <li>{@code T:} + UTF-8 text (TextMessage)</li>
- *   <li>{@code J:} + UTF-8 JSON string (JsonMessage — the already-serialized JSON text)</li>
+ *   <li>{@code J:} + UTF-8 JSON text (JsonMessage — its content object serialized to JSON via the
+ *       message's own {@link com.fasterxml.jackson.databind.ObjectMapper})</li>
  *   <li>{@code B:} + Base64-encoded binary (BinaryMessage)</li>
  * </ul>
  *
@@ -42,12 +44,31 @@ import java.util.Base64;
 @Slf4j
 public class DefaultMessagePayloadCodec implements MessagePayloadCodec {
 
+    /** Shared mapper used to re-parse JSON payloads on decode (read-only; thread-safe). */
+    private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
+
     @Override
     public byte[] encode(AbstractMessage message) {
         if (message instanceof TextMessage) {
             return ("T:" + ((TextMessage) message).getContent()).getBytes(StandardCharsets.UTF_8);
         } else if (message instanceof JsonMessage) {
-            return ("J:" + ((JsonMessage) message).getContent()).getBytes(StandardCharsets.UTF_8);
+            // Serialize the content OBJECT to JSON text using the message's own ObjectMapper —
+            // the same serialization the local sender performs in JsonMessage.responseMsg(). Using
+            // string concatenation here would invoke the content's toString() (e.g. a Map renders as
+            // "{a=b}", NOT JSON), so the receiving node would deliver an unparseable body. (See the
+            // cross-node demo smoke: a JSON broadcast must arrive as valid JSON on the far node.)
+            JsonMessage jsonMessage = (JsonMessage) message;
+            ObjectMapper mapper = jsonMessage.getObjectMapper();
+            try {
+                String json = mapper.writeValueAsString(jsonMessage.getContent());
+                return ("J:" + json).getBytes(StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                // Should not happen for the demo/typical payloads; fall back so cross-node delivery
+                // degrades to a (still-delivered) text frame rather than dropping the message.
+                log.warn("Failed to serialize JsonMessage content to JSON for cluster transport — "
+                        + "falling back to toString()", e);
+                return ("J:" + jsonMessage.getContent()).getBytes(StandardCharsets.UTF_8);
+            }
         } else if (message instanceof BinaryMessage) {
             byte[] raw = ((BinaryMessage) message).getBinaryData();
             return ("B:" + Base64.getEncoder().encodeToString(raw)).getBytes(StandardCharsets.UTF_8);
@@ -65,7 +86,19 @@ public class DefaultMessagePayloadCodec implements MessagePayloadCodec {
             String body = s.substring(2);
             switch (type) {
                 case 'T': return new TextMessage(body);
-                case 'J': return new JsonMessage(body);
+                case 'J':
+                    // The body is JSON TEXT (produced by encode()). Parse it back into a JSON tree so
+                    // the receiving node's JsonMessage.responseMsg() (writeValueAsString) reproduces the
+                    // SAME JSON. Wrapping the raw String instead would double-encode it into a JSON
+                    // string literal ("{...}") on the wire to the browser.
+                    try {
+                        return new JsonMessage(JSON_MAPPER.readTree(body));
+                    } catch (Exception notJson) {
+                        // Not valid JSON (e.g. a legacy/foreign payload): preserve it verbatim as a
+                        // text frame rather than failing the whole delivery.
+                        log.debug("Payload prefixed 'J:' but body is not valid JSON — treating as TextMessage");
+                        return new TextMessage(body);
+                    }
                 case 'B':
                     // Guard against a user TextMessage that legitimately starts with "B:" but
                     // whose body is not valid Base64 — don't let it throw out of the decode path.
