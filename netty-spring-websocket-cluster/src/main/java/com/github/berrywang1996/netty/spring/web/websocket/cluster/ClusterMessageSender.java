@@ -19,6 +19,7 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.NodeState;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.*;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterTraceContext;
 import java.util.concurrent.atomic.AtomicLong;
 import com.github.berrywang1996.netty.spring.web.websocket.context.*;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSessionClosedException;
@@ -96,6 +97,8 @@ public class ClusterMessageSender implements MessageSender {
 
     /** Reliable (at-least-once) broadcast broker; null when reliable.enable=false. */
     private volatile ReliableBroker reliableBroker;
+    /** Optional W3C trace propagation (null = disabled). */
+    private volatile ClusterTraceContext traceContext;
     /** Active reliable subscriptions keyed by URI. */
     private final ConcurrentHashMap<String, ClusterSubscription>
             reliableSubscriptions = new ConcurrentHashMap<>();
@@ -157,6 +160,23 @@ public class ClusterMessageSender implements MessageSender {
     /** Injects the reliable broker (enables reliableBroadcast). Null = reliable delivery disabled. */
     public void setReliableBroker(ReliableBroker reliableBroker) {
         this.reliableBroker = reliableBroker;
+    }
+
+    /** Inject the W3C trace context (cross-node traceparent propagation). Null disables it. */
+    public void setTraceContext(ClusterTraceContext traceContext) {
+        this.traceContext = traceContext;
+    }
+
+    /** Current traceparent for an outgoing envelope, or null when propagation is off. */
+    private String currentTraceparent() {
+        ClusterTraceContext tc = this.traceContext;
+        return tc != null ? tc.currentTraceparent() : null;
+    }
+
+    /** Restore scope for an incoming envelope's traceparent, or NOOP when propagation is off. */
+    private ClusterTraceContext.Scope traceScope(ClusterEnvelope envelope) {
+        ClusterTraceContext tc = this.traceContext;
+        return tc != null ? tc.restore(envelope.getTraceparent()) : ClusterTraceContext.NOOP;
     }
 
     /**
@@ -400,7 +420,7 @@ public class ClusterMessageSender implements MessageSender {
                             nodeManager.getNodeId(), uri,
                             ClusterEnvelope.MessageKind.CLOSE,
                             closePayload.getBytes(StandardCharsets.UTF_8),
-                            sessionId, null, System.currentTimeMillis());
+                            sessionId, currentTraceparent(), System.currentTimeMillis());
                     broker.unicast(targetNodeId, envelope);
                     return true;
                 } catch (ClusterBrokerException e) {
@@ -448,7 +468,7 @@ public class ClusterMessageSender implements MessageSender {
         clusterStats.crossNodeBroadcastReceived.incrementAndGet();
 
         // Deserialize and deliver to all local sessions for this URI
-        try {
+        try (ClusterTraceContext.Scope ts = traceScope(envelope)) {
             AbstractMessage message = deserializePayload(envelope.getPayload());
             localSender.topicMessage(envelope.getUri(), message);
         } catch (Exception e) {
@@ -459,30 +479,31 @@ public class ClusterMessageSender implements MessageSender {
     private void onUnicastMessage(ClusterEnvelope envelope) {
         String sessionId = envelope.getTargetSessionId();
         String uri = envelope.getUri();
-
-        // Dispatch based on envelope kind: data message vs control command
-        if (envelope.getKind() == ClusterEnvelope.MessageKind.CLOSE) {
-            // Remote close command — parse "statusCode|reasonText" and close locally
-            try {
-                String closePayload = new String(envelope.getPayload(), StandardCharsets.UTF_8);
-                int sep = closePayload.indexOf('|');
-                int statusCode = sep > 0 ? Integer.parseInt(closePayload.substring(0, sep)) : 1000;
-                String reasonText = sep > 0 ? closePayload.substring(sep + 1) : "Remote close";
-                localSender.closeSession(uri, sessionId, statusCode, reasonText);
-            } catch (Exception e) {
-                log.warn("Failed to execute remote close for session {}", sessionId, e);
+        try (ClusterTraceContext.Scope ts = traceScope(envelope)) {
+            // Dispatch based on envelope kind: data message vs control command
+            if (envelope.getKind() == ClusterEnvelope.MessageKind.CLOSE) {
+                // Remote close command — parse "statusCode|reasonText" and close locally
+                try {
+                    String closePayload = new String(envelope.getPayload(), StandardCharsets.UTF_8);
+                    int sep = closePayload.indexOf('|');
+                    int statusCode = sep > 0 ? Integer.parseInt(closePayload.substring(0, sep)) : 1000;
+                    String reasonText = sep > 0 ? closePayload.substring(sep + 1) : "Remote close";
+                    localSender.closeSession(uri, sessionId, statusCode, reasonText);
+                } catch (Exception e) {
+                    log.warn("Failed to execute remote close for session {}", sessionId, e);
+                }
+                return;
             }
-            return;
-        }
 
-        // Regular data message (UNICAST kind)
-        try {
-            AbstractMessage message = deserializePayload(envelope.getPayload());
-            localSender.sendMessage(uri, message, sessionId);
-        } catch (MessageSessionClosedException e) {
-            log.debug("Unicast target session {} not found locally — may have disconnected", sessionId);
-        } catch (Exception e) {
-            log.warn("Failed to deliver cluster unicast for session {}", sessionId, e);
+            // Regular data message (UNICAST kind)
+            try {
+                AbstractMessage message = deserializePayload(envelope.getPayload());
+                localSender.sendMessage(uri, message, sessionId);
+            } catch (MessageSessionClosedException e) {
+                log.debug("Unicast target session {} not found locally — may have disconnected", sessionId);
+            } catch (Exception e) {
+                log.warn("Failed to deliver cluster unicast for session {}", sessionId, e);
+            }
         }
     }
 
@@ -582,7 +603,7 @@ public class ClusterMessageSender implements MessageSender {
             return; // origin already did local fan-out before publishing — suppress the echo
         }
         clusterStats.reliableReceived.incrementAndGet();
-        try {
+        try (ClusterTraceContext.Scope ts = traceScope(envelope)) {
             AbstractMessage message = deserializePayload(envelope.getPayload());
             localSender.topicMessage(envelope.getUri(), message);
         } catch (Exception e) {
@@ -659,7 +680,7 @@ public class ClusterMessageSender implements MessageSender {
                 nodeManager.getNodeId(), uri,
                 ClusterEnvelope.MessageKind.BROADCAST,
                 serializePayload(message),
-                null, null, System.currentTimeMillis());
+                null, currentTraceparent(), System.currentTimeMillis());
     }
 
     private ClusterEnvelope buildUnicastEnvelope(String uri, String sessionId, AbstractMessage message) {
@@ -667,7 +688,7 @@ public class ClusterMessageSender implements MessageSender {
                 nodeManager.getNodeId(), uri,
                 ClusterEnvelope.MessageKind.UNICAST,
                 serializePayload(message),
-                sessionId, null, System.currentTimeMillis());
+                sessionId, currentTraceparent(), System.currentTimeMillis());
     }
 
     // Payload serialization delegated to MessagePayloadCodec SPI (R-1 refactor)
