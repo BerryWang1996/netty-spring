@@ -1,0 +1,74 @@
+name: Docker Demo Smoke
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "docker-demo/**"
+      - "demo-netty-web-spring-boot-starter/**"
+      - "netty-spring-websocket-cluster/**"
+      - "netty-websocket-cluster-spring-boot-starter/**"
+      - ".github/workflows/docker-demo-smoke.yml"
+  pull_request:
+    paths:
+      - "docker-demo/**"
+      - "demo-netty-web-spring-boot-starter/**"
+      - "netty-spring-websocket-cluster/**"
+      - "netty-websocket-cluster-spring-boot-starter/**"
+      - ".github/workflows/docker-demo-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Multi-node cross-node broadcast smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Build demo jar
+        run: bash ./mvnw -B -ntp -pl demo-netty-web-spring-boot-starter -am package -DskipTests
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install smoke dependencies
+        working-directory: docker-demo
+        run: npm install
+
+      - name: Start the cluster demo stack
+        run: docker compose -f docker-demo/docker-compose.yml up -d --build
+
+      - name: Wait for the load balancer
+        run: |
+          for i in $(seq 1 40); do
+            if wget -qO- http://localhost:8080/netty/health >/dev/null 2>&1; then
+              echo "LB healthy after $i tries"; exit 0
+            fi
+            echo "waiting for LB... ($i)"; sleep 3
+          done
+          echo "::error::LB did not become healthy in time"; exit 1
+
+      - name: Run cross-node smoke test
+        working-directory: docker-demo
+        run: node smoke.js
+
+      - name: Dump compose logs on failure
+        if: failure()
+        run: docker compose -f docker-demo/docker-compose.yml logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-demo/docker-compose.yml down -v
