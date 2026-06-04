@@ -49,27 +49,32 @@ class RedisClusterIntegrationTest {
 
     @Test
     void broker_publishReachesSubscriberOnSingleNodeCluster() throws Exception {
+        io.lettuce.core.cluster.RedisClusterClient ca = ClusterTestRedisCluster.newClient();
+        io.lettuce.core.cluster.RedisClusterClient cb = ClusterTestRedisCluster.newClient();
         com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModePubSubBroker a =
                 new com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModePubSubBroker(
-                        ClusterTestRedisCluster.newClient(),
-                        new com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec());
+                        ca, new com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec());
         com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModePubSubBroker b =
                 new com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModePubSubBroker(
-                        ClusterTestRedisCluster.newClient(),
-                        new com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec());
-        java.util.List<com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope> got =
-                new java.util.concurrent.CopyOnWriteArrayList<>();
-        b.subscribe("/ws/bc", got::add);
-        Thread.sleep(500);
-        a.publish("/ws/bc", new com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope(
-                "node-A", "/ws/bc",
-                com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope.MessageKind.BROADCAST,
-                "T:hi".getBytes(), null, null, System.currentTimeMillis()));
-        long deadline = System.currentTimeMillis() + 6000;
-        while (got.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(50);
-        assertEquals(1, got.size(), "subscriber on the cluster must receive the publish");
-        assertEquals("node-A", got.get(0).getOriginNodeId());
-        a.shutdown();
-        b.shutdown();
+                        cb, new com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec());
+        try {
+            java.util.List<com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope> got =
+                    new java.util.concurrent.CopyOnWriteArrayList<>();
+            b.subscribe("/ws/bc", got::add);
+            Thread.sleep(500);
+            a.publish("/ws/bc", new com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope(
+                    "node-A", "/ws/bc",
+                    com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope.MessageKind.BROADCAST,
+                    "T:hi".getBytes(), null, null, System.currentTimeMillis()));
+            long deadline = System.currentTimeMillis() + 6000;
+            while (got.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(50);
+            assertEquals(1, got.size(), "subscriber on the cluster must receive the publish");
+            assertEquals("node-A", got.get(0).getOriginNodeId());
+        } finally {
+            a.shutdown();
+            b.shutdown();
+            ca.shutdown();
+            cb.shutdown();
+        }
     }
 }

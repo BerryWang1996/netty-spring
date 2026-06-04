@@ -287,8 +287,13 @@ public class NettyWebSocketClusterConfigure {
             if (idx <= 0 || idx == node.length() - 1) {
                 throw new IllegalStateException("Invalid cluster node (expected host:port): '" + node + "'");
             }
-            seeds.add(io.lettuce.core.RedisURI.create(node.substring(0, idx),
-                    Integer.parseInt(node.substring(idx + 1).trim())));
+            int port;
+            try {
+                port = Integer.parseInt(node.substring(idx + 1).trim());
+            } catch (NumberFormatException e) {
+                throw new IllegalStateException("Invalid cluster node port (expected host:port): '" + node + "'", e);
+            }
+            seeds.add(io.lettuce.core.RedisURI.create(node.substring(0, idx), port));
         }
         if (seeds.isEmpty()) {
             throw new IllegalStateException(

@@ -695,6 +695,7 @@ When `cluster-nodes` is empty/absent, the transport stays on `redis.uri` (standa
 #### Notes & limitations
 
 - **TLS / password are not expressible** in the `cluster-nodes` `host:port` list. For a secured cluster (auth / TLS), supply your own `RedisClusterClient` bean — the auto-config yields to it (`@ConditionalOnMissingBean`).
+- **`cluster-nodes` entries are `host:port`** (IPv4 address or hostname). IPv6 literals (`[::1]:6379`) are not parsed by the built-in splitter — for an IPv6 cluster, supply your own `RedisClusterClient` bean.
 - **Reliable broadcast (Redis Streams) and `cluster-nodes` are mutually exclusive in RC7**: `reliable.enable=true` together with `cluster-nodes` produces no `ReliableBroker` (reliable-on-cluster is a follow-up).
 - **Verification scope**: validated against a **single-node** Redis Cluster (Testcontainers `redis:7 --cluster-enabled`, all 16384 slots on one node), which exercises the `RedisClusterClient` API path end-to-end. Multi-node slot distribution and cross-node pub/sub propagation are out of scope for RC7 (noted as future).
 
