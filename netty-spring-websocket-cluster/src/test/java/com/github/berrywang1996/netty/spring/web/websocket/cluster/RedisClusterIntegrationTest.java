@@ -46,4 +46,30 @@ class RedisClusterIntegrationTest {
         hb.deregister("hb-node");
         assertFalse(hb.findExpiredNodes(100).contains("hb-node"), "deregistered node gone from the nodes hash");
     }
+
+    @Test
+    void broker_publishReachesSubscriberOnSingleNodeCluster() throws Exception {
+        com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModePubSubBroker a =
+                new com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModePubSubBroker(
+                        ClusterTestRedisCluster.newClient(),
+                        new com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec());
+        com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModePubSubBroker b =
+                new com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModePubSubBroker(
+                        ClusterTestRedisCluster.newClient(),
+                        new com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec());
+        java.util.List<com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope> got =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        b.subscribe("/ws/bc", got::add);
+        Thread.sleep(500);
+        a.publish("/ws/bc", new com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope(
+                "node-A", "/ws/bc",
+                com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope.MessageKind.BROADCAST,
+                "T:hi".getBytes(), null, null, System.currentTimeMillis()));
+        long deadline = System.currentTimeMillis() + 6000;
+        while (got.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(50);
+        assertEquals(1, got.size(), "subscriber on the cluster must receive the publish");
+        assertEquals("node-A", got.get(0).getOriginNodeId());
+        a.shutdown();
+        b.shutdown();
+    }
 }
