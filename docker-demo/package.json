@@ -1,0 +1,9 @@
+{
+  "name": "netty-spring-cluster-demo-smoke",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Headless cross-node broadcast smoke test for the netty-spring cluster Docker demo",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
