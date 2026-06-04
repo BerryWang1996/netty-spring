@@ -4,7 +4,7 @@
 
 ## 当前结论
 
-- **最新稳定版：`1.8.0`**（Maven Central）。**`1.9.0` 开发中（`1.9.0-RC6`）**：集群可靠性硬化 5 项全部落地 + 2 个新配置项（RC1），**RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in，`reliable.*` 5 个配置项）**，**RC3 新增 HMAC envelope 认证（`MessageAuthenticator` SPI，HMAC-SHA256，`auth.*` 3 个配置项）**，**RC4 新增完整 Micrometer 集群指标（`NettyClusterMeterBinder`，`netty.cluster.*` 时序，opt-in + 门控）**，**RC5 新增多节点 E2E + Testcontainers CI（集群测试在 CI 真实运行）并修复跨节点单播 hook-wiring 缺陷（影响 1.8.0~RC4，仅集群模式）**，**RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（`ClusterTraceContext` SPI，opt-in；Micrometer Observation 续接 → 2.0.0）**；最终 1.9.0 待整周期完成。单机模式与 1.7.x/1.8.0 完全一致，详见 `docs/release-notes-1.9.0.md`。
+- **最新稳定版：`1.8.0`**（Maven Central）。**`1.9.0` 开发中（`1.9.0-RC6`）**：集群可靠性硬化 5 项全部落地 + 2 个新配置项（RC1），**RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in，`reliable.*` 5 个配置项）**，**RC3 新增 HMAC envelope 认证（`MessageAuthenticator` SPI，HMAC-SHA256，`auth.*` 3 个配置项）**，**RC4 新增完整 Micrometer 集群指标（`NettyClusterMeterBinder`，`netty.cluster.*` 时序，opt-in + 门控）**，**RC5 新增多节点 E2E + Testcontainers CI（集群测试在 CI 真实运行）并修复跨节点单播 hook-wiring 缺陷（影响 1.8.0~RC4，仅集群模式）**，**RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（`ClusterTraceContext` SPI，opt-in；Micrometer Observation 续接 → 2.0.0）**，**RC7 新增 Redis Cluster 客户端一等支持（客户端层：`cluster.redis.cluster-nodes` 选择器 + 4 个 `RedisClusterMode*` 实现，slot 安全；HA 故障转移 + 注册表/心跳跨 slot 分布；常规 cluster pub/sub，不削减广播扇出——sharded pub/sub → 2.0.0；opt-in，`cluster-nodes` 空时与 RC6 字节级一致）**；最终 1.9.0 待整周期完成。单机模式与 1.7.x/1.8.0 完全一致，详见 `docs/release-notes-1.9.0.md`。
 - 上一版本：`1.8.0`（WebSocket 集群支持：Redis Pub/Sub 跨节点 + 5 层 SPI + 291 测试。详见 `docs/release-notes-1.8.0.md`）。
 - `P0`–`P7` 全部里程碑已完成；项目历经"功能建设期 → 质量深化 → 产品化 → 性能优化 → 安全稳定性加固 → 可观测性增强 → 集群水平扩展 → 集群可靠性硬化"八个阶段。
 - 下一步：最终 1.9.0（RC6 已含可靠投递 + HMAC envelope 认证 + 完整 Micrometer 集群指标 + 多节点 E2E/Testcontainers CI + 跨节点单播修复 + W3C TraceContext MDC 关联，待全量测试确认）。之后：**`2.0.0`** Spring Boot 3.x 迁移基线，**`2.1.0`** 企业安全准入。集群扩展后续项（NATS 等）见下方 backlog。
@@ -67,7 +67,7 @@
 - ✅ 实现 `RedisPubSubBroker`：本地 fan-out + Redis Pub/Sub。
 - ✅ **🔴 origin 自投递抑制（正确性，非优化）**：envelope 带 `originNodeId`，订阅回调比对本节点 id 命中即丢弃——否则 origin 本地用户会**收到重复消息**（本地 fan-out + 自己 PUBLISH 回环）。统计 `ClusterRuntimeStats.selfDeliveryDropped`，有回归测试。
 - ⏳ **（推迟 1.9.x）多 pub/sub 连接解码**：单 Lettuce 连接 ~80k msg/s 即天花板且与 WS I/O 抢 event loop；每节点 2–4 连接按 URI 哈希分片。**1.8.0 实测吞吐（~14–16k msg/s）远低于单连接天花板，属过早优化，待基准证明需要时再加。**
-- ⏳ **（推迟 1.9.x）sharded pub/sub（仅 cluster 模式）**：经典 pub/sub 在所有模式可用，sharded（`SSUBSCRIBE`/`SPUBLISH`，须 Lettuce ≥6.5.5）作为 cluster 模式优化推迟。
+- ✅/⏳ **Redis Cluster 客户端 + sharded pub/sub**：✅ RC7 落地 Redis Cluster **客户端**一等支持（`cluster-nodes` 选择器 + `RedisClusterMode*` 实现，slot 安全；HA 故障转移 + 注册表/心跳跨 slot 分布）；⏳ **sharded pub/sub（`SSUBSCRIBE`/`SPUBLISH`，真正削减广播扇出）需 Lettuce 6.2+（Boot 2.7.18 为 6.1.10），推迟到 2.0.0**。注意：RC7 的 cluster broker 用常规 cluster pub/sub，仍向所有节点传播每条广播，**不削减扇出**。
 - ✅ **单播热路径缓存**：`sessionId→nodeId` 本地短 TTL 缓存（`registry-read-cache-ttl-ms` 默认 5000）+ NODE_LEFT 失效；陈旧/错误时移除并回退一次实时 HGET。`ClusterRuntimeStats.cacheHitRatio`。
 - ⏳ **（推迟 1.9.x）广播频道基数边界 / `max-subscribed-channels`**：本基线仅覆盖 `@MessageMapping` URI（典型 10–100 条，订阅集在启动期即固定，不会无界增长）；房间/主题级 fan-out + 频道硬上限推迟到 `1.9.x` 的 `ClusterRoomRegistry`。
 - ✅ **（1.9.0 RC2 落地）可靠投递（Redis Streams `reliableBroadcast`）**：at-least-once opt-in；per-URI Stream + 每节点消费者组 + replay-on-resync + `MAXLEN ~` 有界保留。完整生命周期扩展（重平衡、死信队列）推迟到后续版本。
@@ -115,8 +115,8 @@
 以下项在 1.9.0 中**仍未实现**，推迟到后续版本：
 
 - **`NatsBroker` adapter（规模化中间件档位，ADR-001）**：在 `ClusterBroker` SPI 下新增 NATS 实现，兴趣路由消除 Redis Pub/Sub 的 N× 扇出放大；Redis 实现保留服务小集群。触发条件：有用户撞到 ≤~10 节点活跃广播天花板。
-- **多 pub/sub 连接并行解码 / sharded pub/sub**：规模化档位优化。
-- **Redis Cluster 客户端一等支持**（`RedisClusterClient`）。
+- **多 pub/sub 连接并行解码**：规模化档位优化。
+- **sharded pub/sub（广播扇出削减，`SSUBSCRIBE`/`SPUBLISH`）**：需 Lettuce 6.2+（Boot 2.7.18 为 6.1.10），推迟到 **2.0.0**（Boot 3.x）。注：Redis Cluster **客户端**一等支持已在 **RC7** 落地（见上方当前结论），但 RC7 的常规 cluster pub/sub **不**削减广播扇出——扇出削减来自 sharded pub/sub。
 - **W3C TraceContext 的 Micrometer Observation / 活跃 span 续接**（`traceparent` + MDC 日志关联已在 RC6 落地；让真实 tracer 续接活跃 span 需 Boot 3.x，推迟到 2.0.0）。
 - **可运行的多节点 Docker 示例（Compose + LB + 浏览器）**（Testcontainers CI + 进程内双节点 E2E 已在 RC5 落地）。
 - 直接 node→node 单播（Slack 模式 mesh 第一步，把 Redis 移出单播热路径）。
@@ -209,8 +209,8 @@
 | `1.7.0` | 可观测性增强 + 深度修复 + WebSocket 分片支持 | 历史版本 |
 | `1.7.1` | `1.7.0` 之上 4 项审计修复 + 依赖安全 | 上一版本 |
 | `1.8.0` | WebSocket 集群支持（Redis Pub/Sub + 5 层 SPI） | 上一版本 |
-| `1.9.0` | **集群可靠性硬化（RC1）+ 可靠投递 Redis Streams（RC2）+ HMAC envelope 认证（RC3）+ 完整 Micrometer 集群指标（RC4）+ 多节点 E2E/Testcontainers CI + 跨节点单播修复（RC5）+ W3C TraceContext MDC 关联（RC6）** | **开发中（RC6）** |
-| `1.9.x+` | 集群扩展项（NATS broker、多节点 demo、Redis Cluster 客户端） | 规划中 |
+| `1.9.0` | **集群可靠性硬化（RC1）+ 可靠投递 Redis Streams（RC2）+ HMAC envelope 认证（RC3）+ 完整 Micrometer 集群指标（RC4）+ 多节点 E2E/Testcontainers CI + 跨节点单播修复（RC5）+ W3C TraceContext MDC 关联（RC6）+ Redis Cluster 客户端一等支持（RC7，客户端层）** | **开发中（RC7）** |
+| `1.9.x+` | 集群扩展项（NATS broker、多节点 demo、sharded pub/sub 扇出削减 → 2.0.0） | 规划中 |
 | `2.0.0` | Spring Boot 3.x 迁移基线 | 远期 |
 | `2.1.0` | 企业安全准入 | 远期（在 2.0.0 之后） |
 

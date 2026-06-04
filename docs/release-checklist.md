@@ -122,4 +122,4 @@
 
 ### `1.9.x+`（规划中）
 
-集群扩展项（仍推迟）：NATS broker（ADR-001）、多 pub/sub 连接并行解码、sharded pub/sub、Redis Cluster 客户端一等支持、W3C TraceContext 的 Micrometer Observation 续接（Boot 3.x → 2.0.0）、可运行的多节点 Docker 示例（Compose + LB + 浏览器）。详见 `development-plan.md`。（已落地并移出本列表：可靠投递 `reliableBroadcast` → RC2；HMAC envelope 认证 → RC3；完整 Micrometer 集群指标 → RC4；多节点 E2E + Testcontainers CI + 跨节点单播 hook-wiring 修复 → RC5；W3C TraceContext 跨节点 MDC 关联 → RC6。）
+集群扩展项（仍推迟）：NATS broker（ADR-001）、多 pub/sub 连接并行解码、sharded pub/sub（广播扇出削减，需 Lettuce 6.2+ → 2.0.0）、W3C TraceContext 的 Micrometer Observation 续接（Boot 3.x → 2.0.0）、可运行的多节点 Docker 示例（Compose + LB + 浏览器）。详见 `development-plan.md`。（已落地并移出本列表：可靠投递 `reliableBroadcast` → RC2；HMAC envelope 认证 → RC3；完整 Micrometer 集群指标 → RC4；多节点 E2E + Testcontainers CI + 跨节点单播 hook-wiring 修复 → RC5；W3C TraceContext 跨节点 MDC 关联 → RC6；Redis Cluster 客户端一等支持（客户端层，`cluster-nodes` 选择器 + `RedisClusterMode*`；常规 cluster pub/sub，不削减扇出——sharded pub/sub 仍推迟） → RC7。）

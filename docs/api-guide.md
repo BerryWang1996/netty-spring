@@ -526,7 +526,7 @@ public MessageCryptoPolicy cryptoPolicy() {
 
 ## 9. WebSocket Cluster
 
-*Since V1.8.0; reliability-hardened in V1.9.0; HMAC envelope auth added in V1.9.0-RC3.* Scale WebSocket across multiple nodes via Redis Pub/Sub. **Default is single-node mode** (`cluster.enable=false`) with zero overhead and behavior identical to 1.7.x. Cluster mode is **opt-in** and targets **≤ ~10 nodes with a dedicated, secured Redis**.
+*Since V1.8.0; reliability-hardened in V1.9.0; HMAC envelope auth added in V1.9.0-RC3; Redis Cluster client foundation added in V1.9.0-RC7.* Scale WebSocket across multiple nodes via Redis Pub/Sub. **Default is single-node mode** (`cluster.enable=false`) with zero overhead and behavior identical to 1.7.x. Cluster mode is **opt-in** and targets **≤ ~10 nodes with a dedicated, secured Redis**.
 
 ### Enable Cluster
 
@@ -671,6 +671,32 @@ HMAC provides anti-forgery protection. It does **not** provide replay protection
 | `auth.enable` | `false` | Master switch. `false` = NoOp (strips `H1:` tag but does not verify). |
 | `auth.secret` | *(no default; required when enabled)* | Shared HMAC key (≥ 32 chars). Must be externalized via `${ENV_VAR}` — never plain-text in YAML. Redacted in logs. |
 | `auth.permissive` | `false` | `true` = sign outbound but accept unsigned inbound (rolling upgrade); `false` = strict (reject missing/invalid tag). |
+
+### 9.3 Redis Cluster Client (foundation)
+
+*Since V1.9.0-RC7.* First-class **Redis Cluster client** support, selected by a single config key. When set, the session registry and heartbeat are distributed across the cluster's hash slots and you get Redis Cluster's native HA failover. **Purely additive and opt-in** — leave `cluster-nodes` empty (the default) and the standalone/sentinel path via `redis.uri` is byte-identical to RC6.
+
+#### Enable
+
+```yaml
+server:
+  netty:
+    websocket:
+      cluster:
+        enable: true
+        redis:
+          cluster-nodes: redis-a:6379,redis-b:6379,redis-c:6379   # non-empty selects the Cluster transport
+```
+
+When `cluster-nodes` is empty/absent, the transport stays on `redis.uri` (standalone/sentinel). The four `RedisClusterMode*` impls (`RedisClusterModePubSubBroker` / `RedisClusterModeSessionRegistry` / `RedisClusterModeNodeHeartbeat` / `RedisClusterModeReaper`) mirror their standalone siblings' SPI contracts and are each `@ConditionalOnMissingBean` (overridable).
+
+> ⚠️ **No broadcast fan-out reduction.** RC7's cluster broker uses **regular** cluster pub/sub (`SUBSCRIBE`/`PUBLISH`), which still propagates every broadcast to **all** nodes via the cluster bus. Fan-out reduction comes from **sharded pub/sub** (`SSUBSCRIBE`/`SPUBLISH`), which requires **Lettuce 6.2+** (Boot 2.7.18 manages 6.1.10) and is therefore **deferred to 2.0.0** (Boot 3.x). RC7 delivers the Redis Cluster *client* (HA failover + a registry/heartbeat distributed across slots), not fan-out reduction.
+
+#### Notes & limitations
+
+- **TLS / password are not expressible** in the `cluster-nodes` `host:port` list. For a secured cluster (auth / TLS), supply your own `RedisClusterClient` bean — the auto-config yields to it (`@ConditionalOnMissingBean`).
+- **Reliable broadcast (Redis Streams) and `cluster-nodes` are mutually exclusive in RC7**: `reliable.enable=true` together with `cluster-nodes` produces no `ReliableBroker` (reliable-on-cluster is a follow-up).
+- **Verification scope**: validated against a **single-node** Redis Cluster (Testcontainers `redis:7 --cluster-enabled`, all 16384 slots on one node), which exercises the `RedisClusterClient` API path end-to-end. Multi-node slot distribution and cross-node pub/sub propagation are out of scope for RC7 (noted as future).
 
 ---
 
@@ -902,7 +928,8 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 | --- | --- | --- |
 | `cluster.enable` | `false` | Master switch; `false` = single-node (zero overhead) |
 | `cluster.node-id` | *(auto UUID)* | Unique node id; empty auto-generates |
-| `cluster.redis.uri` | `redis://localhost:6379` | Redis URI; scheme selects topology (`redis://` / `redis-sentinel://`); use `rediss://` + auth in production |
+| `cluster.redis.uri` | `redis://localhost:6379` | Redis URI; scheme selects topology (`redis://` / `redis-sentinel://`); use `rediss://` + auth in production. Used when `cluster-nodes` is empty. |
+| `cluster.redis.cluster-nodes` | *(empty)* | *(since V1.9.0-RC7)* Comma-separated Redis **Cluster** seed nodes `host:port,host:port,...`. **Non-empty** selects the Redis Cluster transport (`RedisClusterClient` + `RedisClusterMode*` impls); **empty/absent (default)** uses the standalone/sentinel path via `redis.uri` (byte-identical to RC6). ⚠️ Uses **regular** cluster pub/sub (`SUBSCRIBE`/`PUBLISH`) — **no broadcast fan-out reduction** (sharded pub/sub → 2.0.0). No TLS/password expressible here — for a secured cluster, supply your own `RedisClusterClient` bean (`@ConditionalOnMissingBean`). |
 | `cluster.heartbeat-interval-seconds` | `3` | Heartbeat write interval |
 | `cluster.heartbeat-timeout-seconds` | `10` | Missing-heartbeat → dead-node threshold |
 | `cluster.reconciliation-interval-seconds` | `15` | Slow-path dead-node sweep interval |

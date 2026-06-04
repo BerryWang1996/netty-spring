@@ -34,8 +34,8 @@
 | **对账选主去重**（`ClusterReaper` SPI，`RedisClusterReaper` 用 `SET NX` 认领） | ✅ 1.9.0 | 死节点只被一个存活节点清理；`@ConditionalOnMissingBean` 可覆盖 |
 | **Registry 写合并限速**（`session-registry-write-rate`，默认 1000 ops/s，`CoalescingRegistryWriter`） | ✅ 1.9.0 | token-bucket 透传；超速时合并写入；register 永不丢弃；防注册风暴 |
 | 多 pub/sub 连接并行解码（`pubsub-connections`） | ⏳ 未来版本 | 实测吞吐远低于单连接天花板，过早优化 |
-| sharded pub/sub（`SSUBSCRIBE`/`SPUBLISH`） | ⏳ 未来版本 | 经典 pub/sub 已覆盖所有模式 |
-| Redis Cluster 客户端一等支持（`RedisClusterClient`） | ⏳ 未来版本 | 需不同客户端类型；用户自备 bean |
+| sharded pub/sub（`SSUBSCRIBE`/`SPUBLISH`，**广播扇出削减**） | ⏳ → 2.0.0 | 需 Lettuce 6.2+（Boot 2.7.18 为 6.1.10）；这才是扇出削减来源。RC7 的常规 cluster pub/sub **不**削减扇出 |
+| Redis Cluster 客户端一等支持（`RedisClusterClient`） | ✅ 1.9.0 RC7（客户端层） | `cluster-nodes` 非空选择 cluster 传输；4 个 `RedisClusterMode*` 实现（slot 安全）；HA 故障转移 + 注册表/心跳跨 slot 分布。**仅客户端层，不削减广播扇出**（扇出削减见上一行 sharded pub/sub → 2.0.0） |
 | **可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）** | ✅ 1.9.0 RC2 | 详见下方设计注记；`reliable.*` 5 个配置项；默认关闭 |
 | **HMAC envelope 认证**（`MessageAuthenticator` SPI，HMAC-SHA256，anti-forgery，opt-in） | ✅ 1.9.0 RC3 | 传输层 SPI，与 codec 无关；广播/单播/CLOSE/Streams 统一签名；`auth.*` 3 个配置项；默认关闭；NoOp 剥离 `H1:` 标签；三阶段滚动升级；仅 anti-forgery，不含重放保护 |
 | 写 pipeline 批量（`publish-batch-size` / `publish-flush-interval`） | ⏳ 未来版本 | 当前单条 async（Lettuce 连接层自动 pipeline） |
@@ -193,6 +193,8 @@ netty:broadcast:{uri}  → 每个 @MessageMapping URI 一个 Pub/Sub 频道
 > **🔴 self-delivery 抑制是正确性要求，不是优化（TOP 瓶颈 #3）。** Redis Pub/Sub 会把消息投递给**包括发布者自己在内**的所有订阅连接；origin 节点既有本地 session 又订阅了该频道，若不抑制，本地用户会**收到两次**（本地 fan-out 一次 + 自己的 PUBLISH 回环一次）。必须在 envelope 带 `originNodeId` 并在订阅回调里比对丢弃。指标 `netty.cluster.pubsub.self-dropped` 用于确认生效。这只消除重复投递，不减少 Redis 出口（Redis 仍会写一次 origin 的 socket）；要连这次写都省掉需走 mesh（见 §传输层 SPI）。
 
 **Redis Cluster 模式用 sharded pub/sub（评审新增）：** 经典 `SUBSCRIBE` 在 Redis Cluster 下，每次 `PUBLISH` 会经 cluster bus 广播到**所有**节点——本"频道-per-URI"设计会为每个 URI 付全量 cluster-bus 广播税。`mode = cluster` 时默认改用 `SSUBSCRIBE`/`SPUBLISH`（Redis 7.0+，频道按 hash slot 归属，只到该 shard），可水平扩展 pub/sub 吞吐。约束：sharded 与经典 pub/sub 互相隔离、不支持模式订阅（本设计本就不用模式订阅）。`standalone`/`sentinel` 模式无收益（单 shard），保持经典 pub/sub。**版本门槛：Lettuce 对 sharded pub/sub 的自动重订阅在 6.4.x 有 bug，须 ≥ 6.5.5；启动期校验 Lettuce 版本，不达标时报错或回退经典并告警。**
+>
+> **RC7 实现状态（与上述设计目标的差距）：** RC7 落地的是 Redis Cluster **客户端**（`cluster-nodes` 选择，`RedisClusterModePubSubBroker` 等），其 broker 用的仍是**常规 cluster pub/sub（`SUBSCRIBE`/`PUBLISH`）**——即上文描述的"付全量 cluster-bus 广播税"的行为，**没有扇出削减**。上文的 `SSUBSCRIBE`/`SPUBLISH`（sharded，真正削减扇出）需 Lettuce 6.2+（Boot 2.7.18 管理 6.1.10），**推迟到 2.0.0（Boot 3.x）**。故 `M·(f·N−1)` 扇出墙在 RC7 下不变；RC7 的价值是 cluster 原生 HA 故障转移 + 注册表/心跳跨 slot 分布，不是吞吐扩展。
 
 **订阅连接拓扑（评审新增，TOP 瓶颈 #2）：** Lettuce 单条 pub/sub 连接在 netty event loop 上解码全部入站消息，单连接 ~80k msg/s 即天花板，且与本节点 WebSocket I/O 抢同一组 event loop 线程。**每节点开 2–4 条 pub/sub 连接**（`cluster.pubsub-connections` 默认 2），按 URI 哈希分片到不同连接并行解码；解码后**立即移交业务线程池**，绝不在 pub/sub 回调里做反序列化或业务逻辑。registry 命令连接与 pub/sub 连接分离。指标 `netty.cluster.subscribe.decode.lag`（event loop 队列深度）让该天花板在熔断前可见。注意：**Redis 分片解决不了这个天花板**——每节点仍收热门 URI 的全量消息。
 
@@ -468,11 +470,12 @@ netty-spring/
 - ✅ **完整 Micrometer 指标集（meter-binder）**（RC4）：`NettyClusterMeterBinder` 把程序内 `ClusterRuntimeStats` 计数器 + 节点/broker 状态 + HMAC 拒绝计数桥接为 `netty.cluster.*` 时序——11 个 counter（broadcast published/received/self_dropped/skipped_degraded、unicast sent、publish failures、reliable published/received、cache hits/misses、auth rejected）+ 按 `state` 标签的 `netty.cluster.node.state`（6 态）/`netty.cluster.broker.state`（4 态）gauge。沿用 1.7.0 的 `MeterBinder` 模式（`FunctionCounter`/`Gauge` 只读直通，无热路径开销）；**聚合粒度**（无 per-URI/per-session 标签，基数有界）；`@ConditionalOnClass(MeterRegistry)` + `@ConditionalOnBean` 门控，缺 `micrometer-core` 或 `cluster.enable=false` 时零注册。与既有 `ClusterHealthIndicator`（point-in-time）互补。
 - ✅ **多节点 E2E + Testcontainers CI + 跨节点单播修复**（RC5）：`ClusterTestRedis` 解析器（localhost-first → Testcontainers `redis:7-alpine` 回退）让集群集成测试在 CI 真实运行；`ClusterMultiNodeE2ETest` 进程内双节点全栈 E2E 证明跨节点广播 + 单播 + 指标（HMAC 开启）。**该 E2E 暴露并修复了一个高严重度缺陷**：自动装配下 `ClusterSessionHook` 因装配顺序（server 急切启动早于 `@AutoConfigureAfter` 的 hook bean）从未挂到 resolver，分布式注册表为空 → 跨节点单播/定向关闭静默失效（影响 1.8.0 ~ RC4，广播不受影响）。修复用 `SmartInitializingSingleton` 在单例全部就绪后挂 hook；E2E 单播断言为永久回归门。
 - ✅ **W3C TraceContext 跨节点传播（MDC 日志关联）**（RC6）：`ClusterTraceContext` SPI（默认 `MdcClusterTraceContext`，零依赖、tracer 无关）在发送侧把当前 `traceparent`（显式 MDC 键或从 `traceId`/`spanId` 合成）写入信封，在接收侧恢复进 MDC（`traceId`/`spanId`/`netty.traceparent`），使跨节点投递日志带同一 `traceId`。opt-in（`trace-propagation.enable`，默认关）；无线格式变更（信封早已携带 `traceparent`）。Micrometer Observation 活跃 span 续接推迟到 2.0.0（Boot 2.7 的 Micrometer 1.9 无 Observation API）。
+- ✅ **Redis Cluster 客户端一等支持（客户端层）**（RC7）：新增 `cluster.redis.cluster-nodes`（逗号分隔 `host:port` 种子节点）选择 Redis Cluster 传输（`RedisClusterClient` + 4 个 `RedisClusterMode*` 实现，皆 `@ConditionalOnMissingBean`），让注册表/心跳跨 slot 分布并获得 cluster 原生 HA 故障转移；slot 安全增量：`deregister` 非原子（三条各自路由的 async，非跨 slot Lua）、`clusterSessionIds` 用 cluster-aware SCAN 跨 master 扇出、心跳判定用逐键 EXISTS、reaper 单键 `SET NX PX`。**`cluster-nodes` 空（默认）时与 RC6 字节级一致**。**⚠️ 仅客户端层——broker 用常规 cluster pub/sub（`SUBSCRIBE`/`PUBLISH`），仍向所有节点传播每条广播，不削减扇出**；扇出削减需 sharded pub/sub（Lettuce 6.2+ → 2.0.0）。限制：`cluster-nodes` 无法表达 TLS/密码（受保护 cluster 自备 `RedisClusterClient` bean）；reliable.* 与 cluster-nodes 在 RC7 互斥；连接配 `validateClusterNodeMembership(false)` + 关周期拓扑刷新（容器/NAT 端口映射友好）。验证范围：单节点 Redis Cluster（Testcontainers `redis:7 --cluster-enabled`，16384 slot 全在单节点），证明 `RedisClusterClient` API 路径端到端；多节点 slot 分布/跨节点 pub/sub 传播为未来项。
 
 **⏳ 仍推迟到后续版本的项：**
 
-- **多 pub/sub 连接并行解码 / sharded pub/sub / 写 pipeline 批量**：规模化档位优化，见实现范围表。
-- **Redis Cluster 客户端一等支持**：需要 `RedisClusterClient`（不同客户端类型）。
+- **多 pub/sub 连接并行解码 / 写 pipeline 批量**：规模化档位优化，见实现范围表。
+- **sharded pub/sub（广播扇出削减，`SSUBSCRIBE`/`SPUBLISH`）**：需 Lettuce 6.2+（Boot 2.7.18 为 6.1.10），推迟到 2.0.0。注：Redis Cluster **客户端**已在 RC7 落地，但 RC7 的常规 cluster pub/sub **不**削减广播扇出——`M·(f·N−1)` 扇出墙在 RC7 下不变；削减来自这里的 sharded pub/sub。
 - **NATS broker**（ADR-001 规模化档位）：`NatsBroker` SPI 实现，消除 N× 扇出放大。
 - **W3C TraceContext 的 Micrometer Observation / 活跃 span 续接**：`traceparent` 传播 + MDC 关联已在 RC6 落地；让真实 tracer 在接收节点续接活跃 span 需 Micrometer 1.10+（Boot 3.x），推迟到 2.0.0。`tracestate` 传播亦推迟（需新增信封字段）。
 - **可运行的多节点 Docker 示例（Compose + 负载均衡 + 浏览器）**（Testcontainers CI + 进程内双节点 E2E 已在 RC5 落地）。

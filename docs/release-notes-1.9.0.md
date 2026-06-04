@@ -204,6 +204,49 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 - **本版本（RC6）= MDC 日志关联**：跨节点日志可按 `traceId` 串联。
 - **Micrometer Observation / 活跃 span 续接** 推迟到 **2.0.0（Boot 3.x）**：Boot 2.7.18 自带 Micrometer **1.9.17**，**没有 Observation API**（1.10+ 才有）。`tracestate` 传播亦推迟（需新增信封字段，YAGNI）。
 
+### ⑪ Redis Cluster 客户端一等支持（客户端层）/ Redis Cluster Client First-Class Support (client level)
+
+*Since V1.9.0-RC7.* 为 WebSocket 集群新增**第一等的 Redis Cluster 客户端支持**，由一个新配置键选择启用——让集群的会话注册表 / 心跳跨 Redis Cluster 的分片（slot）分布，并获得 Redis Cluster 原生的 HA 故障转移。**纯加性、opt-in**：`cluster-nodes` 留空（默认）时，经 `redis.uri` 的 standalone/sentinel 路径与 RC6 **字节级一致**（对现有用户 / 单机模式零行为变更）。
+
+> ⚠️ **关键边界（务必先读，勿误读为扩展能力）**：RC7 交付的是 Redis Cluster **客户端**（HA 故障转移 + 会话注册表/心跳跨 slot 分布），**不是广播扇出削减**。RC7 的集群 broker 用的是**常规 cluster pub/sub**（`SUBSCRIBE`/`PUBLISH`），它在 Redis Cluster 下仍会经 cluster bus 把每条广播传播到**所有**节点——即**没有扇出削减**。扇出削减来自 **sharded pub/sub**（`SSUBSCRIBE`/`SPUBLISH`），后者需要 **Lettuce 6.2+**（Boot 2.7.18 管理的是 Lettuce 6.1.10），故**推迟到 2.0.0（Boot 3.x）**。容量模型（见 `cluster-design.md §深度瓶颈`）的 `M·(f·N−1)` 扇出墙在 RC7 下**不变**。
+
+#### 配置选择器
+
+新增配置项 `server.netty.websocket.cluster.redis.cluster-nodes`——逗号分隔的种子节点列表 `host:port,host:port,...`。
+
+- **非空** → 启用 Redis **Cluster** 传输（`RedisClusterClient` + 新的 `RedisClusterMode*` 实现）。
+- **空 / 缺省（默认）** → 经 `redis.uri` 的 standalone/sentinel 路径，与 RC6 **字节级一致**。
+
+#### 四个 `RedisClusterMode*` 实现
+
+均位于 `…cluster.redis` 包下，均 `@ConditionalOnMissingBean`（用户可覆盖），各自镜像其 standalone 兄弟实现的 SPI 契约：
+
+- `RedisClusterModePubSubBroker`（`ClusterBroker`）
+- `RedisClusterModeSessionRegistry`（`SessionRegistry`）
+- `RedisClusterModeNodeHeartbeat`（`ClusterNodeHeartbeat`）
+- `RedisClusterModeReaper`（`ClusterReaper`）
+
+#### Slot 安全增量（相对 standalone 的差异，皆为 Redis Cluster 16384-slot 模型下的正确做法，无 CROSSSLOT）
+
+- **`deregister` 非原子**：cluster 下 `HGET → DEL + SREM` 为三条各自路由的 async 命令，**而非**跨 slot 的 Lua `EVAL`（跨 slot 脚本在 cluster 下违法）。它原本关闭的竞态在 UUID sessionId 下是**理论性**的。
+- **`clusterSessionIds` 用 cluster-aware SCAN**：跨所有 master 分片扇出扫描（而非单节点 SCAN）。
+- **心跳过期判定用逐键 EXISTS**：每个心跳 key 单独 EXISTS（而非一次多键 EXISTS——多键 EXISTS 在 cluster 下会 CROSSSLOT）。
+- **reaper 为单键 `SET NX PX`**：单键天然落在单 slot，认领逻辑不变。
+
+#### 验证范围（诚实声明）
+
+针对**单节点 Redis Cluster**验证（Testcontainers `redis:7 --cluster-enabled`，全部 16384 slot 落在该单节点上）。这证明了**`RedisClusterClient` API 路径**端到端打通：cluster 连接、常规 cluster pub/sub 的 publish→receive、slot 路由的 HSET/HGET/SADD/SREM/DEL/SET/EXISTS/SCAN——**针对一个真实的 cluster**。它**不覆盖**多节点 slot 分布或跨节点 pub/sub 传播（需多节点 cluster——超出 RC7 范围，记为未来项）。
+
+#### 限制
+
+- **`cluster-nodes` 无法表达 TLS / 密码**：它是纯 `host:port` 列表。需要连接受保护的 cluster（鉴权 / TLS）时，**自备 `RedisClusterClient` bean**（`@ConditionalOnMissingBean`，框架自动让位）。
+- **可靠投递（Redis Streams）与 `cluster-nodes` 在 RC7 中互斥**：`reliable.enable=true` 与 `cluster-nodes` 同时设置时**不装配 `ReliableBroker`**（reliable-on-cluster 是后续项）。standalone 拓扑与 cluster-nodes 也互斥。
+- **连接选项**：cluster 客户端配置为 `validateClusterNodeMembership(false)` + 关闭周期性拓扑刷新——让它在容器 / NAT 端口映射后仍可用（常见生产形态）；多节点拓扑刷新调优是后续项。
+
+#### 向后兼容
+
+纯加性 + opt-in。无 SPI 签名变更，无线格式变更。standalone/sentinel + 单机模式行为不变。
+
 ---
 
 
@@ -289,6 +332,7 @@ server:
    ```
 4. 单机模式（`cluster.enable=false` 或缺省）无任何变化。
 5. **（RC5 重要修复）跨节点单播 / 定向关闭**：1.8.0 ~ 1.9.0-RC4 的集群模式下，跨节点单播（`sendMessage` / `sendTextToSession` 到其他节点会话）与跨节点定向关闭因 `ClusterSessionHook` 装配顺序缺陷而**静默失效**（广播不受影响）。本版本已修复，无需任何代码或配置改动——升级即生效。详见上文 §⑨。
+6. **（RC7）Redis Cluster 客户端**：纯 opt-in。**现有用户不受影响**——`cluster.redis.cluster-nodes` 留空（默认）时行为与 RC6 完全一致（继续走 `redis.uri` 的 standalone/sentinel 路径）。要切到 Redis Cluster 客户端，设 `cluster-nodes=host:port,...`（注意上文 §⑪ 的常规-vs-sharded pub/sub 边界：RC7 不削减广播扇出）。
 
 ```xml
 <!-- 集群 starter 版本号改为 1.9.0 -->
@@ -315,8 +359,8 @@ server:
 以下能力在 1.9.0 中**仍未实现**，推迟到 1.9.x 后续版本或 2.x：
 
 - **NATS broker**（ADR-001 规模化档位）
-- **多 pub/sub 连接并行解码 / sharded pub/sub**
-- **Redis Cluster 客户端一等支持**（`RedisClusterClient`）
+- **sharded pub/sub（扇出削减，`SSUBSCRIBE`/`SPUBLISH`）**：需 Lettuce 6.2+（Boot 2.7.18 为 6.1.10），推迟到 2.0.0（Boot 3.x）。注：Redis Cluster **客户端**一等支持已在 RC7 落地（HA 故障转移 + 注册表/心跳跨 slot 分布），但 RC7 的常规 cluster pub/sub **不削减**广播扇出——扇出削减正来自这里推迟的 sharded pub/sub。
+- **多 pub/sub 连接并行解码**
 - **W3C TraceContext 的 Micrometer Observation / 活跃 span 续接**（`traceparent` + MDC 关联已在 RC6 落地；Observation 续接需 Boot 3.x，推迟到 2.0.0）+ 完整 OpenTelemetry instrumentation
 - **可运行的多节点 Docker 示例**（docker-compose + 负载均衡 + 浏览器跨节点演示）。注：Testcontainers 端到端 CI + 进程内双节点 E2E 已在 RC5 落地，仍推迟的只是面向人工运行的 Docker 示例
 
