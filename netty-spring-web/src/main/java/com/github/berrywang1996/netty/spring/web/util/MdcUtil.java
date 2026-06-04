@@ -36,6 +36,7 @@ import java.net.SocketAddress;
  *   <li>{@code netty.sessionId} – WebSocket session ID</li>
  *   <li>{@code netty.uri} – request URI or WebSocket mapping URI</li>
  *   <li>{@code netty.remoteAddr} – client IP address</li>
+ *   <li>{@code netty.traceparent} – W3C traceparent restored during cross-node cluster delivery</li>
  * </ul>
  *
  * <p>Example logback pattern incorporating these keys:
@@ -59,6 +60,9 @@ public final class MdcUtil {
 
     /** MDC key for the client's remote IP address. */
     public static final String KEY_REMOTE_ADDR = "netty.remoteAddr";
+
+    /** MDC key for the W3C traceparent restored on a cross-node delivery (cluster mode). */
+    public static final String KEY_TRACEPARENT = "netty.traceparent";
 
     private MdcUtil() {
     }
