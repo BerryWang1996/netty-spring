@@ -183,6 +183,27 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 
 > ⚠️ **集群用户务必升级**：若你在 1.8.0 ~ 1.9.0-RC4 的集群模式下依赖跨节点单播或定向关闭，请升级到本版本——这些操作此前是静默失效的。
 
+### ⑩ W3C TraceContext 跨节点传播 / W3C TraceContext Cross-Node Propagation
+
+*Since V1.9.0-RC6.* 让分布式 trace 跨节点延续——在发布侧把当前 W3C `traceparent` 写入信封，在接收侧恢复进 SLF4J MDC，使跨节点投递的日志带上**同一个 `traceId`**（一条 trace 在所有节点的日志里可 grep）。**opt-in**，tracer 无关，纯加性，**无线格式变更**（envelope 早已携带 `traceparent` 字段，codec 早已编解码——本版本只是把它在收发两端接起来）。
+
+#### 机制
+
+- **`ClusterTraceContext` SPI**（`@ConditionalOnMissingBean`，tracer 无关）：`currentTraceparent()`（发送侧读）+ `restore(traceparent)`（接收侧写，返回 try-with-resources `Scope`）。
+- **默认实现 `MdcClusterTraceContext`**（零依赖，基于 MDC）：发送侧优先读 MDC `traceparent`，否则用 MDC `traceId`+`spanId`（Sleuth/Brave 的约定键）合成 `00-{traceId32}-{spanId16}-01`（64 位 traceId 左补零到 32 hex，校验失败则不传播）；接收侧把 traceparent 解析回 `traceId`/`spanId`（让既有 `%X{traceId}` 日志模式直接生效）+ `netty.traceparent`，`Scope.close()` 在投递结束后清除这三个键。Sleuth/Brave 用户可提供自定义 `ClusterTraceContext` bean 做原生 span 续接。
+- **发送侧**：`buildBroadcastEnvelope` / `buildUnicastEnvelope` / CLOSE 三处信封构造注入 `currentTraceparent()`。**接收侧**：`onBroadcastMessage` / `onUnicastMessage` / `onReliableMessage` 三处本地投递用 `try (Scope = restore(env.getTraceparent())) { … }` 包裹（MDC 线程局部于 broker 订阅线程，作用域精确、用后即清）。
+
+#### 配置项（`server.netty.websocket.cluster.trace-propagation.*`）
+
+| 配置项 | 默认 | 说明 |
+|---|---|---|
+| `enable` | `false` | 总开关；`false` 时信封 `traceparent` 仍为 null、不触碰 MDC，与 RC5 行为字节一致 |
+
+#### 范围与推迟项
+
+- **本版本（RC6）= MDC 日志关联**：跨节点日志可按 `traceId` 串联。
+- **Micrometer Observation / 活跃 span 续接** 推迟到 **2.0.0（Boot 3.x）**：Boot 2.7.18 自带 Micrometer **1.9.17**，**没有 Observation API**（1.10+ 才有）。`tracestate` 传播亦推迟（需新增信封字段，YAGNI）。
+
 ---
 
 
@@ -254,6 +275,7 @@ server:
   - （RC3）`MessageAuthenticatorTest` + `ClusterAuthIntegrationTest` — HMAC 签名/验签往返、篡改/错误密钥/缺签名拒绝、真实 Redis 同密钥接受 + 异密钥拒绝
   - （RC4）`NettyClusterMeterBinderTest`（`SimpleMeterRegistry` 单测：counter 值、节点/broker 状态 gauge 选态、HMAC 拒绝计数、重复 bind 幂等）+ `NettyWebSocketClusterConfigureTest` 上下文用例（micrometer + `cluster.enable=true` 时 `NettyClusterMeterBinder` bean 装配）
   - （RC5）`ClusterTestRedis` 解析器（localhost-first → Testcontainers `redis:7-alpine` 回退）+ 4 个集群集成测试改用它（CI 真实运行，不再跳过）；`ClusterMultiNodeE2ETest` 双节点全栈 E2E（跨节点广播 + 单播 + `netty.cluster.*` 指标断言，HMAC 开启，真实 Redis）—— 同时锁定跨节点单播 hook-wiring 修复的回归门
+  - （RC6）`MdcClusterTraceContextTest`（6 个：显式 traceparent、从 traceId/spanId 合成、64 位左补零、畸形→null、restore 往返 + Scope 清除、NOOP）+ `ClusterTraceIntegrationTest`（真实 Redis：traceparent 跨节点 wire 往返）+ 2 个上下文用例（trace-propagation.enable 开/关时 `ClusterTraceContext` bean 在/不在）
 
 ## 升级指南
 
@@ -295,7 +317,7 @@ server:
 - **NATS broker**（ADR-001 规模化档位）
 - **多 pub/sub 连接并行解码 / sharded pub/sub**
 - **Redis Cluster 客户端一等支持**（`RedisClusterClient`）
-- **W3C TraceContext 跨节点传播**（envelope 已预留 `traceparent` 字段）
+- **W3C TraceContext 的 Micrometer Observation / 活跃 span 续接**（`traceparent` + MDC 关联已在 RC6 落地；Observation 续接需 Boot 3.x，推迟到 2.0.0）+ 完整 OpenTelemetry instrumentation
 - **可运行的多节点 Docker 示例**（docker-compose + 负载均衡 + 浏览器跨节点演示）。注：Testcontainers 端到端 CI + 进程内双节点 E2E 已在 RC5 落地，仍推迟的只是面向人工运行的 Docker 示例
 
 详见 `docs/cluster-design.md` 与 `docs/development-plan.md`。

@@ -779,6 +779,9 @@ The framework populates SLF4J [MDC](http://www.slf4j.org/manual.html#mdc) for th
 | `netty.sessionId` | WebSocket frames & lifecycle callbacks | WebSocket session id |
 | `netty.uri` | both | Request URI / WebSocket mapping URI |
 | `netty.remoteAddr` | both | Client IP address |
+| `netty.traceparent` | cross-node cluster delivery — *since V1.9.0*, when `server.netty.websocket.cluster.trace-propagation.enable=true` | The W3C `traceparent` carried from the originating node; the receiving node also restores `traceId`/`spanId` so a trace correlates across nodes in logs |
+
+> **Cluster trace propagation** (*since V1.9.0*, opt-in): with `trace-propagation.enable=true`, the current `traceparent` (an explicit `traceparent` MDC key, or one synthesized from `traceId`/`spanId`) is carried in the cross-node envelope and restored into MDC during delivery on the receiving node. Tracer-agnostic (default `MdcClusterTraceContext`; supply a `ClusterTraceContext` bean for native Sleuth/Brave integration). Micrometer **Observation** active-span continuation is a 2.0.0 (Boot 3.x) follow-up.
 
 Include them in your logback/log4j2 pattern — no code changes required:
 
