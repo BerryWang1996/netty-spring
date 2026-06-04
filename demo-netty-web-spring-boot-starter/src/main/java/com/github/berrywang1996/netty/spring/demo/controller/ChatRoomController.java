@@ -7,6 +7,8 @@ import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSender
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Controller;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -38,16 +40,25 @@ public class ChatRoomController {
     /** Injected message sender for broadcasting and targeted WebSocket messaging. */
     private final MessageSender messageSender;
 
+    /** This node's cluster id when running in cluster mode (profile=cluster); {@code null} single-node. */
+    private final String nodeId;
+
     /** Maps WebSocket session IDs to user-chosen nicknames for all connected users. */
     private final Map<String, String> nicknames = new ConcurrentHashMap<>();
 
     /**
-     * Constructs the chat room controller with the required message sender.
+     * Constructs the chat room controller. The {@link ClusterNodeManager} is optional — present only
+     * when the cluster starter is active ({@code cluster.enable=true}); in single-node mode it is absent
+     * and {@link #nodeId} stays {@code null}, so all cluster-specific behavior is skipped.
      *
-     * @param messageSender the WebSocket message sender for broadcast and targeted delivery
+     * @param messageSender             the WebSocket message sender for broadcast and targeted delivery
+     * @param clusterNodeManagerProvider optional provider of the cluster node manager
      */
-    public ChatRoomController(MessageSender messageSender) {
+    public ChatRoomController(MessageSender messageSender,
+                              ObjectProvider<ClusterNodeManager> clusterNodeManagerProvider) {
         this.messageSender = messageSender;
+        ClusterNodeManager mgr = clusterNodeManagerProvider.getIfAvailable();
+        this.nodeId = (mgr != null) ? mgr.getNodeId() : null;
     }
 
     /**
@@ -73,6 +84,9 @@ public class ChatRoomController {
         event.put("nickname", nickname);
         event.put("onlineUsers", getOnlineUsers());
         event.put("onlineCount", nicknames.size());
+        if (nodeId != null) {
+            event.put("originNode", nodeId);
+        }
         messageSender.broadcastJson(CHAT_URI, event);
     }
 
@@ -116,6 +130,9 @@ public class ChatRoomController {
             broadcast.put("type", "message");
             broadcast.put("nickname", nickname);
             broadcast.put("text", msg.getText());
+            if (nodeId != null) {
+                broadcast.put("originNode", nodeId);
+            }
             messageSender.broadcastJson(CHAT_URI, broadcast);
         }
     }
@@ -138,6 +155,9 @@ public class ChatRoomController {
             event.put("nickname", nickname);
             event.put("onlineUsers", getOnlineUsers());
             event.put("onlineCount", nicknames.size());
+            if (nodeId != null) {
+                event.put("originNode", nodeId);
+            }
             messageSender.broadcastJson(CHAT_URI, event);
         }
     }
@@ -160,6 +180,19 @@ public class ChatRoomController {
     @RequestMapping("/chat")
     public String chatPage() {
         return CHAT_HTML;
+    }
+
+    /**
+     * Reports which cluster node served this request (or {@code "single-node"} when cluster mode is
+     * off). The chat UI calls this to show a node badge and to prove cross-node delivery in the
+     * multi-node Docker demo.
+     *
+     * @return a small JSON document {@code {"nodeId":"<id>"}}
+     */
+    @RequestMapping("/whoami")
+    public String whoami() {
+        String id = (nodeId != null) ? nodeId : "single-node";
+        return "{\"nodeId\":\"" + id + "\"}";
     }
 
     /**
@@ -282,7 +315,7 @@ button:hover{opacity:.9}
     <div class="back"><a href="/">&larr; Back to demo home</a></div>
   </div>
   <div class="main">
-    <div class="header">Chat Room</div>
+    <div class="header">Chat Room <span id="nodeBadge" style="font-size:.8rem;color:var(--muted);font-weight:400;margin-left:8px"></span></div>
     <div id="messages"></div>
     <div class="input-bar">
       <input id="msgInput" placeholder="Type a message... (use /pm nickname text for private)" disabled>
@@ -292,7 +325,9 @@ button:hover{opacity:.9}
 </div>
 
 <script>
-let ws, myNickname, privateTarget = null;
+let ws, myNickname, myNode = null, privateTarget = null;
+fetch('/whoami').then(r => r.json()).then(d => { myNode = d.nodeId; renderNodeBadge(); }).catch(() => {});
+function renderNodeBadge() { const b = document.getElementById('nodeBadge'); if (b && myNode) b.textContent = 'Node: ' + myNode; }
 const msgDiv = document.getElementById('messages');
 const msgInput = document.getElementById('msgInput');
 const sendBtn = document.getElementById('sendBtn');
@@ -330,14 +365,14 @@ function connect() {
 
 function handleMsg(data) {
   if(data.type === 'join') {
-    addSystem(data.nickname + ' joined the chat');
+    addSystem(data.nickname + ' joined the chat' + viaSuffix(data));
     updateUsers(data.onlineUsers);
   } else if(data.type === 'leave') {
-    addSystem(data.nickname + ' left the chat');
+    addSystem(data.nickname + ' left the chat' + viaSuffix(data));
     updateUsers(data.onlineUsers);
   } else if(data.type === 'message') {
     const isMe = data.nickname === myNickname;
-    addChat(data.nickname, data.text, isMe ? 'out' : 'in');
+    addChat(data.nickname, data.text, isMe ? 'out' : 'in', crossNode(data) ? data.originNode : null);
   } else if(data.type === 'private') {
     addPrivate(data.from, data.text, 'private-in');
   } else if(data.type === 'private-sent') {
@@ -366,10 +401,14 @@ function addSystem(text) {
   msgDiv.appendChild(d); msgDiv.scrollTop = msgDiv.scrollHeight;
 }
 
-function addChat(nick, text, cls) {
+function crossNode(data) { return data.originNode && myNode && data.originNode !== myNode; }
+function viaSuffix(data) { return crossNode(data) ? ' (via ' + data.originNode + ')' : ''; }
+
+function addChat(nick, text, cls, via) {
   const d = document.createElement('div');
   d.className = 'msg ' + cls;
-  d.innerHTML = '<div class="nick">' + esc(nick) + '</div>' + esc(text);
+  const viaTag = via ? ' <span class="pm-label">via ' + esc(via) + '</span>' : '';
+  d.innerHTML = '<div class="nick">' + esc(nick) + viaTag + '</div>' + esc(text);
   msgDiv.appendChild(d); msgDiv.scrollTop = msgDiv.scrollHeight;
 }
 
