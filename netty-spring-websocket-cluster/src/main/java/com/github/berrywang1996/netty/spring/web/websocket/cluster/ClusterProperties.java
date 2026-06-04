@@ -107,6 +107,9 @@ public class ClusterProperties {
     /** Opt-in HMAC authentication of cross-node envelopes. Disabled by default. */
     private Auth auth = new Auth();
 
+    /** Opt-in W3C TraceContext (traceparent) cross-node propagation + MDC restore. Disabled by default. */
+    private TracePropagation tracePropagation = new TracePropagation();
+
     // ---- Getters / Setters ----
 
     public boolean isEnable() { return enable; }
@@ -159,6 +162,9 @@ public class ClusterProperties {
 
     public Auth getAuth() { return auth; }
     public void setAuth(Auth auth) { this.auth = auth; }
+
+    public TracePropagation getTracePropagation() { return tracePropagation; }
+    public void setTracePropagation(TracePropagation v) { this.tracePropagation = v; }
 
     // ---- Nested classes ----
 
@@ -227,6 +233,19 @@ public class ClusterProperties {
         public void setSecret(String secret) { this.secret = secret; }
         public boolean isPermissive() { return permissive; }
         public void setPermissive(boolean permissive) { this.permissive = permissive; }
+    }
+
+    /**
+     * W3C TraceContext propagation. Off by default. When {@code enable=true}, the current
+     * traceparent is carried in the envelope and restored into MDC on the receiving node so
+     * cross-node deliveries log with the originating trace id.
+     */
+    public static class TracePropagation {
+        /** Master gate. Default false. */
+        private boolean enable = false;
+
+        public boolean isEnable() { return enable; }
+        public void setEnable(boolean enable) { this.enable = enable; }
     }
 
     /** Behavior when the cluster transport (Redis) is lost. */

@@ -20,6 +20,8 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterMessag
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterProperties;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterSessionHookImpl;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.CoalescingRegistryWriter;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.MdcClusterTraceContext;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterTraceContext;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.DefaultMessagePayloadCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.HmacMessageAuthenticator;
@@ -196,6 +198,15 @@ public class NettyWebSocketClusterConfigure {
                 !auth.isPermissive());
     }
 
+    @Bean
+    @ConditionalOnMissingBean(ClusterTraceContext.class)
+    @ConditionalOnProperty(prefix = "server.netty.websocket.cluster.trace-propagation",
+            name = "enable", havingValue = "true")
+    public ClusterTraceContext clusterTraceContext() {
+        log.info("Cluster W3C TraceContext propagation ENABLED (MDC-based traceparent across nodes)");
+        return new MdcClusterTraceContext();
+    }
+
     @Bean(destroyMethod = "shutdown")
     @ConditionalOnMissingBean(ClusterBroker.class)
     public RedisPubSubBroker clusterBroker(RedisClient redisClient, EnvelopeCodec envelopeCodec,
@@ -277,7 +288,8 @@ public class NettyWebSocketClusterConfigure {
             ClusterNodeManager nodeManager,
             ClusterProperties properties,
             MessagePayloadCodec messagePayloadCodec,
-            @org.springframework.beans.factory.annotation.Autowired(required = false) ReliableBroker reliableBroker) {
+            @org.springframework.beans.factory.annotation.Autowired(required = false) ReliableBroker reliableBroker,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) ClusterTraceContext traceContext) {
         ClusterMessageSender sender = new ClusterMessageSender(
                 localSender, broker, sessionRegistry, nodeManager,
                 properties.getRegistryReadCacheTtlMs(), messagePayloadCodec);
@@ -287,6 +299,9 @@ public class NettyWebSocketClusterConfigure {
         sender.setNodeLookupTimeoutMs(properties.getCommandTimeoutMs());
         if (reliableBroker != null) {
             sender.setReliableBroker(reliableBroker);
+        }
+        if (traceContext != null) {
+            sender.setTraceContext(traceContext);
         }
         sender.start();
         log.info("ClusterMessageSender started — cluster mode is ACTIVE (onRedisLoss={}, onPublishFailure={}, maxMsgBytes={}, reliable={})",

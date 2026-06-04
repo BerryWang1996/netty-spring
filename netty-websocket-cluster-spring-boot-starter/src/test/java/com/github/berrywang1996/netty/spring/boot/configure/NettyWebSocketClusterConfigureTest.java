@@ -168,6 +168,37 @@ class NettyWebSocketClusterConfigureTest {
                 .run(context -> assertThat(context).hasFailed());
     }
 
+    @Test
+    void tracePropagationEnabled_wiresClusterTraceContext() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-trace-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.trace-propagation.enable=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterTraceContext.class);
+                });
+    }
+
+    @Test
+    void tracePropagationDisabledByDefault_noClusterTraceContextBean() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-notrace-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterTraceContext.class);
+                });
+    }
+
     @Configuration
     static class LocalSenderConfig {
         /** Stands in for MessageSenderSupportConfigure's local "messageSender" bean. */
