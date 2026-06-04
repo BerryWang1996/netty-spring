@@ -102,8 +102,42 @@ class NettyWebSocketClusterConfigureTest {
                     assertThat(context.getBean(
                             com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MessageAuthenticator.class))
                             .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.NoOpMessageAuthenticator.class);
+                    // standalone path (no cluster-nodes) must NOT pull in the Redis Cluster client.
+                    assertThat(context).doesNotHaveBean(io.lettuce.core.cluster.RedisClusterClient.class);
                 });
         // Context close here exercises the destroyMethod lifecycle (B1) without error.
+    }
+
+    @Test
+    void clusterNodesSet_usesRedisClusterTransport_notStandalone() {
+        Assumptions.assumeTrue(ClusterTestRedisCluster.available(),
+                "no single-node Redis Cluster (no env cluster + no Docker)");
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.cluster-nodes=" + ClusterTestRedisCluster.nodes(),
+                        "server.netty.websocket.cluster.node-id=ctx-cluster-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    // cluster transport selected:
+                    assertThat(context).hasSingleBean(io.lettuce.core.cluster.RedisClusterClient.class);
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModePubSubBroker.class);
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.SessionRegistry.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModeSessionRegistry.class);
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeHeartbeat.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModeNodeHeartbeat.class);
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterReaper.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModeReaper.class);
+                    // standalone transport suppressed:
+                    assertThat(context).doesNotHaveBean(io.lettuce.core.RedisClient.class);
+                    // @Primary sender still the cluster sender:
+                    assertThat(context.getBean(MessageSender.class)).isInstanceOf(ClusterMessageSender.class);
+                });
     }
 
     @Test

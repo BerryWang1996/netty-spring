@@ -52,6 +52,7 @@ import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -93,6 +94,13 @@ import java.util.Map;
 @AutoConfigureAfter({NettyServerBootstrapConfigure.class, MessageSenderSupportConfigure.class})
 public class NettyWebSocketClusterConfigure {
 
+    /** SpEL: cluster-nodes is empty/absent → use the standalone/sentinel Redis transport. */
+    static final String STANDALONE_TRANSPORT =
+            "'${server.netty.websocket.cluster.redis.cluster-nodes:}'.trim().isEmpty()";
+    /** SpEL: cluster-nodes is non-empty → use the Redis Cluster transport. */
+    static final String CLUSTER_TRANSPORT =
+            "!('${server.netty.websocket.cluster.redis.cluster-nodes:}'.trim().isEmpty())";
+
     @Bean
     @ConfigurationProperties(prefix = "server.netty.websocket.cluster")
     public ClusterProperties clusterProperties() {
@@ -102,6 +110,7 @@ public class NettyWebSocketClusterConfigure {
     // ---- Redis connections (only created when no user-provided alternative exists) ----
 
     @Bean(destroyMethod = "shutdown")
+    @ConditionalOnExpression(STANDALONE_TRANSPORT)
     @ConditionalOnMissingBean(RedisClient.class)
     public RedisClient nettyClusterRedisClient(ClusterProperties properties) {
         String uri = properties.getRedis().getUri();
@@ -153,6 +162,7 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean(name = "nettyClusterRedisConnection", destroyMethod = "close")
+    @ConditionalOnExpression(STANDALONE_TRANSPORT)
     @ConditionalOnMissingBean(name = "nettyClusterRedisConnection")
     public StatefulRedisConnection<String, String> nettyClusterRedisConnection(RedisClient redisClient) {
         return redisClient.connect();
@@ -208,6 +218,7 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean(destroyMethod = "shutdown")
+    @ConditionalOnExpression(STANDALONE_TRANSPORT)
     @ConditionalOnMissingBean(ClusterBroker.class)
     public RedisPubSubBroker clusterBroker(RedisClient redisClient, EnvelopeCodec envelopeCodec,
                                            ClusterProperties properties, MessageAuthenticator messageAuthenticator) {
@@ -220,6 +231,7 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean(destroyMethod = "shutdown")
+    @ConditionalOnExpression(STANDALONE_TRANSPORT)
     @ConditionalOnMissingBean(ReliableBroker.class)
     @ConditionalOnProperty(prefix = "server.netty.websocket.cluster.reliable", name = "enable", havingValue = "true")
     public ReliableBroker reliableBroker(RedisClient redisClient, EnvelopeCodec envelopeCodec,
@@ -232,6 +244,7 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean(destroyMethod = "shutdown")
+    @ConditionalOnExpression(STANDALONE_TRANSPORT)
     @ConditionalOnMissingBean(SessionRegistry.class)
     public RedisSessionRegistry sessionRegistry(
             @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
@@ -240,6 +253,7 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean
+    @ConditionalOnExpression(STANDALONE_TRANSPORT)
     @ConditionalOnMissingBean(ClusterNodeHeartbeat.class)
     public RedisClusterNodeHeartbeat clusterNodeHeartbeat(
             @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
@@ -248,11 +262,104 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean
+    @ConditionalOnExpression(STANDALONE_TRANSPORT)
     @ConditionalOnMissingBean(ClusterReaper.class)
     public ClusterReaper clusterReaper(
             @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
             StatefulRedisConnection<String, String> connection) {
         return new RedisClusterReaper(connection);
+    }
+
+    // ---- Redis Cluster transport beans (active only when cluster-nodes is set) ----
+
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnExpression(CLUSTER_TRANSPORT)
+    @ConditionalOnMissingBean(io.lettuce.core.cluster.RedisClusterClient.class)
+    public io.lettuce.core.cluster.RedisClusterClient nettyClusterRedisClusterClient(ClusterProperties properties) {
+        String clusterNodes = properties.getRedis().getClusterNodes();
+        java.util.List<io.lettuce.core.RedisURI> seeds = new java.util.ArrayList<>();
+        for (String hp : clusterNodes.split(",")) {
+            String node = hp.trim();
+            if (node.isEmpty()) {
+                continue;
+            }
+            int idx = node.lastIndexOf(':');
+            if (idx <= 0 || idx == node.length() - 1) {
+                throw new IllegalStateException("Invalid cluster node (expected host:port): '" + node + "'");
+            }
+            seeds.add(io.lettuce.core.RedisURI.create(node.substring(0, idx),
+                    Integer.parseInt(node.substring(idx + 1).trim())));
+        }
+        if (seeds.isEmpty()) {
+            throw new IllegalStateException(
+                    "server.netty.websocket.cluster.redis.cluster-nodes resolved to no usable host:port entries");
+        }
+        // host:port has no scheme/credentials, so this always warns — appropriate: the cluster control
+        // plane must be network-isolated. (For TLS/password, supply your own RedisClusterClient bean.)
+        warnIfInsecureRedis("redis://" + clusterNodes.split(",")[0].trim());
+        log.info("Creating Lettuce RedisClusterClient for {} Redis Cluster seed node(s)", seeds.size());
+        io.lettuce.core.cluster.RedisClusterClient client = io.lettuce.core.cluster.RedisClusterClient.create(seeds);
+        // Topology pinning + bounded timeout. validateClusterNodeMembership(false) + periodic-refresh-off
+        // keep the client usable when nodes advertise addresses the client can't reach directly
+        // (containerized / NAT'd clusters — the common production case, and what the single-node test
+        // cluster needs). Bounded command timeout mirrors the standalone client (control-plane fast-fail).
+        client.setOptions(io.lettuce.core.cluster.ClusterClientOptions.builder()
+                .validateClusterNodeMembership(false)
+                .topologyRefreshOptions(io.lettuce.core.cluster.ClusterTopologyRefreshOptions.builder()
+                        .enablePeriodicRefresh(false)
+                        .build())
+                .timeoutOptions(io.lettuce.core.TimeoutOptions.enabled(
+                        java.time.Duration.ofMillis(properties.getCommandTimeoutMs())))
+                .build());
+        return client;
+    }
+
+    @Bean(name = "nettyClusterRedisClusterConnection", destroyMethod = "close")
+    @ConditionalOnExpression(CLUSTER_TRANSPORT)
+    @ConditionalOnMissingBean(name = "nettyClusterRedisClusterConnection")
+    public io.lettuce.core.cluster.api.StatefulRedisClusterConnection<String, String> nettyClusterRedisClusterConnection(
+            io.lettuce.core.cluster.RedisClusterClient client) {
+        return client.connect();
+    }
+
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnExpression(CLUSTER_TRANSPORT)
+    @ConditionalOnMissingBean(ClusterBroker.class)
+    public ClusterBroker clusterBrokerCluster(io.lettuce.core.cluster.RedisClusterClient client,
+            EnvelopeCodec envelopeCodec, ClusterProperties properties, MessageAuthenticator messageAuthenticator) {
+        com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModePubSubBroker broker =
+                new com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModePubSubBroker(
+                        client, envelopeCodec, messageAuthenticator);
+        int maxOut = properties.getMessageMaxSizeBytes();
+        broker.setInboundMaxBytes(maxOut > 0 ? (int) Math.min((long) maxOut * 2L, Integer.MAX_VALUE) : 0);
+        return broker;
+    }
+
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnExpression(CLUSTER_TRANSPORT)
+    @ConditionalOnMissingBean(SessionRegistry.class)
+    public SessionRegistry sessionRegistryCluster(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisClusterConnection")
+            io.lettuce.core.cluster.api.StatefulRedisClusterConnection<String, String> connection) {
+        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModeSessionRegistry(connection);
+    }
+
+    @Bean
+    @ConditionalOnExpression(CLUSTER_TRANSPORT)
+    @ConditionalOnMissingBean(ClusterNodeHeartbeat.class)
+    public ClusterNodeHeartbeat clusterNodeHeartbeatCluster(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisClusterConnection")
+            io.lettuce.core.cluster.api.StatefulRedisClusterConnection<String, String> connection) {
+        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModeNodeHeartbeat(connection);
+    }
+
+    @Bean
+    @ConditionalOnExpression(CLUSTER_TRANSPORT)
+    @ConditionalOnMissingBean(ClusterReaper.class)
+    public ClusterReaper clusterReaperCluster(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisClusterConnection")
+            io.lettuce.core.cluster.api.StatefulRedisClusterConnection<String, String> connection) {
+        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisClusterModeReaper(connection);
     }
 
     // ---- Core cluster beans ----

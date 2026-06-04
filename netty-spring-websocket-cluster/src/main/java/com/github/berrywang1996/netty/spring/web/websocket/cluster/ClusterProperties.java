@@ -170,20 +170,32 @@ public class ClusterProperties {
 
     /**
      * Redis connection settings. The topology (standalone vs sentinel) is selected by the
-     * URI scheme, which Lettuce auto-detects:
+     * {@link #uri} scheme, which Lettuce auto-detects:
      * <ul>
      *   <li>{@code redis://host:port} — standalone</li>
      *   <li>{@code redis-sentinel://host:port/?sentinelMasterId=...} — sentinel</li>
      * </ul>
-     * Redis Cluster (which requires a different client type) is a roadmap item; users running
-     * Redis Cluster should provide their own {@code ClusterBroker}/{@code SessionRegistry} beans.
+     * Redis <b>Cluster</b> (which requires a different client type) is now a first-class transport:
+     * set {@link #clusterNodes} ({@code host:port,host:port,...}) and the auto-configuration selects a
+     * {@code RedisClusterClient} + the {@code RedisClusterMode*} broker/registry/heartbeat/reaper instead
+     * of the standalone/sentinel {@link #uri}. The two transports are mutually exclusive.
      */
     public static class Redis {
         /** Redis connection URI. Default {@code redis://localhost:6379}. */
         private String uri = "redis://localhost:6379";
 
+        /** Comma-separated Redis Cluster seed nodes ({@code host:port,host:port,...}). When non-empty,
+         *  the Redis <b>Cluster</b> transport (RedisClusterClient + RedisClusterMode* impls) is used
+         *  INSTEAD of the standalone/sentinel {@link #uri}. Empty/absent (default) = standalone via uri.
+         *  Auth/TLS is not expressible in this host:port list in 1.9.0 — for a secured cluster supply your
+         *  own {@code RedisClusterClient} bean (it is {@code @ConditionalOnMissingBean}). Default empty. */
+        private String clusterNodes;
+
         public String getUri() { return uri; }
         public void setUri(String uri) { this.uri = uri; }
+
+        public String getClusterNodes() { return clusterNodes; }
+        public void setClusterNodes(String clusterNodes) { this.clusterNodes = clusterNodes; }
     }
 
     /**
