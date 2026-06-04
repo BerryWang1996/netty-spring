@@ -46,6 +46,14 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- WebSocket cluster starter — enables the multi-node Docker demo (cluster OFF by default;
+             only activated by spring.profiles.active=cluster, see application-cluster.properties). -->
+        <dependency>
+            <groupId>io.github.berrywang1996</groupId>
+            <artifactId>netty-websocket-cluster-spring-boot-starter</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
