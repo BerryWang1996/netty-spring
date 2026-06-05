@@ -285,8 +285,16 @@ public class ClusterProperties {
         /** Comma-separated NATS server URLs ({@code nats://host:port,...}). Default empty. */
         private String servers;
 
+        /** When {@code true} (and {@code servers} is set), the SessionRegistry/heartbeat/reaper run on NATS
+         *  JetStream KV instead of Redis — a fully NATS-only deployment (no Redis). Requires a JetStream-enabled
+         *  NATS server ({@code nats-server -js}). Default {@code false} (mixed: NATS broker + Redis registry). */
+        private boolean registry = false;
+
         public String getServers() { return servers; }
         public void setServers(String servers) { this.servers = servers; }
+
+        public boolean isRegistry() { return registry; }
+        public void setRegistry(boolean registry) { this.registry = registry; }
     }
 
     /** Behavior when the cluster transport (Redis) is lost. */
