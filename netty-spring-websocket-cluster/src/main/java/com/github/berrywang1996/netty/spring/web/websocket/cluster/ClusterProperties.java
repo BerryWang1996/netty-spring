@@ -91,6 +91,13 @@ public class ClusterProperties {
      *  unreachable — much lower than Lettuce's 60s default. Default 2000. */
     private long commandTimeoutMs = 2000;
 
+    /** Number of Redis Pub/Sub SUBSCRIBE connections to spread inbound decode across. {@code 1}
+     *  (default) = single connection, byte-identical to pre-1.9.x behavior. 2–4 is recommended ONLY
+     *  when a node approaches the single Lettuce pub/sub connection decode ceiling (~80k msg/s — see
+     *  docs/cluster-design.md). Clamped to {@code [1, 16]}. Redis-Pub/Sub-specific (no effect on
+     *  other transports). */
+    private int pubsubConnections = 1;
+
     /** Max serialized cluster message size in bytes. Messages larger than this are not
      *  published to the cluster (local delivery is unaffected); handled per {@link #onPublishFailure}.
      *  Default 1 MiB. */
@@ -150,6 +157,9 @@ public class ClusterProperties {
 
     public long getCommandTimeoutMs() { return commandTimeoutMs; }
     public void setCommandTimeoutMs(long v) { this.commandTimeoutMs = v; }
+
+    public int getPubsubConnections() { return pubsubConnections; }
+    public void setPubsubConnections(int v) { this.pubsubConnections = v; }
 
     public int getMessageMaxSizeBytes() { return messageMaxSizeBytes; }
     public void setMessageMaxSizeBytes(int v) { this.messageMaxSizeBytes = v; }
