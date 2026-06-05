@@ -78,6 +78,12 @@
       "defaultValue": 2000
     },
     {
+      "name": "server.netty.websocket.cluster.pubsub-connections",
+      "type": "java.lang.Integer",
+      "description": "Number of Redis Pub/Sub SUBSCRIBE connections to spread inbound decode across by channel hash. 1 (default) = single connection, unchanged. Use 2-4 only when a node approaches the single Lettuce pub/sub connection decode ceiling (~80k msg/s). Range [1,16]. Redis-Pub/Sub-specific.",
+      "defaultValue": 1
+    },
+    {
       "name": "server.netty.websocket.cluster.message-max-size-bytes",
       "type": "java.lang.Integer",
       "description": "Max serialized cluster message size in bytes. Larger messages are not published to the cluster (local delivery is unaffected); handled per on-publish-failure. 0 means unlimited.",

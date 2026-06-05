@@ -25,12 +25,10 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster;
  * {@link com.github.berrywang1996.netty.spring.web.websocket.context.MessageSender},
  * wrapping the local single-node sender.
  *
- * <p><b>Scope note (1.8.0):</b> this class exposes only properties that have an observable
- * effect in the 1.8.0 implementation. Additional knobs described in
- * {@code docs/cluster-design.md} (multi pub/sub connections, write pipelining, rate limiting,
- * reliable streams, Redis Cluster client, sharded pub/sub, etc.) are roadmap items and are
- * intentionally NOT exposed here until their underlying feature ships — config that does
- * nothing is worse than no config.
+ * <p><b>Scope note:</b> this class exposes only properties that have an observable effect in the
+ * current implementation. Purely-roadmap knobs described in {@code docs/cluster-design.md}
+ * (write pipelining, sharded pub/sub, NATS broker, etc.) are intentionally NOT exposed here until
+ * their underlying feature ships — config that does nothing is worse than no config.
  *
  * @author berrywang1996
  * @since V1.8.0
