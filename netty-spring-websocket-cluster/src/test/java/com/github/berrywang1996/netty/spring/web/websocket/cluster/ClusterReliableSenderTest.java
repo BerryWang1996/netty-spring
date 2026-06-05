@@ -46,7 +46,7 @@ class ClusterReliableSenderTest {
         broker = new InMemoryBroker();
         registry = new InMemorySessionRegistry();
         localSender = new CountingLocalSender();
-        nodeManager = new ClusterNodeManager("node-A", 60000, 600000, 60000, 60000, new NoOpHeartbeat(), registry);
+        nodeManager = new ClusterNodeManager("node-A", 60000, 600000, 60000, 0, new NoOpHeartbeat(), registry); // drainTimeout=0 → fast tearDown
         nodeManager.setRedisLossGracePeriodMs(0);
         sender = new ClusterMessageSender(localSender, broker, registry, nodeManager, 5000);
         reliableBroker = new InMemoryReliableBroker();

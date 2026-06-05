@@ -43,7 +43,7 @@ class ClusterMessageSenderTest {
         // Simple no-op heartbeat for unit tests
         ClusterNodeHeartbeat heartbeat = new NoOpHeartbeat();
         nodeManager = new ClusterNodeManager(
-                "node-A", 3000, 10000, 15000, 60000, heartbeat, registry);
+                "node-A", 3000, 10000, 15000, 0, heartbeat, registry); // drainTimeout=0 → fast tearDown shutdown
 
         clusterSender = new ClusterMessageSender(
                 localSender, broker, registry, nodeManager, 5000);

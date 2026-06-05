@@ -87,6 +87,13 @@ public class ClusterNodeManager {
     private ScheduledExecutorService reconScheduler;
     private ScheduledFuture<?> heartbeatFuture;
     private ScheduledFuture<?> reconciliationFuture;
+    /** Pending DEGRADED→RESYNC re-register task (scheduled with jitter). Stored so {@link #shutdown()}
+     *  can cancel it — otherwise a late RESYNC after shutdown could re-register a terminal-LEFT node.
+     *  Mutated under {@link #lifecycleLock}. */
+    private ScheduledFuture<?> resyncFuture;
+    /** Guards the future fields (heartbeat/recon/resync) so shutdown's cancellation and the
+     *  RESYNC-scheduling path don't race on them. */
+    private final Object lifecycleLock = new Object();
 
     /**
      * Creates a new node manager.
@@ -220,9 +227,11 @@ public class ClusterNodeManager {
     }
 
     /**
-     * Initiates graceful drain: stops accepting new cross-node messages, sends close
-     * frames to local sessions (handled by caller), waits up to drainTimeout, then
-     * deregisters from the cluster.
+     * Marks this node as DRAINING (a no-op if already LEFT or DRAINING). This only flips the state +
+     * fires the listener — the bounded {@code drainTimeoutMs} wait is performed by {@link #shutdown()}
+     * (the bean's destroyMethod), which folds drain into graceful shutdown. Call this if you want to
+     * begin shedding cross-node traffic ahead of the actual shutdown; otherwise {@code shutdown()}
+     * transitions through DRAINING for you.
      */
     public void drain() {
         NodeState current = state.get();
@@ -230,31 +239,71 @@ public class ClusterNodeManager {
             return;
         }
         transitionTo(NodeState.DRAINING);
-        log.info("Cluster node {} entering DRAINING state (timeout={}ms)", nodeId, drainTimeoutMs);
+        log.info("Cluster node {} entering DRAINING state (timeout={}ms honored on shutdown)",
+                nodeId, drainTimeoutMs);
     }
 
     /**
-     * Fully shuts down this node: cancels heartbeat, deregisters from cluster,
-     * transitions to LEFT.
+     * Gracefully shuts this node down. Honors {@code drainTimeoutMs}: a live node (JOINING/ACTIVE/
+     * DEGRADED/RESYNC) is first transitioned to DRAINING and given a bounded grace window
+     * (up to {@code drainTimeoutMs}) for in-flight cross-node traffic to settle, then it is
+     * deregistered from the cluster and moved to the terminal LEFT state. Idempotent: a second call
+     * (already LEFT) returns immediately. Once LEFT, no later task (e.g. a pending RESYNC) can
+     * resurrect the node — see {@link #transitionTo}.
      */
     public void shutdown() {
-        NodeState prev = state.getAndSet(NodeState.LEFT);
-        if (prev == NodeState.LEFT) {
+        // First, take this node out of ACTIVE/JOINING into DRAINING (unless already terminal). Use a
+        // CAS guard so a concurrent second shutdown() or a racing transition can't double-drain.
+        NodeState before = state.get();
+        if (before == NodeState.LEFT) {
             return;
         }
 
+        // Cancel any pending grace-period degrade + RESYNC re-register so neither can fire during/after
+        // shutdown (RESYNC would otherwise re-register a node we are tearing down).
+        synchronized (graceLock) {
+            if (graceFuture != null) {
+                graceFuture.cancel(false);
+                graceFuture = null;
+            }
+        }
+        synchronized (lifecycleLock) {
+            if (resyncFuture != null) {
+                resyncFuture.cancel(false);
+                resyncFuture = null;
+            }
+        }
+
+        // Stop heartbeat renewal first so we don't keep advertising liveness while draining.
         if (heartbeatFuture != null) {
             heartbeatFuture.cancel(false);
         }
         if (reconciliationFuture != null) {
             reconciliationFuture.cancel(false);
         }
-        // Cancel any pending grace-period degrade so it can't fire during/after shutdown.
-        synchronized (graceLock) {
-            if (graceFuture != null) {
-                graceFuture.cancel(false);
-                graceFuture = null;
+
+        // Bounded drain: flip to DRAINING and wait up to drainTimeoutMs. The manager has no local
+        // session count, so this is a bounded grace window (not a busy session-drain) — it gives
+        // in-flight cross-node deliveries time to settle before we deregister. Skipped if already
+        // DRAINING/terminal or if the timeout is non-positive.
+        if (before != NodeState.DRAINING) {
+            transitionTo(NodeState.DRAINING);
+        }
+        long drainMs = drainTimeoutMs;
+        if (drainMs > 0 && state.get() == NodeState.DRAINING) {
+            log.info("Cluster node {} draining — waiting up to {}ms before deregister", nodeId, drainMs);
+            try {
+                Thread.sleep(drainMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                log.debug("Drain wait interrupted for node {} — proceeding to deregister", nodeId);
             }
+        }
+
+        // Terminal transition: atomically claim LEFT. If another thread beat us to it, bail.
+        NodeState prev = state.getAndSet(NodeState.LEFT);
+        if (prev == NodeState.LEFT) {
+            return;
         }
 
         try {
@@ -343,20 +392,29 @@ public class ClusterNodeManager {
         if (state.compareAndSet(NodeState.DEGRADED, NodeState.RESYNC)) {
             log.info("Cluster node {} entering RESYNC — rebuilding cluster state", nodeId);
             fireStateChange(NodeState.DEGRADED, NodeState.RESYNC);
-            try {
-                reconScheduler.schedule(() -> {
-                    try {
-                        heartbeat.register(nodeId, heartbeatTimeoutMs);
-                        transitionTo(NodeState.ACTIVE);
-                        log.info("Cluster node {} completed RESYNC → ACTIVE", nodeId);
-                    } catch (Exception e) {
-                        log.error("Failed to resync node {}, staying DEGRADED", nodeId, e);
-                        transitionTo(NodeState.DEGRADED);
-                    }
-                }, jitter(reconnectJitterMaxMs), TimeUnit.MILLISECONDS);
-            } catch (java.util.concurrent.RejectedExecutionException rej) {
-                log.debug("Resync task rejected (scheduler shutting down) for node {}", nodeId);
-                transitionTo(NodeState.DEGRADED);
+            synchronized (lifecycleLock) {
+                if (state.get() == NodeState.LEFT) {
+                    // shutdown() raced in between the CAS above and here — do not schedule a resync.
+                    return;
+                }
+                try {
+                    // Store the future so shutdown() can cancel it — a late RESYNC must never re-register
+                    // a node that has already LEFT. The task itself also re-checks via transitionTo()'s
+                    // terminal-LEFT guard (belt and suspenders).
+                    resyncFuture = reconScheduler.schedule(() -> {
+                        try {
+                            heartbeat.register(nodeId, heartbeatTimeoutMs);
+                            transitionTo(NodeState.ACTIVE);
+                            log.info("Cluster node {} completed RESYNC → ACTIVE", nodeId);
+                        } catch (Exception e) {
+                            log.error("Failed to resync node {}, staying DEGRADED", nodeId, e);
+                            transitionTo(NodeState.DEGRADED);
+                        }
+                    }, jitter(reconnectJitterMaxMs), TimeUnit.MILLISECONDS);
+                } catch (java.util.concurrent.RejectedExecutionException rej) {
+                    log.debug("Resync task rejected (scheduler shutting down) for node {}", nodeId);
+                    transitionTo(NodeState.DEGRADED);
+                }
             }
         }
     }
@@ -433,10 +491,25 @@ public class ClusterNodeManager {
         }
     }
 
+    /**
+     * Transitions to {@code newState}, but NEVER leaves the terminal {@link NodeState#LEFT} state:
+     * once a node has shut down (LEFT), a late RESYNC re-register task (or any other transition) must
+     * not resurrect it. Implemented as a CAS loop so a transition racing with {@link #shutdown()}'s
+     * {@code getAndSet(LEFT)} is a no-op (lost-update prevention on the state AtomicReference).
+     */
     private void transitionTo(NodeState newState) {
-        NodeState prev = state.getAndSet(newState);
-        if (prev != newState) {
-            fireStateChange(prev, newState);
+        for (;;) {
+            NodeState prev = state.get();
+            if (prev == NodeState.LEFT) {
+                // Terminal — refuse to leave LEFT (e.g. a RESYNC task that fired after shutdown).
+                return;
+            }
+            if (state.compareAndSet(prev, newState)) {
+                if (prev != newState) {
+                    fireStateChange(prev, newState);
+                }
+                return;
+            }
         }
     }
 

@@ -98,7 +98,7 @@ class PerformanceBenchmark {
         RedisSessionRegistry registry = new RedisSessionRegistry(conn);
         RedisClusterNodeHeartbeat hb = new RedisClusterNodeHeartbeat(conn);
         ClusterNodeManager nodeManager = new ClusterNodeManager(
-                "bench-node", 5000, 15000, 30000, 60000, hb, registry);
+                "bench-node", 5000, 15000, 30000, 0, hb, registry); // drainTimeout=0 → fast shutdown
 
         CountingSender localSender = new CountingSender();
         localSender.addUri("/ws/bench");
@@ -216,8 +216,8 @@ class PerformanceBenchmark {
         RedisClusterNodeHeartbeat hbA = new RedisClusterNodeHeartbeat(connA);
         RedisClusterNodeHeartbeat hbB = new RedisClusterNodeHeartbeat(connB);
 
-        ClusterNodeManager nodeA = new ClusterNodeManager("perf-A", 5000, 15000, 30000, 60000, hbA, regA);
-        ClusterNodeManager nodeB = new ClusterNodeManager("perf-B", 5000, 15000, 30000, 60000, hbB, regB);
+        ClusterNodeManager nodeA = new ClusterNodeManager("perf-A", 5000, 15000, 30000, 0, hbA, regA);
+        ClusterNodeManager nodeB = new ClusterNodeManager("perf-B", 5000, 15000, 30000, 0, hbB, regB);
 
         CountingSender localA = new CountingSender();
         CountingSender localB = new CountingSender();
