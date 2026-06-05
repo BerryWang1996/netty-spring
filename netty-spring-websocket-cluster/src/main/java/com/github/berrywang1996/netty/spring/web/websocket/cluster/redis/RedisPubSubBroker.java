@@ -59,8 +59,10 @@ public class RedisPubSubBroker implements ClusterBroker {
     /** Connection for PUBLISH commands (shared, thread-safe in Lettuce). */
     private final StatefulRedisConnection<String, String> publishConnection;
 
-    /** Pub/Sub connection for SUBSCRIBE callbacks. */
-    private final StatefulRedisPubSubConnection<String, String> subscribeConnection;
+    /** Pub/Sub connections for SUBSCRIBE callbacks. Channels are partitioned across these by a stable
+     *  hash so inbound decode runs on up to N Lettuce I/O threads. Size N = pubsub-connections (>= 1).
+     *  The {@link #channelListeners} map is shared across all of them. */
+    private final java.util.List<StatefulRedisPubSubConnection<String, String>> subscribeConnections;
 
     /** Active listeners keyed by channel name. */
     private final ConcurrentHashMap<String, ClusterMessageListener> channelListeners = new ConcurrentHashMap<>();
@@ -72,14 +74,29 @@ public class RedisPubSubBroker implements ClusterBroker {
     /** Notified the instant the Redis connection drops/recovers (event-driven degrade/recover). */
     private volatile TransportStateListener transportStateListener;
 
-    /** Backward-compat constructor — no authentication (NoOp). */
+    /** Backward-compat constructor — no authentication (NoOp), single pub/sub connection. */
     public RedisPubSubBroker(RedisClient redisClient, EnvelopeCodec codec) {
         this(redisClient, codec, new NoOpMessageAuthenticator());
     }
 
+    /** Single pub/sub connection (delegates with {@code pubsubConnections = 1}). */
     public RedisPubSubBroker(RedisClient redisClient, EnvelopeCodec codec, MessageAuthenticator authenticator) {
+        this(redisClient, codec, authenticator, 1);
+    }
+
+    /**
+     * @param pubsubConnections number of Redis pub/sub SUBSCRIBE connections to spread inbound decode
+     *                          across (clamped to {@code [1, 16]}); {@code 1} = single connection.
+     */
+    public RedisPubSubBroker(RedisClient redisClient, EnvelopeCodec codec, MessageAuthenticator authenticator,
+                             int pubsubConnections) {
         this.codec = codec;
         this.authenticator = java.util.Objects.requireNonNull(authenticator, "authenticator");
+
+        int n = Math.max(1, Math.min(16, pubsubConnections));
+        if (n != pubsubConnections) {
+            log.warn("pubsub-connections={} out of range [1,16] — clamped to {}", pubsubConnections, n);
+        }
 
         // Event-driven transport health: flip broker state the instant Redis drops/recovers and
         // notify the listener (the cluster degrades/recovers immediately, not up to a heartbeat
@@ -116,39 +133,62 @@ public class RedisPubSubBroker implements ClusterBroker {
         });
 
         this.publishConnection = redisClient.connect();
-        this.subscribeConnection = redisClient.connectPubSub();
 
-        // Wire up the Lettuce pub/sub listener
-        subscribeConnection.addListener(new RedisPubSubAdapter<String, String>() {
-            @Override
-            public void message(String channel, String message) {
-                // Inbound size guard — reject oversized messages BEFORE allocating via decode/Base64.
-                int max = inboundMaxBytes;
-                if (max > 0 && message != null && message.length() > max) {
-                    log.warn("Dropping oversized inbound cluster message on channel {} ({} > {} bytes) "
-                            + "— possible misbehaving/hostile publisher", channel, message.length(), max);
-                    return;
+        // N pub/sub connections; each decodes only the channels that hash to it (Redis routes per
+        // connection), parallelising inbound decode across up to N Lettuce I/O threads. The shared
+        // channelListeners map lets any connection's adapter resolve the listener for its channel.
+        java.util.List<StatefulRedisPubSubConnection<String, String>> conns = new java.util.ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            StatefulRedisPubSubConnection<String, String> sub = redisClient.connectPubSub();
+            sub.addListener(new RedisPubSubAdapter<String, String>() {
+                @Override
+                public void message(String channel, String message) {
+                    onInboundMessage(channel, message);
                 }
-                ClusterMessageListener listener = channelListeners.get(channel);
-                if (listener != null) {
-                    String inner = authenticator.unwrap(message);
-                    if (inner == null) {
-                        log.warn("Rejected inbound cluster message on channel {} — missing/invalid HMAC tag", channel);
-                        return;
-                    }
-                    try {
-                        ClusterEnvelope envelope = codec.decode(inner);
-                        if (envelope != null) { // null = unsupported version, already logged
-                            listener.onMessage(envelope);
-                        }
-                    } catch (Exception e) {
-                        log.warn("Failed to decode cluster envelope on channel {}", channel, e);
-                    }
-                }
+            });
+            conns.add(sub);
+        }
+        this.subscribeConnections = conns;
+
+        log.info("RedisPubSubBroker initialized (codec={}, pubsubConnections={})",
+                codec.getClass().getSimpleName(), n);
+    }
+
+    /**
+     * Handles an inbound pub/sub message from any of the N subscribe connections: inbound-size guard,
+     * listener lookup, HMAC unwrap, decode, dispatch. May run concurrently on up to N I/O threads for
+     * DIFFERENT channels (a channel is pinned to one connection, so same-channel messages stay ordered);
+     * the downstream listener is concurrency-safe.
+     */
+    private void onInboundMessage(String channel, String message) {
+        int max = inboundMaxBytes;
+        if (max > 0 && message != null && message.length() > max) {
+            log.warn("Dropping oversized inbound cluster message on channel {} ({} > {} bytes) "
+                    + "— possible misbehaving/hostile publisher", channel, message.length(), max);
+            return;
+        }
+        ClusterMessageListener listener = channelListeners.get(channel);
+        if (listener != null) {
+            String inner = authenticator.unwrap(message);
+            if (inner == null) {
+                log.warn("Rejected inbound cluster message on channel {} — missing/invalid HMAC tag", channel);
+                return;
             }
-        });
+            try {
+                ClusterEnvelope envelope = codec.decode(inner);
+                if (envelope != null) { // null = unsupported version, already logged
+                    listener.onMessage(envelope);
+                }
+            } catch (Exception e) {
+                log.warn("Failed to decode cluster envelope on channel {}", channel, e);
+            }
+        }
+    }
 
-        log.info("RedisPubSubBroker initialized (codec={})", codec.getClass().getSimpleName());
+    /** Maps a channel to its (stable) subscribe connection, so SUBSCRIBE, inbound and UNSUBSCRIBE for a
+     *  channel always use the same connection. */
+    private StatefulRedisPubSubConnection<String, String> connectionFor(String channel) {
+        return subscribeConnections.get(Math.floorMod(channel.hashCode(), subscribeConnections.size()));
     }
 
     /** Sets the max accepted size of an inbound pub/sub message (chars) before decode. 0 = unlimited. */
@@ -190,7 +230,7 @@ public class RedisPubSubBroker implements ClusterBroker {
     public ClusterSubscription subscribe(String uri, ClusterMessageListener listener) {
         String channel = BROADCAST_PREFIX + uri;
         channelListeners.put(channel, listener);
-        subscribeConnection.async().subscribe(channel);
+        connectionFor(channel).async().subscribe(channel);
         log.debug("Subscribed to broadcast channel {}", channel);
         return createSubscription(channel);
     }
@@ -199,7 +239,7 @@ public class RedisPubSubBroker implements ClusterBroker {
     public ClusterSubscription subscribeUnicast(String nodeId, ClusterMessageListener listener) {
         String channel = UNICAST_PREFIX + nodeId;
         channelListeners.put(channel, listener);
-        subscribeConnection.async().subscribe(channel);
+        connectionFor(channel).async().subscribe(channel);
         log.debug("Subscribed to unicast channel {}", channel);
         return createSubscription(channel);
     }
@@ -212,7 +252,9 @@ public class RedisPubSubBroker implements ClusterBroker {
     @Override
     public void shutdown() {
         state.set(BrokerState.SHUTDOWN);
-        try { subscribeConnection.close(); } catch (Exception e) { log.warn("Error closing pub/sub conn", e); }
+        for (StatefulRedisPubSubConnection<String, String> sub : subscribeConnections) {
+            try { sub.close(); } catch (Exception e) { log.warn("Error closing pub/sub conn", e); }
+        }
         try { publishConnection.close(); } catch (Exception e) { log.warn("Error closing publish conn", e); }
         channelListeners.clear();
         log.info("RedisPubSubBroker shut down");
@@ -227,7 +269,7 @@ public class RedisPubSubBroker implements ClusterBroker {
             public void unsubscribe() {
                 if (active.compareAndSet(true, false)) {
                     channelListeners.remove(channel);
-                    try { subscribeConnection.async().unsubscribe(channel); }
+                    try { connectionFor(channel).async().unsubscribe(channel); }
                     catch (Exception e) { log.debug("Unsubscribe from {} failed", channel); }
                 }
             }
