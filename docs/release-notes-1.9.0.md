@@ -319,7 +319,7 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 
 ### 完整配置参考（1.9.0）
 
-所有 1.8.0 已有配置项不变，1.9.0 新增以上两项：
+所有 1.8.0 已有配置项默认值不变；下面是 1.9.0 全部新增/相关配置项的完整参考（涵盖 RC1–RC10 与预发布硬化项，默认值即为 1.8.0 兼容行为）：
 
 ```yaml
 server:
@@ -330,13 +330,16 @@ server:
         node-id: ${HOSTNAME:auto}
         redis:
           uri: redis://localhost:6379
+          cluster-nodes: ""                   # （RC7）非空=Redis Cluster 客户端；留空=走 uri 的 standalone/sentinel
         heartbeat-interval-seconds: 3
         heartbeat-timeout-seconds: 10
         reconciliation-interval-seconds: 15
         drain-timeout-seconds: 60
         reconnect-jitter-max-seconds: 10
         registry-read-cache-ttl-ms: 5000
+        registry-read-cache-max-size: 100000  # （预发布硬化）单播 sessionId→nodeId 缓存最大条目，防无界增长；0 或更小=不限（旧行为）
         command-timeout-ms: 2000
+        pubsub-connections: 1                  # （RC8）Pub/Sub SUBSCRIBE 连接数，按频道哈希分摊入站解码；范围 [1,16]
         message-max-size-bytes: 1048576
         on-redis-loss: degrade-to-local
         on-publish-failure: log
@@ -350,12 +353,22 @@ server:
           poll-block-ms: 2000               # 消费侧阻塞轮询超时（ms）
           poll-count: 64                    # 每次 XREADGROUP 最多读取条目数
           dedup-window: 1024                # 进程内 PEL 去重滑动窗口
+          group-destroy-idle-ms: 3600000     # （预发布硬化）死节点消费者组在心跳过期后被清理前的最小空闲窗口（ms），防同 id 节点重启回放丢失；0 或更小=永不清理（纯保留，靠 MAXLEN 裁剪）
         # --- 1.9.0 RC3 新增（HMAC envelope 认证）---
         auth:
           enable: false                       # true = 启用 HMAC-SHA256 信封认证
           secret: ${CLUSTER_AUTH_SECRET}      # 共享密钥，≥32 字符，禁止明文，日志脱敏
           permissive: false                   # true = 宽容模式（签名+接受无签名，滚动升级用）
+        # --- 1.9.0 RC6 新增（W3C TraceContext 传播）---
+        trace-propagation:
+          enable: false                       # true = 跨节点信封携带 traceparent 并在投递侧恢复 MDC（traceId/spanId）
+        # --- 1.9.0 RC9/RC10 新增（NATS 传输 / 全 NATS 注册表）---
+        nats:
+          servers: ""                         # 非空=NatsClusterBroker 替换 Redis 广播（需 io.nats:jnats）
+          registry: false                     # true（且 servers 非空）=注册表/心跳/reaper 也走 NATS JetStream KV（需 nats-server -js，全程无 Redis）
 ```
+
+> NATS 载荷上限提示：NATS 服务端默认 `max_payload` 为 1 MB，而 `message-max-size-bytes` 默认即 1 MiB（1048576），叠加信封 Base64（约 +37%）与可选 HMAC 开销后，**编码后的线上字节可能超过 NATS 的 `max_payload`**。使用 NATS 传输时，请相应**调低 `message-max-size-bytes`** 或**调高 NATS 服务端 `max_payload`**；超限的跨节点消息会按 `on-publish-failure` 策略优雅处理（本地投递不受影响），不再抛出原始 jnats 异常。
 
 ## 测试覆盖
 
@@ -413,10 +426,11 @@ server:
 
 以下能力在 1.9.0 中**仍未实现**，推迟到 1.9.x 后续版本或 2.x：
 
-- **NATS broker**（ADR-001 规模化档位）
 - **sharded pub/sub（扇出削减，`SSUBSCRIBE`/`SPUBLISH`）**：需 Lettuce 6.2+（Boot 2.7.18 为 6.1.10），推迟到 2.0.0（Boot 3.x）。注：Redis Cluster **客户端**一等支持已在 RC7 落地（HA 故障转移 + 注册表/心跳跨 slot 分布），但 RC7 的常规 cluster pub/sub **不削减**广播扇出——扇出削减正来自这里推迟的 sharded pub/sub。
-- **多 pub/sub 连接并行解码**
+- **NATS / JetStream 可靠投递（at-least-once）**：`reliable.enable`（Redis Streams）仍为 **Redis 专属**；all-NATS（`nats.registry=true`）部署下不支持可靠投递（基于 JetStream stream 的等价实现是后续工作）。
 - **W3C TraceContext 的 Micrometer Observation / 活跃 span 续接**（`traceparent` + MDC 关联已在 RC6 落地；Observation 续接需 Boot 3.x，推迟到 2.0.0）+ 完整 OpenTelemetry instrumentation
-- **可运行的多节点 Docker 示例**（docker-compose + 负载均衡 + 浏览器跨节点演示）。注：Testcontainers 端到端 CI + 进程内双节点 E2E 已在 RC5 落地，仍推迟的只是面向人工运行的 Docker 示例
+- **次要硬化项（1.9.1 backlog）**：见 `docs/pre-ga-audit-backlog.md`——一批已知的低优先级（LOW/NIT）项（如可靠 broker 的 DEGRADED 状态上报、宽限期与单播短路的交互、NATS register 两段写顺序等），不影响 GA 质量，留待 1.9.1 处理。
+
+> 注：以下能力**已在 1.9.0 落地**，不再属于已知限制——**NATS broker**（RC9，ADR-001 规模化档位）、**全 NATS 注册表**（RC10，`nats.registry=true`）、**多 pub/sub 连接并行解码**（RC8，`pubsub-connections`）、**可运行的多节点 Docker 示例**（RC8，docker-compose + 负载均衡 + 浏览器跨节点演示）、**Redis Cluster 客户端**（RC7）、**Testcontainers 端到端 CI + 进程内双节点 E2E**（RC5）。
 
 详见 `docs/cluster-design.md` 与 `docs/development-plan.md`。

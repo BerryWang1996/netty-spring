@@ -331,7 +331,13 @@ server:
 
 集群子键统一使用 `enable`（与 `Mvc.enable` / `WebSocket.enable` / `Crypto.enable` / `Ssl.enable` / `Gzip.enable` / `Management.enable` 一致），不使用 `enabled`。
 
-## 可观测性 — `1.8.0` 必须随集群同步落地
+## 可观测性（设计草案 — 实际落地指标见下方说明）
+
+> **⚠️ 本节是早期设计草案的指标命名，与实际发布的指标不一致，请勿据此搭建仪表盘。**
+> 1.9.0 RC4 实际落地的 Micrometer 指标由 `NettyClusterMeterBinder` 注册（11 个 counter +
+> `netty.cluster.node.state` / `netty.cluster.broker.state` 两个按 `state` 标签的 gauge，聚合粒度、无 per-URI 标签）。
+> **权威清单见 `docs/api-guide.md` §9「Cluster metrics」与 `docs/release-notes-1.9.0.md` §⑫**。
+> 下面这组名字是设计阶段的设想（部分从未实现，部分最终改名），仅留作设计意图记录：
 
 - `netty.cluster.nodes.active`（Gauge）/ `.state`（Gauge：ACTIVE/DEGRADED/JOINING/DRAINING）
 - `netty.cluster.broadcast.published`（Counter，按 `uri` 标签，受 §3.A-1 上限约束）
