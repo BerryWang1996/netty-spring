@@ -222,7 +222,8 @@ public class NettyWebSocketClusterConfigure {
     @ConditionalOnMissingBean(ClusterBroker.class)
     public RedisPubSubBroker clusterBroker(RedisClient redisClient, EnvelopeCodec envelopeCodec,
                                            ClusterProperties properties, MessageAuthenticator messageAuthenticator) {
-        RedisPubSubBroker broker = new RedisPubSubBroker(redisClient, envelopeCodec, messageAuthenticator);
+        RedisPubSubBroker broker = new RedisPubSubBroker(redisClient, envelopeCodec, messageAuthenticator,
+                properties.getPubsubConnections());
         // Inbound guard: reject received messages larger than the outbound cap + headroom
         // (Base64 ~+33% + envelope metadata). 0 (unlimited) outbound => unlimited inbound.
         int maxOut = properties.getMessageMaxSizeBytes();
