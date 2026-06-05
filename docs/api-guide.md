@@ -938,6 +938,7 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 | `cluster.reconnect-jitter-max-seconds` | `10` | Max jitter before DEGRADED→RESYNC re-register |
 | `cluster.registry-read-cache-ttl-ms` | `5000` | sessionId→nodeId unicast hot-path cache TTL |
 | `cluster.command-timeout-ms` | `2000` | Redis command timeout — bounds hot-path blocking on Redis loss (vs Lettuce's 60s default) |
+| `cluster.pubsub-connections` | `1` | *(since V1.9.x)* Number of Redis Pub/Sub SUBSCRIBE connections; inbound decode is spread across N connections by channel hash. `1` = single connection (default, behavior unchanged); set 2–4 only when a single node approaches the ~80k msg/s decode ceiling. Range `[1,16]`. Redis-Pub/Sub-specific (no effect on other transports). |
 | `cluster.message-max-size-bytes` | `1048576` | Max serialized cluster message; larger is not published cross-node (`0` = unlimited) |
 | `cluster.on-redis-loss` | `degrade-to-local` | `degrade-to-local` (keep local sessions) or `close-all` |
 | `cluster.on-publish-failure` | `log` | `log` or `drop` on publish failure |
