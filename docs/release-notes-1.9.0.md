@@ -1,6 +1,6 @@
 # Release Notes — v1.9.0 (开发中 / in development)
 
-> 状态：**开发中（1.9.0-RC9，2026-06-04）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）。最终 1.9.0 发布日期待整个周期完成后确定。
+> 状态：**开发中（1.9.0-RC10，2026-06-05）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）；RC10 新增**全 NATS 栈**（`nats.registry=true` → NATS JetStream-KV registry/心跳/reaper，可完全不依赖 Redis；需 JetStream 服务器；ADR-001 更新为 NATS-only opt-in）。最终 1.9.0 发布日期待整个周期完成后确定。
 
 ## 版本定位
 
@@ -283,6 +283,21 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 
 纯加性 + opt-in。无 SPI 变更，无信封字段变更。`nats.servers` 空（默认）⇒ 行为与 RC8 一致；`Connection` / `NatsClusterBroker` bean 仅在 jnats 在 classpath **且** `nats.servers` 非空时存在。NATS 上的线格式与 Redis 上一致（同一 `EnvelopeCodec` 输出）。
 
+### ⑮ 全 NATS 栈（NATS-only registry）/ Full NATS Stack
+
+*Since V1.9.0-RC10.* 在 RC9 NATS broker 之上补齐**最后一块**：NATS **JetStream-KV** 实现的 `SessionRegistry` / `ClusterNodeHeartbeat` / `ClusterReaper`——由 `server.netty.websocket.cluster.nats.registry=true` 选择，让一个部署**完全跑在 NATS 上、不依赖 Redis**。至此「自选中间件」三档齐全：**all-Redis**（`nats.servers` 空）/ **mixed**（NATS broker + Redis registry，RC9 默认）/ **all-NATS**（`nats.registry=true`，无 Redis）。
+
+> ⚠️ **需 JetStream（务必先读）**：all-NATS 需一台 **JetStream-enabled NATS 服务器**（`nats-server -js`）——比 RC9 mixed 的 core pub/sub 更重。**定位诚实**：registry 从来不是扩展瓶颈（瓶颈是广播扇出墙，RC9 已上 NATS），故 all-NATS 是**运维便利**（单中间件），**非性能**。ADR-001 已更新：NATS-only 从「拒绝」改为 **opt-in**（mixed / all-Redis 仍为默认）。
+
+- **三个 JetStream-KV 实现**（`…cluster.nats`，均 `@ConditionalOnMissingBean`，镜像各自 Redis 兄弟的契约）：`NatsKvSessionRegistry`（bucket `netty-sessions`；KV 键为 NATS 合法的 base64url + `.` 分隔，非原子 deregister）、`NatsKvNodeHeartbeat`（**单** bucket `netty-nodes`，**时间戳活性**——不依赖 KV maxAge 清除时序）、`NatsKvReaper`（bucket `netty-reaping`，KV `create` 原子 create-if-absent = `SET NX` 对应）。
+- **双连接**：RC9 broker 仍独占其 core pub/sub 连接（不动，避免初始化时序竞态）；另起一条 JetStream 连接服务 KV registry。
+- **五档自动装配矩阵**（顺序无关 SpEL）：每个 Redis registry/心跳/reaper/client/reliable bean 加 `&& NOT_ALL_NATS`，三个 NATS-KV bean 加 `ALL_NATS`；{all-Redis-standalone, all-Redis-cluster, mixed-standalone, mixed-cluster, all-NATS} 每档**恰一** SessionRegistry/Heartbeat/Reaper bean，all-NATS **无任何 RedisClient**。
+- **验证**：真实 `nats:2.10 -js`（Testcontainers）的 KV register/lookup/deregister 往返、心跳过期检测、reaper 单赢家测试（oracle，经验验证 jnats `KeyValue` API）+ Mockito 单测 + all-NATS 上下文测试（NATS-KV bean 选中 + `doesNotHaveBean(RedisClient)`）。
+
+#### 向后兼容
+
+纯加性 + opt-in。`nats.registry` 默认 `false` ⇒ 行为与 RC9（mixed）及 all-Redis **字节级一致**。无 SPI 变更。NATS-KV bean 仅在 jnats 在 classpath **且** `nats.servers` 非空 **且** `nats.registry=true` 时存在。
+
 ---
 
 
@@ -344,7 +359,7 @@ server:
 
 ## 测试覆盖
 
-- **368 个测试，11 个模块，全部通过**（`mvn test`，Redis + Docker/Testcontainers live；CI 用 Testcontainers 自带 Redis）。
+- **381 个测试，11 个模块，全部通过**（`mvn test`，Redis + Docker/Testcontainers live；CI 用 Testcontainers 自带 Redis）。
 - 1.9.0 新增测试：
   - `ClusterNodeManagerReliabilityTest` — 线程隔离调度器验证、宽限期抑制逻辑、双调度器并发压测
   - `ClusterRegistryWriterTest` — token-bucket 直通路径、超速合并、零丢失断言、并发注册风暴模拟
@@ -358,6 +373,7 @@ server:
   - （RC7）`ClusterTestRedisClusterSelfTest`（单节点 Redis Cluster 解析器自检）+ `RedisClusterModeSessionRegistryTest` / `…NodeHeartbeatTest` / `…PubSubBrokerTest` / `…ReaperTest`（Mockito 单测：deregister HGET→DEL+SREM 无 eval、per-key EXISTS、setNodeMessagePropagation + 广播频道、SET NX PX）+ `RedisClusterIntegrationTest`（真实单节点 Redis Cluster：注册/查找/注销往返、心跳 TTL 过期检测、集群 pub/sub 发布→接收）+ `NettyWebSocketClusterConfigureTest` 新增上下文用例（`cluster-nodes` 设置时选用 RedisClusterMode* 传输、standalone 让位）
   - （RC8）`DefaultMessagePayloadCodecTest`（6 例：JSON 编码为真 JSON 而非 `Map.toString()`、跨节点投递 == 本地投递、零拷贝 `serializeSharedPayload` 路径、T:/B: 往返、非 JSON `J:` 降级文本）+ `RedisPubSubBrokerMultiConnTest`（3 例：频道→哈希连接路由 + `never()` 其余、确定性、默认单连接）+ `RedisIntegrationTest` 新增 `multiPubSubConnectionsDeliverEveryChannel`（真实 Redis，N=3：5 广播 + 1 单播频道全投递）
   - （RC9）`NatsClusterBrokerTest`（4 例：base64url 广播 subject、subscribe 路由、入站 dispatch 到监听器、连接事件驱动状态）+ `ClusterTestNatsSelfTest`（NATS Testcontainers 解析器自检）+ `NatsIntegrationTest`（真实 `nats:2.10`：broadcast + unicast publish→receive，origin / target 断言）+ `NettyWebSocketClusterConfigureTest` 新增上下文用例（`nats.servers` 设置时选用 `NatsClusterBroker`、registry 仍为 `RedisSessionRegistry`）
+  - （RC10）`NatsKvSessionRegistryTest` / `NatsKvNodeHeartbeatTest` / `NatsKvReaperTest`（Mockito 单测：KV `s.`/`n.` 键方案、时间戳活性、`create` 单赢家）+ `NatsKvIntegrationTest`（真实 `nats:2.10 -js`：KV register/lookup/deregister 往返、心跳过期检测、reaper 单赢家——经验验证 jnats `KeyValue` API）+ `NettyWebSocketClusterConfigureTest` 新增 all-NATS 上下文用例（`nats.registry=true` → `NatsKv*` bean 选中 + `doesNotHaveBean(RedisClient)`）。并以 surefire `api.version=1.43` 修复全反应堆 Testcontainers Docker 探测——集群 / NATS / JetStream IT 不再跳过
 
 ## 升级指南
 
