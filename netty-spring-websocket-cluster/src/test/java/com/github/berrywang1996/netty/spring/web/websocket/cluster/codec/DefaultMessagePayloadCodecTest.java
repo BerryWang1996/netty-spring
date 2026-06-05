@@ -86,6 +86,33 @@ class DefaultMessagePayloadCodecTest {
     }
 
     @Test
+    void jsonBroadcastPath_serializeSharedPayload_equalsLocal() throws Exception {
+        // The cluster BROADCAST path (ClusterMessageSender -> localSender.topicMessage) delivers via
+        // JsonMessage.serializeSharedPayload (zero-copy writeValueAsBytes), NOT responseMsg — so pin
+        // THAT path byte-equal to local delivery, since it is the one cross-node broadcasts use.
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("type", "message");
+        content.put("text", "hi");
+        JsonMessage original = new JsonMessage(content);
+
+        AbstractMessage decoded = codec.decode(codec.encode(original));
+        assertTrue(decoded instanceof JsonMessage);
+
+        byte[] localBytes = original.getObjectMapper().writeValueAsBytes(content);
+        io.netty.buffer.ByteBuf buf =
+                ((JsonMessage) decoded).serializeSharedPayload(io.netty.buffer.ByteBufAllocator.DEFAULT);
+        byte[] deliveredBytes;
+        try {
+            deliveredBytes = new byte[buf.readableBytes()];
+            buf.readBytes(deliveredBytes);
+        } finally {
+            buf.release();
+        }
+        assertEquals(mapper.readTree(localBytes), mapper.readTree(deliveredBytes),
+                "cross-node broadcast (serializeSharedPayload) must equal local delivery");
+    }
+
+    @Test
     void textRoundTrip() {
         byte[] enc = codec.encode(new TextMessage("hello"));
         assertEquals("T:hello", new String(enc, StandardCharsets.UTF_8));
