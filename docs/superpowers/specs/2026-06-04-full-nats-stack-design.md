@@ -49,12 +49,12 @@ Both connect to the same (JetStream-enabled) NATS server; the broker uses core p
 Bucket `netty-sessions` (KV). Keys are NATS-KV-safe (`[-/_=.a-zA-Z0-9]`; uri is **base64url-encoded** to avoid
 `.`/illegal chars).
 - `register(uri, sessionId, nodeId, metadata)` → `put("s." + b64(uri) + "." + sessionId, nodeId)` **+** a
-  node-membership key `put("n." + nodeId + "." + b64(uri) + "|" + sessionId, "")` (for `removeAllForNode`).
+  node-membership key `put("n." + b64(nodeId) + "." + b64(uri) + "." + sessionId, "")` (for `removeAllForNode`; `.` separators only — `|` is NOT a legal NATS-KV key char, and `nodeId` is base64url-encoded so its prefix split is unambiguous).
 - `lookupNode(uri, sessionId)` → `get("s." + b64(uri) + "." + sessionId)` → nodeId (or null).
 - `deregister(uri, sessionId)` → read the owning nodeId, then `delete` the session key + the node-membership key
   (non-atomic, three KV ops — same trade-off as Redis-Cluster mode; the race is theoretical under UUID sessionIds).
 - `clusterSessionIds(uri)` → `keys()` filtered by `"s." + b64(uri) + "."` prefix → extract sessionIds.
-- `removeAllForNode(nodeId)` → `keys()` filtered by `"n." + nodeId + "."` → delete each session key + membership key.
+- `removeAllForNode(nodeId)` → `keys()` filtered by `"n." + b64(nodeId) + "."` → delete each session key + membership key.
 - `shutdown()` — no-op (connection owned by auto-config).
 
 ### `NatsKvNodeHeartbeat implements ClusterNodeHeartbeat`
