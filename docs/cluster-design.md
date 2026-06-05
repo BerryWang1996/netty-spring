@@ -44,7 +44,7 @@
 | 完整 Micrometer 指标集（meter-binder） | ✅ 1.9.0 RC4 | `NettyClusterMeterBinder`：11 个 counter + 节点/broker 状态 gauge（按 `state` 标签）；聚合粒度（无 per-URI 标签）；只读 `ClusterRuntimeStats`；需 `micrometer-core` + `cluster.enable=true` |
 | auto-config 装配测试（ApplicationContextRunner） | ✅ | 验证 enable=true→`@Primary` 为 ClusterMessageSender + health indicator；enable=false→零集群 bean |
 | W3C TraceContext 跨节点传播（MDC 日志关联） | ✅ 1.9.0 RC6 | `ClusterTraceContext` SPI + `MdcClusterTraceContext`；发送侧注入 traceparent + 接收侧恢复 MDC（`traceId`/`spanId`/`netty.traceparent`）；opt-in；Micrometer Observation 续接 → 2.0.0 |
-| NATS broker（ADR-001 规模化档位） | ⏳ 1.9.x | SPI 下新增实现，非替换 |
+| NATS broker（ADR-001 规模化档位） | ✅ 1.9.0 RC9（传输层） | NatsClusterBroker（core pub/sub，at-most-once）；由 nats.servers 选择；**仅传输层**，registry/心跳仍在 Redis（混合部署）；JetStream 可靠投递 → 后续 |
 | Testcontainers 端到端 CI + 进程内双节点 E2E（`ClusterMultiNodeE2ETest`） | ✅ 1.9.0 RC5 | 集群集成测试在 CI 真实运行（不再跳过）；E2E 证明跨节点广播/单播；锁定跨节点单播 hook-wiring 修复 |
 | 可运行的多节点 Docker 示例（Compose + 负载均衡 + 浏览器） | ⏳ 未来版本 | 面向人工演示；CI 验证已由上一行覆盖 |
 

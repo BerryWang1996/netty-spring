@@ -141,6 +141,30 @@ class NettyWebSocketClusterConfigureTest {
     }
 
     @Test
+    void natsServersSet_usesNatsBroker_redisRegistryStays() {
+        Assumptions.assumeTrue(redisAvailable, "Redis needed for the registry");
+        Assumptions.assumeTrue(ClusterTestNats.available(), "no NATS (no env + no Docker)");
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.nats.servers=" + ClusterTestNats.url(),
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-nats-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    // broker is NATS:
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsClusterBroker.class);
+                    // registry stays Redis (the mixed model):
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.SessionRegistry.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisSessionRegistry.class);
+                    assertThat(context.getBean(MessageSender.class)).isInstanceOf(ClusterMessageSender.class);
+                });
+    }
+
+    @Test
     void clusterMetrics_binderRegisteredWhenMicrometerPresent() {
         Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
         runner.withConfiguration(AutoConfigurations.of(NettyClusterMetricsConfigure.class))

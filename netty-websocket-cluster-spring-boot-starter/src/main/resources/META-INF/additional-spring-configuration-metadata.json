@@ -84,6 +84,11 @@
       "defaultValue": 1
     },
     {
+      "name": "server.netty.websocket.cluster.nats.servers",
+      "type": "java.lang.String",
+      "description": "Comma-separated NATS server URLs (nats://host:port,...). When non-empty, the NatsClusterBroker replaces the Redis Pub/Sub broker (transport only; SessionRegistry and heartbeat stay on Redis). Requires io.nats:jnats on the classpath. Empty (default) = Redis broker."
+    },
+    {
       "name": "server.netty.websocket.cluster.message-max-size-bytes",
       "type": "java.lang.Integer",
       "description": "Max serialized cluster message size in bytes. Larger messages are not published to the cluster (local delivery is unaffected); handled per on-publish-failure. 0 means unlimited.",
