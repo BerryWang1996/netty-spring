@@ -70,8 +70,19 @@ public class ClusterMessageSender implements MessageSender {
     private final ClusterNodeManager nodeManager;
     private final MessagePayloadCodec payloadCodec;
 
-    /** Local cache: sessionId → nodeId (short TTL, invalidated on NODE_LEFT). */
-    private final ConcurrentHashMap<String, CachedNodeLookup> nodeCache = new ConcurrentHashMap<>();
+    /** Default LRU cap for {@link #nodeCache} when none is configured (legacy constructor / unset knob). */
+    private static final int DEFAULT_NODE_CACHE_MAX_SIZE = 100_000;
+
+    /**
+     * Local cache: (uri|sessionId) → nodeId. The TTL governs only REUSE, not eviction — entries for LIVE
+     * remote sessions are removed only on NODE_LEFT or a miss, so a node unicasting to many distinct remote
+     * sessions would otherwise grow this map without bound (memory leak on the unicast hot path). Bounding it
+     * as an access-order LRU caps the footprint; the oldest (least-recently-used) entry is evicted past the
+     * cap. A wrongly-evicted live entry simply triggers one extra registry lookup — correctness is preserved.
+     * Guarded by its own monitor via {@code synchronizedMap}; {@code entrySet().removeIf} in
+     * {@link #invalidateCacheForNode} synchronizes on the map explicitly (required for the iterator).
+     */
+    private volatile Map<String, CachedNodeLookup> nodeCache = newBoundedNodeCache(DEFAULT_NODE_CACHE_MAX_SIZE);
     private final long nodeCacheTtlMs;
 
     /** Active broadcast subscriptions keyed by URI. */
@@ -155,6 +166,34 @@ public class ClusterMessageSender implements MessageSender {
         if (nodeLookupTimeoutMs > 0) {
             this.nodeLookupTimeoutMs = nodeLookupTimeoutMs;
         }
+    }
+
+    /**
+     * Sets the max number of entries retained in the unicast-path node-lookup cache (LRU eviction past the
+     * cap). Must be called before {@link #start()} / first use. {@code <= 0} = unbounded (legacy behavior).
+     * Rebuilds the backing map; safe at config time (no concurrent traffic yet).
+     */
+    public void setRegistryReadCacheMaxSize(int maxSize) {
+        Map<String, CachedNodeLookup> rebuilt = maxSize > 0
+                ? newBoundedNodeCache(maxSize)
+                : Collections.synchronizedMap(new HashMap<>());
+        rebuilt.putAll(this.nodeCache);
+        this.nodeCache = rebuilt;
+    }
+
+    /** Test/diagnostic hook: current number of entries in the unicast node-lookup cache. */
+    int nodeCacheSize() {
+        return nodeCache.size();
+    }
+
+    /** Builds an access-order LRU map (synchronized) that evicts the eldest entry past {@code maxSize}. */
+    private static Map<String, CachedNodeLookup> newBoundedNodeCache(int maxSize) {
+        return Collections.synchronizedMap(new LinkedHashMap<String, CachedNodeLookup>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, CachedNodeLookup> eldest) {
+                return size() > maxSize;
+            }
+        });
     }
 
     /** Injects the reliable broker (enables reliableBroadcast). Null = reliable delivery disabled. */
@@ -633,7 +672,13 @@ public class ClusterMessageSender implements MessageSender {
 
     /** Invalidates the node lookup cache for a specific node (called on NODE_LEFT). */
     public void invalidateCacheForNode(String nodeId) {
-        nodeCache.entrySet().removeIf(e -> nodeId.equals(e.getValue().nodeId));
+        // synchronizedMap requires explicit synchronization on the map's monitor when iterating
+        // (entrySet().removeIf uses an iterator). Snapshot the reference once for atomicity vs a
+        // concurrent setRegistryReadCacheMaxSize() rebuild.
+        Map<String, CachedNodeLookup> cache = this.nodeCache;
+        synchronized (cache) {
+            cache.entrySet().removeIf(e -> nodeId.equals(e.getValue().nodeId));
+        }
         ReliableBroker rb = reliableBroker;
         if (rb != null) {
             try { rb.destroyConsumerGroupsForNode(nodeId); }
