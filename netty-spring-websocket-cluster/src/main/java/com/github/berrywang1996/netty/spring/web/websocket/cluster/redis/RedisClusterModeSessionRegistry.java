@@ -24,13 +24,15 @@ import io.lettuce.core.cluster.api.async.RedisAdvancedClusterAsyncCommands;
 import io.lettuce.core.cluster.api.sync.RedisAdvancedClusterCommands;
 import lombok.extern.slf4j.Slf4j;
 
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
 /**
  * Redis-Cluster (topology) implementation of {@link SessionRegistry}. Same key design as
- * {@code RedisSessionRegistry}, but deregister is NON-ATOMIC (HGET -> DEL + SREM as separately
+ * {@code RedisSessionRegistry} (the URI token is base64url-encoded so a URI that is a prefix of
+ * another cannot leak/extract the wrong session ids), but deregister is NON-ATOMIC (HGET -> DEL + SREM as separately
  * slot-routed commands — an EVAL touching both the session key and the node-set key would be
  * CROSSSLOT; the race it would close is theoretical under UUID sessionIds), and
  * {@code clusterSessionIds} uses the cluster-aware SCAN (all masters).
@@ -57,7 +59,7 @@ public class RedisClusterModeSessionRegistry implements SessionRegistry {
         Map<String, String> hash = new HashMap<>(metadata);
         hash.put(NODE_ID_FIELD, nodeId);
         CompletableFuture<String> hset = async.hmset(sessionKey(uri, sessionId), hash).toCompletableFuture();
-        CompletableFuture<Long> sadd = async.sadd(nodeSetKey(nodeId), uri + "|" + sessionId).toCompletableFuture();
+        CompletableFuture<Long> sadd = async.sadd(nodeSetKey(nodeId), memberOf(uri, sessionId)).toCompletableFuture();
         return CompletableFuture.allOf(hset, sadd).thenRun(() ->
                 log.debug("Registered session {} on node {} for URI {}", sessionId, nodeId, uri));
     }
@@ -66,7 +68,7 @@ public class RedisClusterModeSessionRegistry implements SessionRegistry {
     public CompletionStage<Void> deregister(String uri, String sessionId) {
         RedisAdvancedClusterAsyncCommands<String, String> async = connection.async();
         String sessionKey = sessionKey(uri, sessionId);
-        String member = uri + "|" + sessionId;
+        String member = memberOf(uri, sessionId);
         return async.hget(sessionKey, NODE_ID_FIELD).thenCompose(nodeId -> {
             if (nodeId == null) {
                 return CompletableFuture.completedFuture(null);
@@ -86,7 +88,7 @@ public class RedisClusterModeSessionRegistry implements SessionRegistry {
     public CompletionStage<Set<String>> clusterSessionIds(String uri) {
         return CompletableFuture.supplyAsync(() -> {
             RedisAdvancedClusterCommands<String, String> sync = connection.sync();
-            String prefix = SESSION_PREFIX + uri + ":";
+            String prefix = SESSION_PREFIX + b64(uri) + ":";
             Set<String> ids = new HashSet<>();
             ScanArgs args = ScanArgs.Builder.matches(prefix + "*").limit(100);
             ScanCursor cursor = ScanCursor.INITIAL;
@@ -113,10 +115,12 @@ public class RedisClusterModeSessionRegistry implements SessionRegistry {
             }
             List<CompletableFuture<?>> futures = new ArrayList<>();
             for (String member : members) {
+                // member format: "b64url(uri)|sessionId" — token already base64url-encoded.
                 int sep = member.indexOf('|');
                 if (sep > 0) {
-                    futures.add(async.del(sessionKey(member.substring(0, sep), member.substring(sep + 1)))
-                            .toCompletableFuture());
+                    String b64uri = member.substring(0, sep);
+                    String sessionId = member.substring(sep + 1);
+                    futures.add(async.del(SESSION_PREFIX + b64uri + ":" + sessionId).toCompletableFuture());
                 }
             }
             futures.add(async.del(nodeSetKey).toCompletableFuture());
@@ -129,8 +133,18 @@ public class RedisClusterModeSessionRegistry implements SessionRegistry {
         log.info("RedisClusterModeSessionRegistry shut down");
     }
 
+    /** Base64url (no padding) of the URI — delimiter-safe (no ':' or '|'). */
+    private static String b64(String s) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(s.getBytes(StandardCharsets.UTF_8));
+    }
+
     private static String sessionKey(String uri, String sessionId) {
-        return SESSION_PREFIX + uri + ":" + sessionId;
+        return SESSION_PREFIX + b64(uri) + ":" + sessionId;
+    }
+
+    /** Node-set member: {@code b64url(uri)|sessionId}. */
+    private static String memberOf(String uri, String sessionId) {
+        return b64(uri) + "|" + sessionId;
     }
 
     private static String nodeSetKey(String nodeId) {

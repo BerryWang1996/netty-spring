@@ -189,14 +189,19 @@ class RedisIntegrationTest {
 
         RedisSessionRegistry registry = new RedisSessionRegistry(connection);
         registry.register("/ws/lua", "s1", "node-L", Map.of()).toCompletableFuture().join();
-        assertTrue(connection.sync().sismember("netty:node:node-L:sessions", "/ws/lua|s1"),
+        // The node-set member is now "b64url(uri)|sessionId" (FIX A: URI is base64url-encoded so a
+        // ':'-containing URI that prefixes another cannot collide). Compute the expected member with
+        // the same helper the registry uses.
+        String member = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("/ws/lua".getBytes(java.nio.charset.StandardCharsets.UTF_8)) + "|s1";
+        assertTrue(connection.sync().sismember("netty:node:node-L:sessions", member),
                 "precondition: node-set has the member");
 
         registry.deregister("/ws/lua", "s1").toCompletableFuture().join();
 
         assertNull(registry.lookupNode("/ws/lua", "s1").toCompletableFuture().join(),
                 "session hash deleted");
-        assertFalse(connection.sync().sismember("netty:node:node-L:sessions", "/ws/lua|s1"),
+        assertFalse(connection.sync().sismember("netty:node:node-L:sessions", member),
                 "Lua deregister must SREM the node-set member atomically (no orphan)");
     }
 
@@ -306,8 +311,10 @@ class RedisIntegrationTest {
         RedisSessionRegistry registry = new RedisSessionRegistry(connection);
         RedisClusterNodeHeartbeat heartbeat = new RedisClusterNodeHeartbeat(connection);
 
+        // drainTimeoutMs kept small (200ms) so the bounded drain folded into shutdown() (FIX D)
+        // does not slow this IT.
         ClusterNodeManager manager = new ClusterNodeManager(
-                "lifecycle-node", 1000, 3000, 5000, 10000, heartbeat, registry);
+                "lifecycle-node", 1000, 3000, 5000, 200, heartbeat, registry);
 
         assertEquals(NodeState.JOINING, manager.getState());
         manager.start();
@@ -322,7 +329,7 @@ class RedisIntegrationTest {
         manager.drain();
         assertEquals(NodeState.DRAINING, manager.getState());
 
-        // Shutdown
+        // Shutdown (honors drainTimeoutMs, then transitions DRAINING → LEFT)
         manager.shutdown();
         assertEquals(NodeState.LEFT, manager.getState());
     }
@@ -420,8 +427,10 @@ class RedisIntegrationTest {
         RedisClusterNodeHeartbeat hbA = new RedisClusterNodeHeartbeat(connA);
         RedisClusterNodeHeartbeat hbB = new RedisClusterNodeHeartbeat(connB);
 
-        ClusterNodeManager nodeA = new ClusterNodeManager("e2e-A", 1000, 5000, 10000, 30000, hbA, registryA);
-        ClusterNodeManager nodeB = new ClusterNodeManager("e2e-B", 1000, 5000, 10000, 30000, hbB, registryB);
+        // drainTimeoutMs = 0 → no drain grace sleep on shutdown (FIX D folds drain into shutdown);
+        // keeps this multi-node IT fast while DRAINING→LEFT still occurs.
+        ClusterNodeManager nodeA = new ClusterNodeManager("e2e-A", 1000, 5000, 10000, 0, hbA, registryA);
+        ClusterNodeManager nodeB = new ClusterNodeManager("e2e-B", 1000, 5000, 10000, 0, hbB, registryB);
 
         // Recording local senders
         RecordingSender localSenderA = new RecordingSender();

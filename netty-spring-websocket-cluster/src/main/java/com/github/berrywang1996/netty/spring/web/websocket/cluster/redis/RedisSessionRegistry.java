@@ -25,6 +25,7 @@ import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.lettuce.core.api.sync.RedisCommands;
 import lombok.extern.slf4j.Slf4j;
 
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -32,10 +33,12 @@ import java.util.concurrent.CompletionStage;
 /**
  * Redis implementation of {@link SessionRegistry}.
  *
- * <p>Redis key design:
+ * <p>Redis key design (the URI token is base64url-encoded so a URI containing ':' that is a
+ * prefix of another URI cannot leak/extract the wrong session ids — base64url is delimiter-safe,
+ * containing neither ':' nor '|'):
  * <ul>
- *   <li>{@code netty:session:{uri}:{sessionId}} → Hash { nodeId, ... metadata }</li>
- *   <li>{@code netty:node:{nodeId}:sessions} → Set { "uri|sessionId", ... }</li>
+ *   <li>{@code netty:session:{b64url(uri)}:{sessionId}} → Hash { nodeId, ... metadata }</li>
+ *   <li>{@code netty:node:{nodeId}:sessions} → Set { "b64url(uri)|sessionId", ... }</li>
  * </ul>
  *
  * @author berrywang1996
@@ -81,7 +84,7 @@ public class RedisSessionRegistry implements SessionRegistry {
 
         // Pipeline: HSET session key + SADD to node's session set
         CompletableFuture<String> hset = async.hmset(sessionKey, hash).toCompletableFuture();
-        CompletableFuture<Long> sadd = async.sadd(nodeSetKey, uri + "|" + sessionId).toCompletableFuture();
+        CompletableFuture<Long> sadd = async.sadd(nodeSetKey, memberOf(uri, sessionId)).toCompletableFuture();
 
         return CompletableFuture.allOf(hset, sadd).thenRun(() ->
                 log.debug("Registered session {} on node {} for URI {}", sessionId, nodeId, uri));
@@ -90,7 +93,7 @@ public class RedisSessionRegistry implements SessionRegistry {
     @Override
     public CompletionStage<Void> deregister(String uri, String sessionId) {
         String sessionKey = sessionKey(uri, sessionId);
-        String member = uri + "|" + sessionId;
+        String member = memberOf(uri, sessionId);
         // Single atomic Lua call replaces the former non-atomic HGET → DEL + SREM. Plain EVAL: Redis
         // caches the compiled script by SHA, and the body is tiny, so resending it is negligible.
         return connection.async().<String>eval(DEREGISTER_LUA, ScriptOutputType.VALUE,
@@ -115,8 +118,8 @@ public class RedisSessionRegistry implements SessionRegistry {
         // Still O(N) total but doesn't hold the Redis single-thread for the entire duration.
         return CompletableFuture.supplyAsync(() -> {
             RedisCommands<String, String> sync = connection.sync();
-            String pattern = SESSION_PREFIX + uri + ":*";
-            String prefix = SESSION_PREFIX + uri + ":";
+            String prefix = SESSION_PREFIX + b64(uri) + ":";
+            String pattern = prefix + "*";
             Set<String> sessionIds = new HashSet<>();
             ScanCursor cursor = ScanCursor.INITIAL;
             ScanArgs args = ScanArgs.Builder.matches(pattern).limit(100);
@@ -145,12 +148,13 @@ public class RedisSessionRegistry implements SessionRegistry {
 
             List<CompletableFuture<?>> futures = new ArrayList<>();
             for (String member : members) {
-                // member format: "uri|sessionId"
+                // member format: "b64url(uri)|sessionId" — the token is already base64url-encoded,
+                // so the session key is the prefix + token + ':' + sessionId (no decode needed).
                 int sep = member.indexOf('|');
                 if (sep > 0) {
-                    String uri = member.substring(0, sep);
+                    String b64uri = member.substring(0, sep);
                     String sessionId = member.substring(sep + 1);
-                    futures.add(async.del(sessionKey(uri, sessionId)).toCompletableFuture());
+                    futures.add(async.del(SESSION_PREFIX + b64uri + ":" + sessionId).toCompletableFuture());
                 }
             }
             futures.add(async.del(nodeSetKey).toCompletableFuture());
@@ -169,8 +173,19 @@ public class RedisSessionRegistry implements SessionRegistry {
 
     // ---- Key helpers ----
 
+    /** Base64url (no padding) of the URI — delimiter-safe (no ':' or '|'), so a URI that is a
+     *  prefix of another can never produce an ambiguous key/member. */
+    private static String b64(String s) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(s.getBytes(StandardCharsets.UTF_8));
+    }
+
     private static String sessionKey(String uri, String sessionId) {
-        return SESSION_PREFIX + uri + ":" + sessionId;
+        return SESSION_PREFIX + b64(uri) + ":" + sessionId;
+    }
+
+    /** Node-set member: {@code b64url(uri)|sessionId}. */
+    private static String memberOf(String uri, String sessionId) {
+        return b64(uri) + "|" + sessionId;
     }
 
     private static String nodeSetKey(String nodeId) {
