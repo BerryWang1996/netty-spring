@@ -101,6 +101,17 @@ public class NettyWebSocketClusterConfigure {
     static final String CLUSTER_TRANSPORT =
             "!('${server.netty.websocket.cluster.redis.cluster-nodes:}'.trim().isEmpty())";
 
+    /** SpEL: nats.servers is empty/absent → use a Redis broker. */
+    static final String NO_NATS_TRANSPORT =
+            "'${server.netty.websocket.cluster.nats.servers:}'.trim().isEmpty()";
+    /** SpEL: nats.servers is non-empty → use the NATS broker. */
+    static final String NATS_TRANSPORT =
+            "!('${server.netty.websocket.cluster.nats.servers:}'.trim().isEmpty())";
+    /** Standalone Redis broker: cluster-nodes empty AND nats.servers empty. */
+    static final String STANDALONE_REDIS_BROKER = STANDALONE_TRANSPORT + " and " + NO_NATS_TRANSPORT;
+    /** Cluster Redis broker: cluster-nodes set AND nats.servers empty. */
+    static final String CLUSTER_REDIS_BROKER = CLUSTER_TRANSPORT + " and " + NO_NATS_TRANSPORT;
+
     @Bean
     @ConfigurationProperties(prefix = "server.netty.websocket.cluster")
     public ClusterProperties clusterProperties() {
@@ -218,7 +229,7 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean(destroyMethod = "shutdown")
-    @ConditionalOnExpression(STANDALONE_TRANSPORT)
+    @ConditionalOnExpression(STANDALONE_REDIS_BROKER)
     @ConditionalOnMissingBean(ClusterBroker.class)
     public RedisPubSubBroker clusterBroker(RedisClient redisClient, EnvelopeCodec envelopeCodec,
                                            ClusterProperties properties, MessageAuthenticator messageAuthenticator) {
@@ -228,6 +239,32 @@ public class NettyWebSocketClusterConfigure {
         // (Base64 ~+33% + envelope metadata). 0 (unlimited) outbound => unlimited inbound.
         int maxOut = properties.getMessageMaxSizeBytes();
         broker.setInboundMaxBytes(maxOut > 0 ? (int) Math.min((long) maxOut * 2L, Integer.MAX_VALUE) : 0);
+        return broker;
+    }
+
+    // ---- NATS broker (active only when nats.servers is set; ADR-001 scaling tier) ----
+
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnClass(io.nats.client.Connection.class)
+    @ConditionalOnExpression(NATS_TRANSPORT)
+    @ConditionalOnMissingBean(ClusterBroker.class)
+    public ClusterBroker clusterBrokerNats(ClusterProperties properties, EnvelopeCodec envelopeCodec,
+            MessageAuthenticator messageAuthenticator) throws Exception {
+        com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsClusterBroker broker =
+                new com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsClusterBroker(
+                        envelopeCodec, messageAuthenticator);
+        // 2-phase init: build the NATS connection with the broker's ConnectionListener (set at build time),
+        // then attach it. The broker owns + closes the connection (destroyMethod="shutdown").
+        io.nats.client.Connection connection = io.nats.client.Nats.connect(io.nats.client.Options.builder()
+                .server(properties.getNats().getServers())
+                .connectionListener(broker::onConnectionEvent)
+                .maxReconnects(-1)
+                .build());
+        broker.attach(connection);
+        int maxOut = properties.getMessageMaxSizeBytes();
+        broker.setInboundMaxBytes(maxOut > 0 ? (int) Math.min((long) maxOut * 2L, Integer.MAX_VALUE) : 0);
+        log.info("Cluster broker = NATS ({}) — registry/heartbeat remain on Redis (ADR-001 mixed model)",
+                properties.getNats().getServers());
         return broker;
     }
 
@@ -329,7 +366,7 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean(destroyMethod = "shutdown")
-    @ConditionalOnExpression(CLUSTER_TRANSPORT)
+    @ConditionalOnExpression(CLUSTER_REDIS_BROKER)
     @ConditionalOnMissingBean(ClusterBroker.class)
     public ClusterBroker clusterBrokerCluster(io.lettuce.core.cluster.RedisClusterClient client,
             EnvelopeCodec envelopeCodec, ClusterProperties properties, MessageAuthenticator messageAuthenticator) {
