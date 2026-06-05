@@ -63,6 +63,8 @@
         <spring-boot.version>2.7.18</spring-boot.version>
         <!-- test only: Spring Boot 2.7.x BOM does not manage testcontainers (Boot 3.1+ does) -->
         <testcontainers.version>1.20.4</testcontainers.version>
+        <!-- optional NATS client — only pulled in by the NATS cluster broker impl -->
+        <jnats.version>2.20.4</jnats.version>
         <!-- activation -->
         <activation.version>1.1.1</activation.version>
         <!-- provided -->
@@ -164,6 +166,13 @@
                 <version>${testcontainers.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+
+            <!-- NATS client (optional cluster transport) -->
+            <dependency>
+                <groupId>io.nats</groupId>
+                <artifactId>jnats</artifactId>
+                <version>${jnats.version}</version>
             </dependency>
 
             <!-- lombok -->

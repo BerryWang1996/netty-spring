@@ -60,6 +60,13 @@
             <artifactId>lettuce-core</artifactId>
         </dependency>
 
+        <!-- NATS client (optional — enables the NATS cluster broker when present) -->
+        <dependency>
+            <groupId>io.nats</groupId>
+            <artifactId>jnats</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Lombok (for @Slf4j in auto-configuration) -->
         <dependency>
             <groupId>org.projectlombok</groupId>

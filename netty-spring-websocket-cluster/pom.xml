@@ -54,6 +54,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- NATS client (optional — only needed for the NATS transport impl) -->
+        <dependency>
+            <groupId>io.nats</groupId>
+            <artifactId>jnats</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- SLF4J for logging -->
         <dependency>
             <groupId>org.projectlombok</groupId>
