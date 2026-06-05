@@ -1,6 +1,6 @@
 # Release Notes — v1.9.0 (开发中 / in development)
 
-> 状态：**开发中（1.9.0-RC7，2026-06-04）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）。最终 1.9.0 发布日期待整个周期完成后确定。
+> 状态：**开发中（1.9.0-RC8，2026-06-04）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）。最终 1.9.0 发布日期待整个周期完成后确定。
 
 ## 版本定位
 
@@ -247,6 +247,25 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 
 纯加性 + opt-in。无 SPI 签名变更，无线格式变更。standalone/sentinel + 单机模式行为不变。
 
+### ⑫ 多节点 Docker 演示 + 跨节点 JSON 广播修复 / Multi-Node Docker Demo (+ cross-node JSON fix)
+
+*Since V1.9.0-RC8.* 新增一个**可运行、CI 守护**的多节点 Docker 演示（`docker-demo/`），把集群特性（RC1–RC7）变成可亲手验证的活制品：2 个应用节点 + nginx 负载均衡 + 单机 Redis；浏览器聊天里在 node-a 上发的消息会带 `(via node-a)` 标记出现在 node-b 的浏览器中——**跨节点广播肉眼可证**。演示应用经 `cluster` Spring profile 启用集群（默认单机不变），`ChatRoomController` 加了 origin-node 戳记 + `/whoami` 节点徽章（均为**加性**，单机模式字节级不变）。`docker-demo/smoke.js` 为无头跨节点广播断言，并接入一个**路径过滤的 CI 冒烟作业**（构建栈 → 断言 → 拆除）。演示不发布到 Central。
+
+> 🔴 **修复（影响 1.8.0+ 集群用户）：跨节点 JSON 广播此前不可解析。** 多节点演示的端到端冒烟揪出一个潜伏的 published-module 缺陷：`DefaultMessagePayloadCodec` 用字符串拼接序列化 JSON 广播内容，实际调用了内容对象的 `toString()`（`Map` 渲染成 `{a=b}`，**不是** JSON），故**跨节点** JSON 广播在对端落地时不可解析（本地投递走 Jackson 直序列化，未受影响——所以一直没被发现）。现已改为用消息自身的 `ObjectMapper` 编码、并把 `J:` 体解析回 JSON 树再投递，使**跨节点 JSON 投递与本地投递字节级一致**；附 `DefaultMessagePayloadCodecTest`（6 例，锁定 `responseMsg` 与零拷贝 `serializeSharedPayload` 两条投递路径）。**升级即生效，无需配置改动。**
+
+### ⑬ 多 pub/sub 连接（opt-in 入站解码扩展）/ Multi Pub/Sub Connections
+
+*Since V1.9.0-RC8.* 新增配置项 `server.netty.websocket.cluster.pubsub-connections`（int，默认 **1**），把 standalone `RedisPubSubBroker` 的 SUBSCRIBE 入站解码按频道哈希（`floorMod(channel.hashCode(), N)`）分散到 **N** 个 Lettuce pub/sub 连接上——把单连接入站解码扩展到至多 N 个 Lettuce I/O 线程，缓解 `cluster-design.md` 的「墙②」（单 pub/sub 连接 ~80k msg/s 解码天花板）。
+
+- **纯加性、默认关闭**：`1` = 单连接，与既往**字节级一致**（list 单元素，`connectionFor` 恒返回 index 0）。2–4 仅在某节点逼近单连接解码墙时按需开启；范围 `[1,16]`。
+- **subscribe-only**：PUBLISH 仍走单连接（fire-and-forget，Lettuce 自动 pipeline，非解码墙）。仅作用于 **standalone** `RedisPubSubBroker`；RC7 的 `RedisClusterModePubSubBroker` 保持单连接（后续项）。
+- **并发安全（已验证）**：一个频道恒定落在一个连接上 → 同频道有序；不同频道并行解码。下游入站监听路径（`ClusterMessageSender`）本就并发安全（AtomicLong 计数、按线程 MDC、无状态解码、并发安全的本地 sender）。
+- **诚实定位**：`cluster-design.md` 此前将其标为「过早优化」（实测吞吐远低于该墙）；本版作为**默认关闭、零开销的前瞻性开关**落地，并把该 scope 行从 ⏳ 翻到 ✅。
+
+#### 向后兼容（⑫⑬）
+
+均为纯加性 + opt-in。跨节点 JSON 修复为纯正确性修复——旧 `J:` 格式本就不可解析、无人依赖，故无线格式兼容顾虑。`pubsub-connections` 默认 1 = 既往行为。单机模式与 standalone/sentinel 路径不受影响。
+
 ---
 
 
@@ -308,7 +327,7 @@ server:
 
 ## 测试覆盖
 
-- **350 个测试，11 个模块，全部通过**（`mvn test`，Redis + Docker/Testcontainers live；CI 用 Testcontainers 自带 Redis）。
+- **360 个测试，11 个模块，全部通过**（`mvn test`，Redis + Docker/Testcontainers live；CI 用 Testcontainers 自带 Redis）。
 - 1.9.0 新增测试：
   - `ClusterNodeManagerReliabilityTest` — 线程隔离调度器验证、宽限期抑制逻辑、双调度器并发压测
   - `ClusterRegistryWriterTest` — token-bucket 直通路径、超速合并、零丢失断言、并发注册风暴模拟
@@ -320,6 +339,7 @@ server:
   - （RC5）`ClusterTestRedis` 解析器（localhost-first → Testcontainers `redis:7-alpine` 回退）+ 4 个集群集成测试改用它（CI 真实运行，不再跳过）；`ClusterMultiNodeE2ETest` 双节点全栈 E2E（跨节点广播 + 单播 + `netty.cluster.*` 指标断言，HMAC 开启，真实 Redis）—— 同时锁定跨节点单播 hook-wiring 修复的回归门
   - （RC6）`MdcClusterTraceContextTest`（6 个：显式 traceparent、从 traceId/spanId 合成、64 位左补零、畸形→null、restore 往返 + Scope 清除、NOOP）+ `ClusterTraceIntegrationTest`（真实 Redis：traceparent 跨节点 wire 往返）+ 2 个上下文用例（trace-propagation.enable 开/关时 `ClusterTraceContext` bean 在/不在）
   - （RC7）`ClusterTestRedisClusterSelfTest`（单节点 Redis Cluster 解析器自检）+ `RedisClusterModeSessionRegistryTest` / `…NodeHeartbeatTest` / `…PubSubBrokerTest` / `…ReaperTest`（Mockito 单测：deregister HGET→DEL+SREM 无 eval、per-key EXISTS、setNodeMessagePropagation + 广播频道、SET NX PX）+ `RedisClusterIntegrationTest`（真实单节点 Redis Cluster：注册/查找/注销往返、心跳 TTL 过期检测、集群 pub/sub 发布→接收）+ `NettyWebSocketClusterConfigureTest` 新增上下文用例（`cluster-nodes` 设置时选用 RedisClusterMode* 传输、standalone 让位）
+  - （RC8）`DefaultMessagePayloadCodecTest`（6 例：JSON 编码为真 JSON 而非 `Map.toString()`、跨节点投递 == 本地投递、零拷贝 `serializeSharedPayload` 路径、T:/B: 往返、非 JSON `J:` 降级文本）+ `RedisPubSubBrokerMultiConnTest`（3 例：频道→哈希连接路由 + `never()` 其余、确定性、默认单连接）+ `RedisIntegrationTest` 新增 `multiPubSubConnectionsDeliverEveryChannel`（真实 Redis，N=3：5 广播 + 1 单播频道全投递）
 
 ## 升级指南
 
