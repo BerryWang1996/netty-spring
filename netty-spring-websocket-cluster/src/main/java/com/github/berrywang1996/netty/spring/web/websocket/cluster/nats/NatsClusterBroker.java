@@ -124,7 +124,16 @@ public class NatsClusterBroker implements ClusterBroker {
         checkActive();
         String subject = BROADCAST_PREFIX + subjectToken(uri);
         byte[] data = authenticator.wrap(codec.encode(envelope)).getBytes(StandardCharsets.UTF_8);
-        connection.publish(subject, data);
+        // jnats Connection.publish throws UNCHECKED IllegalStateException (connection closed / reconnect-buffer
+        // full) and IllegalArgumentException (payload > server max-payload). The SPI contract is to throw
+        // ClusterBrokerException so ClusterMessageSender can route the failure through its onPublishFailure
+        // policy (it only catches ClusterBrokerException) instead of letting a raw exception unwind to the
+        // app caller AFTER local fan-out has already happened.
+        try {
+            connection.publish(subject, data);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            throw new ClusterBrokerException("NATS publish to " + subject + " failed", e);
+        }
     }
 
     @Override
@@ -132,7 +141,11 @@ public class NatsClusterBroker implements ClusterBroker {
         checkActive();
         String subject = UNICAST_PREFIX + subjectToken(targetNodeId);
         byte[] data = authenticator.wrap(codec.encode(envelope)).getBytes(StandardCharsets.UTF_8);
-        connection.publish(subject, data);
+        try {
+            connection.publish(subject, data);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            throw new ClusterBrokerException("NATS unicast to " + subject + " failed", e);
+        }
     }
 
     /** Handles an inbound NATS message: inbound-size guard → listener lookup → HMAC unwrap → decode → dispatch.

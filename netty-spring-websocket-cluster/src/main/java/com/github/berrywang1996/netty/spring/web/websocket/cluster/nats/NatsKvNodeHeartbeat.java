@@ -50,10 +50,14 @@ public class NatsKvNodeHeartbeat implements ClusterNodeHeartbeat {
 
     @Override
     public void renewHeartbeat(String nodeId, long timeoutMs) {
+        // A heartbeat write failure MUST propagate: ClusterNodeManager.start()/doHeartbeat() drive the
+        // DEGRADED transition + onTransportLost OFF the exception thrown here (same contract as the Redis
+        // heartbeat impls — see RedisClusterNodeHeartbeat, which lets the Lettuce exception bubble). If we
+        // swallowed it the node would stay silently "ACTIVE" while its NATS heartbeat is failing.
         try {
             kv.put(nodeId, String.valueOf(System.currentTimeMillis()).getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
-            log.warn("NATS KV heartbeat put failed for node {}", nodeId, e);
+            throw new RuntimeException("NATS KV heartbeat failed for node " + nodeId, e);
         }
     }
 

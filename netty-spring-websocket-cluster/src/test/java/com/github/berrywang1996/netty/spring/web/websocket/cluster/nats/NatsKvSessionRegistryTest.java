@@ -27,6 +27,7 @@ import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -104,5 +105,22 @@ class NatsKvSessionRegistryTest {
         when(kv.get(any())).thenReturn(null);
 
         assertNull(registry.lookupNode("/ws/x", "nope").toCompletableFuture().join());
+    }
+
+    @Test
+    void asyncOpsRunOnDedicatedNamedThread_notCommonPool() throws Exception {
+        // The blocking KV op must NOT run on ForkJoinPool.commonPool(); it must run on the registry's
+        // dedicated, named pool so it cannot starve the shared common pool on the unicast hot path.
+        java.util.concurrent.atomic.AtomicReference<String> threadName = new java.util.concurrent.atomic.AtomicReference<>();
+        when(kv.get(any())).thenAnswer(inv -> {
+            threadName.set(Thread.currentThread().getName());
+            return null;
+        });
+
+        registry.lookupNode("/ws/x", "s1").toCompletableFuture().join();
+
+        org.junit.jupiter.api.Assertions.assertNotNull(threadName.get());
+        assertTrue(threadName.get().startsWith("nats-kv-registry-"),
+                "blocking KV op ran on '" + threadName.get() + "' — expected the dedicated nats-kv-registry pool");
     }
 }

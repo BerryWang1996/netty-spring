@@ -3,6 +3,7 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster.nats;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.NoOpMessageAuthenticator;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.BrokerState;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBrokerException;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterMessageListener;
 import io.nats.client.Connection;
@@ -83,6 +84,40 @@ class NatsClusterBrokerTest {
 
         assertEquals(1, got.size());
         assertEquals("node-A", got.get(0).getOriginNodeId());
+    }
+
+    @Test
+    void publishWrapsRawJnatsExceptionInClusterBrokerException() {
+        Connection conn = mock(Connection.class);
+        when(conn.createDispatcher(any())).thenReturn(mock(Dispatcher.class));
+        // jnats Connection.publish throws unchecked IllegalStateException (closed / reconnect-buffer full).
+        doThrow(new IllegalStateException("connection closed"))
+                .when(conn).publish(anyString(), any(byte[].class));
+
+        NatsClusterBroker broker = new NatsClusterBroker(new SimpleTextEnvelopeCodec(), new NoOpMessageAuthenticator());
+        broker.attach(conn);
+
+        ClusterBrokerException ex = assertThrows(ClusterBrokerException.class,
+                () -> broker.publish("/ws/x", env("node-A", "/ws/x")),
+                "raw jnats IllegalStateException must be wrapped so onPublishFailure can handle it");
+        assertTrue(ex.getCause() instanceof IllegalStateException);
+    }
+
+    @Test
+    void unicastWrapsRawJnatsExceptionInClusterBrokerException() {
+        Connection conn = mock(Connection.class);
+        when(conn.createDispatcher(any())).thenReturn(mock(Dispatcher.class));
+        // IllegalArgumentException = payload exceeds server max-payload.
+        doThrow(new IllegalArgumentException("payload too large"))
+                .when(conn).publish(anyString(), any(byte[].class));
+
+        NatsClusterBroker broker = new NatsClusterBroker(new SimpleTextEnvelopeCodec(), new NoOpMessageAuthenticator());
+        broker.attach(conn);
+
+        ClusterBrokerException ex = assertThrows(ClusterBrokerException.class,
+                () -> broker.unicast("node-B", env("node-A", "/ws/x")),
+                "raw jnats IllegalArgumentException must be wrapped so onPublishFailure can handle it");
+        assertTrue(ex.getCause() instanceof IllegalArgumentException);
     }
 
     @Test

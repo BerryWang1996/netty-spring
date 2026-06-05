@@ -28,6 +28,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * NATS JetStream-KV implementation of {@link SessionRegistry} (bucket {@code netty-sessions}). Used in the
@@ -45,8 +49,25 @@ public class NatsKvSessionRegistry implements SessionRegistry {
 
     private final KeyValue kv;
 
+    /**
+     * Dedicated bounded pool for the blocking jnats KV calls. Without this, every {@code runAsync}/
+     * {@code supplyAsync} below would run on {@link java.util.concurrent.ForkJoinPool#commonPool()}
+     * (sized to {@code cores - 1}), where blocking NATS I/O on the unicast hot path starves the shared
+     * pool used by the rest of the JVM. A small fixed pool keeps the blocking work isolated.
+     */
+    private final ExecutorService executor;
+
     public NatsKvSessionRegistry(KeyValue kv) {
         this.kv = kv;
+        this.executor = Executors.newFixedThreadPool(4, new ThreadFactory() {
+            private final AtomicInteger seq = new AtomicInteger();
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "nats-kv-registry-" + seq.incrementAndGet());
+                t.setDaemon(true);
+                return t;
+            }
+        });
     }
 
     private static String b64(String s) {
@@ -66,7 +87,7 @@ public class NatsKvSessionRegistry implements SessionRegistry {
             } catch (Exception e) {
                 throw new java.util.concurrent.CompletionException("NATS KV register failed", e);
             }
-        });
+        }, executor);
     }
 
     @Override
@@ -85,7 +106,7 @@ public class NatsKvSessionRegistry implements SessionRegistry {
             } catch (Exception ex) {
                 throw new java.util.concurrent.CompletionException("NATS KV deregister failed", ex);
             }
-        });
+        }, executor);
     }
 
     @Override
@@ -97,7 +118,7 @@ public class NatsKvSessionRegistry implements SessionRegistry {
             } catch (Exception ex) {
                 throw new java.util.concurrent.CompletionException("NATS KV lookup failed", ex);
             }
-        });
+        }, executor);
     }
 
     @Override
@@ -115,7 +136,7 @@ public class NatsKvSessionRegistry implements SessionRegistry {
             } catch (Exception ex) {
                 throw new java.util.concurrent.CompletionException("NATS KV clusterSessionIds failed", ex);
             }
-        });
+        }, executor);
     }
 
     @Override
@@ -139,11 +160,12 @@ public class NatsKvSessionRegistry implements SessionRegistry {
             } catch (Exception ex) {
                 throw new java.util.concurrent.CompletionException("NATS KV removeAllForNode failed", ex);
             }
-        });
+        }, executor);
     }
 
     @Override
     public void shutdown() {
+        executor.shutdown();
         log.info("NatsKvSessionRegistry shut down");
     }
 }

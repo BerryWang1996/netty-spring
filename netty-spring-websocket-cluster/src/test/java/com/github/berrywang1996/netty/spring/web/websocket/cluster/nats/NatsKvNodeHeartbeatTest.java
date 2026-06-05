@@ -25,9 +25,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -52,6 +54,22 @@ class NatsKvNodeHeartbeatTest {
     void register_putsTimestampUnderRawNodeIdKey() throws Exception {
         hb.register("n1", 10000);
         verify(kv).put(eq("n1"), any(byte[].class));
+    }
+
+    @Test
+    void register_putFailurePropagates_notSwallowed() throws Exception {
+        doThrow(new IllegalStateException("NATS KV unavailable")).when(kv).put(any(), any(byte[].class));
+        // A swallowed failure would leave the node silently "ACTIVE"; the failure must propagate so
+        // ClusterNodeManager can drive the DEGRADED transition.
+        assertThrows(RuntimeException.class, () -> hb.register("n1", 10000),
+                "register must NOT swallow a NATS KV write failure");
+    }
+
+    @Test
+    void renewHeartbeat_putFailurePropagates_notSwallowed() throws Exception {
+        doThrow(new IllegalStateException("NATS KV unavailable")).when(kv).put(any(), any(byte[].class));
+        assertThrows(RuntimeException.class, () -> hb.renewHeartbeat("n1", 10000),
+                "renewHeartbeat must NOT swallow a NATS KV write failure");
     }
 
     @Test
