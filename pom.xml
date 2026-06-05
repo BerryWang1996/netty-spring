@@ -241,6 +241,16 @@
                     <version>${maven-surefire-plugin.version}</version>
                     <configuration>
                         <useModulePath>false</useModulePath>
+                        <!-- Pin docker-java's negotiated Docker API version for Testcontainers. docker-java
+                             3.4.0 first-probes /v1.32, which modern Docker (29.x, minAPIVersion 1.40) rejects
+                             with HTTP 400, so DockerClientFactory reports "no valid Docker environment" and the
+                             cluster Testcontainers ITs (Redis / NATS / JetStream) SKIP even though Docker is
+                             live. Setting api.version at JVM start — before Testcontainers' first probe — fixes
+                             it reliably in every surefire fork (the static-initializer fallback in the test
+                             resolvers is class-load-order racy). 1.43 is within [1.40, current]. -->
+                        <systemPropertyVariables>
+                            <api.version>1.43</api.version>
+                        </systemPropertyVariables>
                     </configuration>
                 </plugin>
                 <plugin>
