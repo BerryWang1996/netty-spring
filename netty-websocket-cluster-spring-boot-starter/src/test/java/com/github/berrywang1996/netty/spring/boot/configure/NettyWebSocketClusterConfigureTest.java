@@ -165,6 +165,34 @@ class NettyWebSocketClusterConfigureTest {
     }
 
     @Test
+    void natsRegistry_allNats_noRedis() {
+        Assumptions.assumeTrue(ClusterTestNatsJetStream.available(), "no JetStream NATS");
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.nats.servers=" + ClusterTestNatsJetStream.url(),
+                        "server.netty.websocket.cluster.nats.registry=true",
+                        "server.netty.websocket.cluster.node-id=ctx-allnats-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.SessionRegistry.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsKvSessionRegistry.class);
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeHeartbeat.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsKvNodeHeartbeat.class);
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterReaper.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsKvReaper.class);
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsClusterBroker.class);
+                    assertThat(context).doesNotHaveBean(io.lettuce.core.RedisClient.class);
+                    assertThat(context.getBean(MessageSender.class)).isInstanceOf(ClusterMessageSender.class);
+                });
+    }
+
+    @Test
     void clusterMetrics_binderRegisteredWhenMicrometerPresent() {
         Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
         runner.withConfiguration(AutoConfigurations.of(NettyClusterMetricsConfigure.class))

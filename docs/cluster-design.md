@@ -45,6 +45,7 @@
 | auto-config 装配测试（ApplicationContextRunner） | ✅ | 验证 enable=true→`@Primary` 为 ClusterMessageSender + health indicator；enable=false→零集群 bean |
 | W3C TraceContext 跨节点传播（MDC 日志关联） | ✅ 1.9.0 RC6 | `ClusterTraceContext` SPI + `MdcClusterTraceContext`；发送侧注入 traceparent + 接收侧恢复 MDC（`traceId`/`spanId`/`netty.traceparent`）；opt-in；Micrometer Observation 续接 → 2.0.0 |
 | NATS broker（ADR-001 规模化档位） | ✅ 1.9.0 RC9（传输层） | NatsClusterBroker（core pub/sub，at-most-once）；由 nats.servers 选择；**仅传输层**，registry/心跳仍在 Redis（混合部署）；JetStream 可靠投递 → 后续 |
+| 全 NATS 栈（NATS-only 选项） | ✅ 1.9.0 RC10 | `NatsKvSessionRegistry`/`NatsKvNodeHeartbeat`/`NatsKvReaper`（JetStream KV）；由 `nats.registry=true` 选择 → 整套 registry/心跳/reaper 也跑在 NATS（**无 Redis**）；**需 JetStream NATS（`nats-server -js`）**；心跳为时间戳存活；reaper 用 KV `create`（create-if-absent）做单赢领导选举；附加/opt-in，mixed（NATS broker + Redis registry）与 all-Redis 仍为默认 |
 | Testcontainers 端到端 CI + 进程内双节点 E2E（`ClusterMultiNodeE2ETest`） | ✅ 1.9.0 RC5 | 集群集成测试在 CI 真实运行（不再跳过）；E2E 证明跨节点广播/单播；锁定跨节点单播 hook-wiring 修复 |
 | 可运行的多节点 Docker 示例（Compose + 负载均衡 + 浏览器） | ⏳ 未来版本 | 面向人工演示；CI 验证已由上一行覆盖 |
 
@@ -399,7 +400,7 @@ public interface SessionRegistry {
 
 | 方案 | 拒绝理由 | 何时复议 |
 |---|---|---|
-| NATS-first / NATS-only | 抬高所有用户接入门槛（人人要装 NATS）；多数目标用户（≤10 节点）到不了 Redis 天花板（YAGNI） | 若定位从"库"转为"只打大规模" |
+| NATS-first（默认强制 NATS） | 抬高所有用户接入门槛（人人要装 NATS）；多数目标用户（≤10 节点）到不了 Redis 天花板（YAGNI）。**注：** NATS-**only** 已于 1.9.0 RC10 作为 **opt-in** 落地（`nats.registry=true` → JetStream KV 跑 registry/心跳/reaper）；mixed（NATS broker + Redis registry）与 all-Redis 仍为默认；registry 从来不是扩展瓶颈，故 all-NATS 属于"运维形态"而非"性能档位"，且需 JetStream NATS（`nats-server -js`） | 若把 NATS-only 设为默认/强制 |
 | mesh-only 自研 | 工程量最大、首版最慢；多数用户用不到 | 单节点解码 >80k 或要彻底去中心依赖 |
 | 自研 Go/Rust 中间件 | 等于做第二个产品（独立 roadmap/运维/安全/语言生态）；单人维护不可持续；NATS 已覆盖该需求 | 仅当要做 Centrifugo 级"实时平台"且有持续维护力量 |
 

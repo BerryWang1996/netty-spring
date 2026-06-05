@@ -23,6 +23,18 @@ import java.time.Duration;
  */
 public final class ClusterTestRedis {
 
+    static {
+        // docker-java's DefaultDockerClientConfig reads the "api.version" property; modern Docker rejects the
+        // hardcoded /v1.32 probe. Pin a supported negotiated API version before the FIRST DockerClientFactory
+        // call. This resolver is reached first (via @BeforeAll) and the DockerClientFactory singleton caches
+        // its availability result JVM-wide, so without this the probe poisons every later Docker-backed
+        // resolver (e.g. ClusterTestNatsJetStream) in the same fork. Matches the initializer already present
+        // in ClusterTestRedisCluster / ClusterTestNats / ClusterTestNatsJetStream.
+        if (System.getProperty("api.version") == null) {
+            System.setProperty("api.version", "1.43");
+        }
+    }
+
     private static volatile boolean resolved;
     private static volatile String uri;
     @SuppressWarnings("resource")
