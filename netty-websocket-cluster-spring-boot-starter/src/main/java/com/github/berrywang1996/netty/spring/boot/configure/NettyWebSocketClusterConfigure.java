@@ -112,6 +112,18 @@ public class NettyWebSocketClusterConfigure {
     /** Cluster Redis broker: cluster-nodes set AND nats.servers empty. */
     static final String CLUSTER_REDIS_BROKER = CLUSTER_TRANSPORT + " and " + NO_NATS_TRANSPORT;
 
+    /** SpEL: nats.registry == true. */
+    static final String NATS_REGISTRY =
+            "'${server.netty.websocket.cluster.nats.registry:false}' == 'true'";
+    /** All-NATS: nats.servers set AND nats.registry true → NATS-KV registry (no Redis). */
+    static final String ALL_NATS = NATS_TRANSPORT + " and " + NATS_REGISTRY;
+    /** Not all-NATS (used to suppress the Redis registry/heartbeat/reaper/client beans in all-NATS mode). */
+    static final String NOT_ALL_NATS = "!(" + NATS_TRANSPORT + " and " + NATS_REGISTRY + ")";
+    /** Standalone Redis registry/infra: cluster-nodes empty AND not all-NATS. */
+    static final String STANDALONE_REDIS_REGISTRY = STANDALONE_TRANSPORT + " and " + NOT_ALL_NATS;
+    /** Cluster Redis registry/infra: cluster-nodes set AND not all-NATS. */
+    static final String CLUSTER_REDIS_REGISTRY = CLUSTER_TRANSPORT + " and " + NOT_ALL_NATS;
+
     @Bean
     @ConfigurationProperties(prefix = "server.netty.websocket.cluster")
     public ClusterProperties clusterProperties() {
@@ -121,7 +133,7 @@ public class NettyWebSocketClusterConfigure {
     // ---- Redis connections (only created when no user-provided alternative exists) ----
 
     @Bean(destroyMethod = "shutdown")
-    @ConditionalOnExpression(STANDALONE_TRANSPORT)
+    @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
     @ConditionalOnMissingBean(RedisClient.class)
     public RedisClient nettyClusterRedisClient(ClusterProperties properties) {
         String uri = properties.getRedis().getUri();
@@ -173,7 +185,7 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean(name = "nettyClusterRedisConnection", destroyMethod = "close")
-    @ConditionalOnExpression(STANDALONE_TRANSPORT)
+    @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
     @ConditionalOnMissingBean(name = "nettyClusterRedisConnection")
     public StatefulRedisConnection<String, String> nettyClusterRedisConnection(RedisClient redisClient) {
         return redisClient.connect();
@@ -268,8 +280,76 @@ public class NettyWebSocketClusterConfigure {
         return broker;
     }
 
+    // ---- NATS JetStream KV registry/heartbeat/reaper (all-NATS: nats.servers set AND nats.registry=true) ----
+
+    @Bean(name = "nettyClusterNatsKvConnection", destroyMethod = "close")
+    @ConditionalOnClass(io.nats.client.Connection.class)
+    @ConditionalOnExpression(ALL_NATS)
+    @ConditionalOnMissingBean(name = "nettyClusterNatsKvConnection")
+    public io.nats.client.Connection nettyClusterNatsKvConnection(ClusterProperties properties) throws Exception {
+        io.nats.client.Connection conn = io.nats.client.Nats.connect(io.nats.client.Options.builder()
+                .server(properties.getNats().getServers())
+                .maxReconnects(-1)
+                .build());
+        // Idempotent bucket bootstrap (create-if-absent). Requires a JetStream-enabled NATS server (-js).
+        ensureBucket(conn, "netty-sessions", null);
+        ensureBucket(conn, "netty-nodes", null);
+        ensureBucket(conn, "netty-reaping", java.time.Duration.ofSeconds(30)); // claim window
+        log.info("Cluster registry = NATS JetStream KV (all-NATS; no Redis) at {}", properties.getNats().getServers());
+        return conn;
+    }
+
+    private static void ensureBucket(io.nats.client.Connection conn, String name, java.time.Duration ttl) throws Exception {
+        if (conn.keyValueManagement().getBucketNames().contains(name)) {
+            return;
+        }
+        io.nats.client.api.KeyValueConfiguration.Builder b =
+                io.nats.client.api.KeyValueConfiguration.builder().name(name);
+        if (ttl != null) {
+            b.ttl(ttl);
+        }
+        try {
+            conn.keyValueManagement().create(b.build());
+        } catch (io.nats.client.JetStreamApiException alreadyExists) {
+            // raced with another node — fine.
+        }
+    }
+
     @Bean(destroyMethod = "shutdown")
-    @ConditionalOnExpression(STANDALONE_TRANSPORT)
+    @ConditionalOnClass(io.nats.client.Connection.class)
+    @ConditionalOnExpression(ALL_NATS)
+    @ConditionalOnMissingBean(SessionRegistry.class)
+    public SessionRegistry natsKvSessionRegistry(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterNatsKvConnection")
+            io.nats.client.Connection conn) throws Exception {
+        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsKvSessionRegistry(
+                conn.keyValue("netty-sessions"));
+    }
+
+    @Bean
+    @ConditionalOnClass(io.nats.client.Connection.class)
+    @ConditionalOnExpression(ALL_NATS)
+    @ConditionalOnMissingBean(ClusterNodeHeartbeat.class)
+    public ClusterNodeHeartbeat natsKvNodeHeartbeat(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterNatsKvConnection")
+            io.nats.client.Connection conn) throws Exception {
+        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsKvNodeHeartbeat(
+                conn.keyValue("netty-nodes"));
+    }
+
+    @Bean
+    @ConditionalOnClass(io.nats.client.Connection.class)
+    @ConditionalOnExpression(ALL_NATS)
+    @ConditionalOnMissingBean(ClusterReaper.class)
+    public ClusterReaper natsKvReaper(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterNatsKvConnection")
+            io.nats.client.Connection conn) throws Exception {
+        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsKvReaper(
+                conn.keyValue("netty-reaping"));
+    }
+
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
     @ConditionalOnMissingBean(ReliableBroker.class)
     @ConditionalOnProperty(prefix = "server.netty.websocket.cluster.reliable", name = "enable", havingValue = "true")
     public ReliableBroker reliableBroker(RedisClient redisClient, EnvelopeCodec envelopeCodec,
@@ -282,7 +362,7 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean(destroyMethod = "shutdown")
-    @ConditionalOnExpression(STANDALONE_TRANSPORT)
+    @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
     @ConditionalOnMissingBean(SessionRegistry.class)
     public RedisSessionRegistry sessionRegistry(
             @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
@@ -291,7 +371,7 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean
-    @ConditionalOnExpression(STANDALONE_TRANSPORT)
+    @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
     @ConditionalOnMissingBean(ClusterNodeHeartbeat.class)
     public RedisClusterNodeHeartbeat clusterNodeHeartbeat(
             @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
@@ -300,7 +380,7 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean
-    @ConditionalOnExpression(STANDALONE_TRANSPORT)
+    @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
     @ConditionalOnMissingBean(ClusterReaper.class)
     public ClusterReaper clusterReaper(
             @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
@@ -311,7 +391,7 @@ public class NettyWebSocketClusterConfigure {
     // ---- Redis Cluster transport beans (active only when cluster-nodes is set) ----
 
     @Bean(destroyMethod = "shutdown")
-    @ConditionalOnExpression(CLUSTER_TRANSPORT)
+    @ConditionalOnExpression(CLUSTER_REDIS_REGISTRY)
     @ConditionalOnMissingBean(io.lettuce.core.cluster.RedisClusterClient.class)
     public io.lettuce.core.cluster.RedisClusterClient nettyClusterRedisClusterClient(ClusterProperties properties) {
         String clusterNodes = properties.getRedis().getClusterNodes();
@@ -358,7 +438,7 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean(name = "nettyClusterRedisClusterConnection", destroyMethod = "close")
-    @ConditionalOnExpression(CLUSTER_TRANSPORT)
+    @ConditionalOnExpression(CLUSTER_REDIS_REGISTRY)
     @ConditionalOnMissingBean(name = "nettyClusterRedisClusterConnection")
     public io.lettuce.core.cluster.api.StatefulRedisClusterConnection<String, String> nettyClusterRedisClusterConnection(
             io.lettuce.core.cluster.RedisClusterClient client) {
@@ -379,7 +459,7 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean(destroyMethod = "shutdown")
-    @ConditionalOnExpression(CLUSTER_TRANSPORT)
+    @ConditionalOnExpression(CLUSTER_REDIS_REGISTRY)
     @ConditionalOnMissingBean(SessionRegistry.class)
     public SessionRegistry sessionRegistryCluster(
             @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisClusterConnection")
@@ -388,7 +468,7 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean
-    @ConditionalOnExpression(CLUSTER_TRANSPORT)
+    @ConditionalOnExpression(CLUSTER_REDIS_REGISTRY)
     @ConditionalOnMissingBean(ClusterNodeHeartbeat.class)
     public ClusterNodeHeartbeat clusterNodeHeartbeatCluster(
             @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisClusterConnection")
@@ -397,7 +477,7 @@ public class NettyWebSocketClusterConfigure {
     }
 
     @Bean
-    @ConditionalOnExpression(CLUSTER_TRANSPORT)
+    @ConditionalOnExpression(CLUSTER_REDIS_REGISTRY)
     @ConditionalOnMissingBean(ClusterReaper.class)
     public ClusterReaper clusterReaperCluster(
             @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisClusterConnection")
