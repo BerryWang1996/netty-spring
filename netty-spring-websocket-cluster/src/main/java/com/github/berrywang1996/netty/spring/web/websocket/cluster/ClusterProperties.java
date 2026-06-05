@@ -112,6 +112,10 @@ public class ClusterProperties {
     /** Opt-in HMAC authentication of cross-node envelopes. Disabled by default. */
     private Auth auth = new Auth();
 
+    /** NATS broker (ADR-001 scaling tier). When {@code servers} is non-empty, replaces the Redis broker
+     *  (transport only — registry/heartbeat stay on Redis). Default empty = Redis broker. */
+    private Nats nats = new Nats();
+
     /** Opt-in W3C TraceContext (traceparent) cross-node propagation + MDC restore. Disabled by default. */
     private TracePropagation tracePropagation = new TracePropagation();
 
@@ -170,6 +174,9 @@ public class ClusterProperties {
 
     public Auth getAuth() { return auth; }
     public void setAuth(Auth auth) { this.auth = auth; }
+
+    public Nats getNats() { return nats; }
+    public void setNats(Nats nats) { this.nats = nats; }
 
     public TracePropagation getTracePropagation() { return tracePropagation; }
     public void setTracePropagation(TracePropagation v) { this.tracePropagation = v; }
@@ -266,6 +273,20 @@ public class ClusterProperties {
 
         public boolean isEnable() { return enable; }
         public void setEnable(boolean enable) { this.enable = enable; }
+    }
+
+    /**
+     * NATS broker (ADR-001 scaling tier) settings. When {@code servers} is non-empty, the
+     * {@code NatsClusterBroker} replaces the Redis Pub/Sub broker (transport only — SessionRegistry and
+     * heartbeat stay on Redis). Empty/absent (default) = the Redis broker. Requires {@code io.nats:jnats}
+     * on the classpath.
+     */
+    public static class Nats {
+        /** Comma-separated NATS server URLs ({@code nats://host:port,...}). Default empty. */
+        private String servers;
+
+        public String getServers() { return servers; }
+        public void setServers(String servers) { this.servers = servers; }
     }
 
     /** Behavior when the cluster transport (Redis) is lost. */
