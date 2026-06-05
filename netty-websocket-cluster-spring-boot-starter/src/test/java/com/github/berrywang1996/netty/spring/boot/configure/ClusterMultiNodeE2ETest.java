@@ -145,6 +145,9 @@ class ClusterMultiNodeE2ETest {
                         "server.netty.websocket.cluster.redis.uri=" + redisUri,
                         "server.netty.websocket.cluster.node-id=" + nodeId,
                         "server.netty.websocket.cluster.heartbeat-interval-seconds=2",
+                        // drain-timeout=0 so node context shutdown is immediate (FIX D folds a bounded
+                        // drain grace into shutdown; the 60s default would make @AfterAll teardown crawl).
+                        "server.netty.websocket.cluster.drain-timeout-seconds=0",
                         "server.netty.websocket.cluster.auth.enable=true",
                         "server.netty.websocket.cluster.auth.secret=" + SECRET,
                         "logging.level.root=warn")

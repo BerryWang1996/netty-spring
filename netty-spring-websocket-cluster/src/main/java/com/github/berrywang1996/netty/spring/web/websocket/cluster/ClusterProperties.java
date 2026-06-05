@@ -84,6 +84,12 @@ public class ClusterProperties {
     /** Local sessionId→nodeId cache TTL in ms for the unicast hot path. Default 5000. */
     private long registryReadCacheTtlMs = 5000;
 
+    /** Max entries in the local sessionId→nodeId read cache (unicast hot path). The TTL governs only
+     *  reuse, not eviction, so without a hard cap a node that unicasts to many distinct LIVE remote
+     *  sessions would grow this map without bound. Bounded LRU eviction caps the footprint. {@code <= 0}
+     *  = unbounded (legacy behavior — not recommended). Default 100000. */
+    private int registryReadCacheMaxSize = 100_000;
+
     /** Redis command timeout in ms for the cluster control plane. Bounds how long any single
      *  Redis operation (incl. the unicast hot-path registry lookup) can block when Redis is
      *  unreachable — much lower than Lettuce's 60s default. Default 2000. */
@@ -157,6 +163,9 @@ public class ClusterProperties {
     public long getRegistryReadCacheTtlMs() { return registryReadCacheTtlMs; }
     public void setRegistryReadCacheTtlMs(long v) { this.registryReadCacheTtlMs = v; }
 
+    public int getRegistryReadCacheMaxSize() { return registryReadCacheMaxSize; }
+    public void setRegistryReadCacheMaxSize(int v) { this.registryReadCacheMaxSize = v; }
+
     public long getCommandTimeoutMs() { return commandTimeoutMs; }
     public void setCommandTimeoutMs(long v) { this.commandTimeoutMs = v; }
 
@@ -228,6 +237,13 @@ public class ClusterProperties {
         private int pollCount = 64;
         /** Per-URI ring size of recently-acked entry ids (in-process redelivery dedup). Default 1024. */
         private int dedupWindow = 1024;
+        /** Idle window (ms) a dead node's consumer group must be inactive before reconciliation may destroy
+         *  it (on heartbeat-expiry). A node's id is stable, so a crashed node that RESTARTS reuses its group
+         *  {@code g:{nodeId}}; destroying it too eagerly would wipe the retained offset+PEL and the restarted
+         *  node would skip its backlog (data loss). This window keeps a recently-active group intact past any
+         *  realistic crash-restart gap. {@code <= 0} = never destroy on expiry (pure retain; rely on MAXLEN
+         *  trimming). Default 3600000 (1h). */
+        private long groupDestroyIdleMs = 3600000L;
 
         public boolean isEnable() { return enable; }
         public void setEnable(boolean enable) { this.enable = enable; }
@@ -239,6 +255,8 @@ public class ClusterProperties {
         public void setPollCount(int v) { this.pollCount = v; }
         public int getDedupWindow() { return dedupWindow; }
         public void setDedupWindow(int v) { this.dedupWindow = v; }
+        public long getGroupDestroyIdleMs() { return groupDestroyIdleMs; }
+        public void setGroupDestroyIdleMs(long v) { this.groupDestroyIdleMs = v; }
     }
 
     /**

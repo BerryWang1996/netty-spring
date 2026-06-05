@@ -72,6 +72,12 @@
       "defaultValue": 5000
     },
     {
+      "name": "server.netty.websocket.cluster.registry-read-cache-max-size",
+      "type": "java.lang.Integer",
+      "description": "Max entries in the local sessionId-to-nodeId read cache (unicast hot path). The TTL governs only reuse, not eviction, so without a hard cap a node unicasting to many distinct LIVE remote sessions would grow this map without bound. Bounded LRU eviction caps the footprint. 0 or less = unbounded (legacy behavior, not recommended).",
+      "defaultValue": 100000
+    },
+    {
       "name": "server.netty.websocket.cluster.command-timeout-ms",
       "type": "java.lang.Long",
       "description": "Redis command timeout (ms) for the cluster control plane. Bounds how long any single Redis operation (including the unicast hot-path registry lookup) can block when Redis is unreachable — much lower than Lettuce's 60s default.",
@@ -135,6 +141,12 @@
       "type": "java.lang.Integer",
       "description": "Per-URI ring size of recently-acked stream entry ids, to de-duplicate in-process redelivery (at-least-once still allows cross-crash duplicates; handlers should be idempotent).",
       "defaultValue": 1024
+    },
+    {
+      "name": "server.netty.websocket.cluster.reliable.group-destroy-idle-ms",
+      "type": "java.lang.Long",
+      "description": "Idle window (ms) a dead node's reliable consumer group must be inactive before reconciliation may destroy it on heartbeat-expiry. A node id is stable, so a crashed node that restarts reuses its group; destroying it too eagerly would wipe the retained offset/PEL and the restarted node would skip its backlog (data loss). This window keeps a recently-active group intact past any realistic crash-restart gap. 0 or less = never destroy on expiry (pure retain; rely on stream MAXLEN trimming).",
+      "defaultValue": 3600000
     },
     {
       "name": "server.netty.websocket.cluster.auth.enable",

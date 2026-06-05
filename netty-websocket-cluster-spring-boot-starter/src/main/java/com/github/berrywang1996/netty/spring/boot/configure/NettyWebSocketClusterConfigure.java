@@ -54,6 +54,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -154,16 +155,71 @@ public class NettyWebSocketClusterConfigure {
 
     /** Masks userinfo (password) in a Redis URI before logging. */
     private static String redactRedisUri(String uri) {
+        return redactUserinfo(uri);
+    }
+
+    /**
+     * Masks the {@code [user][:password]@} userinfo segment of a single {@code scheme://...} URI before
+     * logging, so inline credentials never leak. Returns the input unchanged when there is no userinfo.
+     */
+    private static String redactUserinfo(String uri) {
         if (uri == null) {
             return "null";
         }
-        // redis[s]://[user][:password]@host:port -> redis[s]://***@host:port
+        // scheme://[user][:password]@host:port -> scheme://***@host:port
         int at = uri.indexOf('@');
         int scheme = uri.indexOf("://");
         if (at > 0 && scheme > 0 && at > scheme) {
             return uri.substring(0, scheme + 3) + "***@" + uri.substring(at + 1);
         }
         return uri;
+    }
+
+    /**
+     * Redacts a comma-separated list of server URIs (e.g. {@code nats://user:pass@h1:4222,nats://h2:4222})
+     * by masking the userinfo of each entry — used so the NATS server list is never logged with inline
+     * credentials (parallel to {@link #redactRedisUri}). Returns "null" for null, preserving the per-entry
+     * order and the comma separators.
+     */
+    static String redactServerUris(String csv) {
+        if (csv == null) {
+            return "null";
+        }
+        String[] parts = csv.split(",", -1);
+        StringBuilder sb = new StringBuilder(csv.length());
+        for (int i = 0; i < parts.length; i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append(redactUserinfo(parts[i].trim()));
+        }
+        return sb.toString();
+    }
+
+    /** Warns when the NATS server list carries no TLS scheme and no inline credentials (insecure transport). */
+    private static void warnIfInsecureNats(String csv) {
+        if (csv == null || csv.trim().isEmpty()) {
+            return;
+        }
+        boolean anyTls = false;
+        boolean anyAuth = false;
+        for (String entry : csv.split(",", -1)) {
+            String e = entry.trim();
+            if (e.startsWith("tls://")) {
+                anyTls = true;
+            }
+            if (e.contains("@")) {
+                anyAuth = true;
+            }
+        }
+        if (!anyTls || !anyAuth) {
+            String missing = (!anyTls && !anyAuth) ? "no TLS and no credentials"
+                    : (!anyTls ? "no TLS" : "no credentials");
+            log.warn("Cluster NATS is the WebSocket transport: anyone who can publish to it can inject "
+                    + "cross-node messages. The configured NATS server list has {} — for production use "
+                    + "TLS (tls://) and authenticated connections. See docs/cluster-design.md §Security.",
+                    missing);
+        }
     }
 
     /** Warns when the cluster control-plane Redis is configured without TLS or a password. */
@@ -254,6 +310,27 @@ public class NettyWebSocketClusterConfigure {
         return broker;
     }
 
+    // ---- NATS classpath guard: fail fast with an actionable message ----
+
+    /**
+     * Fail-fast guard for the misconfiguration where {@code cluster.nats.servers} is set but the
+     * {@code io.nats:jnats} dependency is NOT on the classpath. Without this guard, ALL NATS beans are
+     * {@code @ConditionalOnClass}-suppressed AND the Redis brokers are suppressed by {@code NO_NATS_TRANSPORT},
+     * leaving zero {@link ClusterBroker} → an opaque {@code NoSuchBeanDefinitionException} deep in context
+     * startup. This bean activates ONLY in that exact situation (nats.servers set AND
+     * {@code io.nats.client.Connection} absent) and throws an actionable {@link IllegalStateException} naming
+     * the missing dependency.
+     */
+    @Bean
+    @ConditionalOnExpression(NATS_TRANSPORT)
+    @ConditionalOnMissingClass("io.nats.client.Connection")
+    public Object natsTransportClasspathGuard(ClusterProperties properties) {
+        throw new IllegalStateException(
+                "server.netty.websocket.cluster.nats.servers is set (" + redactServerUris(properties.getNats().getServers())
+                + ") but io.nats:jnats is not on the classpath — add the io.nats:jnats dependency "
+                + "to use the NATS cluster transport, or unset nats.servers to use the Redis transport.");
+    }
+
     // ---- NATS broker (active only when nats.servers is set; ADR-001 scaling tier) ----
 
     @Bean(destroyMethod = "shutdown")
@@ -275,8 +352,10 @@ public class NettyWebSocketClusterConfigure {
         broker.attach(connection);
         int maxOut = properties.getMessageMaxSizeBytes();
         broker.setInboundMaxBytes(maxOut > 0 ? (int) Math.min((long) maxOut * 2L, Integer.MAX_VALUE) : 0);
+        // Never log the raw server list — it may carry inline credentials (nats://user:pass@host).
+        warnIfInsecureNats(properties.getNats().getServers());
         log.info("Cluster broker = NATS ({}) — registry/heartbeat remain on Redis (ADR-001 mixed model)",
-                properties.getNats().getServers());
+                redactServerUris(properties.getNats().getServers()));
         return broker;
     }
 
@@ -295,7 +374,9 @@ public class NettyWebSocketClusterConfigure {
         ensureBucket(conn, "netty-sessions", null);
         ensureBucket(conn, "netty-nodes", null);
         ensureBucket(conn, "netty-reaping", java.time.Duration.ofSeconds(30)); // claim window
-        log.info("Cluster registry = NATS JetStream KV (all-NATS; no Redis) at {}", properties.getNats().getServers());
+        warnIfInsecureNats(properties.getNats().getServers());
+        log.info("Cluster registry = NATS JetStream KV (all-NATS; no Redis) at {}",
+                redactServerUris(properties.getNats().getServers()));
         return conn;
     }
 
@@ -355,10 +436,18 @@ public class NettyWebSocketClusterConfigure {
     public ReliableBroker reliableBroker(RedisClient redisClient, EnvelopeCodec envelopeCodec,
                                          ClusterProperties properties, MessageAuthenticator messageAuthenticator) {
         ClusterProperties.Reliable r = properties.getReliable();
-        log.info("Reliable broadcast ENABLED (Redis Streams; maxlen={}, block={}ms)",
-                r.getStreamMaxLen(), r.getPollBlockMs());
-        return new RedisStreamsReliableBroker(redisClient, envelopeCodec,
+        log.info("Reliable broadcast ENABLED (Redis Streams; maxlen={}, block={}ms, groupDestroyIdleMs={})",
+                r.getStreamMaxLen(), r.getPollBlockMs(), r.getGroupDestroyIdleMs());
+        RedisStreamsReliableBroker reliableBroker = new RedisStreamsReliableBroker(redisClient, envelopeCodec,
                 r.getStreamMaxLen(), r.getPollBlockMs(), r.getPollCount(), r.getDedupWindow(), messageAuthenticator);
+        // Inbound guard: reject received stream entries larger than the outbound cap + headroom (Base64
+        // ~+33% + envelope metadata) — same headroom the pub/sub brokers use. 0 (unlimited) → unlimited.
+        int maxOut = properties.getMessageMaxSizeBytes();
+        reliableBroker.setInboundMaxBytes(maxOut > 0 ? (int) Math.min((long) maxOut * 2L, Integer.MAX_VALUE) : 0);
+        // Idle window before a dead node's consumer group may be destroyed on heartbeat-expiry — protects a
+        // crashed-and-restarting node's retained offset/PEL (and thus its backlog replay).
+        reliableBroker.setGroupDestroyIdleMs(r.getGroupDestroyIdleMs());
+        return reliableBroker;
     }
 
     @Bean(destroyMethod = "shutdown")
@@ -527,6 +616,7 @@ public class NettyWebSocketClusterConfigure {
         sender.setOnPublishFailure(properties.getOnPublishFailure());
         sender.setOnRedisLoss(properties.getOnRedisLoss());
         sender.setNodeLookupTimeoutMs(properties.getCommandTimeoutMs());
+        sender.setRegistryReadCacheMaxSize(properties.getRegistryReadCacheMaxSize());
         if (reliableBroker != null) {
             sender.setReliableBroker(reliableBroker);
         }

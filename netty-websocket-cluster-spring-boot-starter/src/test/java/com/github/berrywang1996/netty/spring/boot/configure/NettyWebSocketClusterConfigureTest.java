@@ -8,6 +8,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration;
+import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.context.annotation.Bean;
@@ -45,7 +46,11 @@ class NettyWebSocketClusterConfigureTest {
                     ConfigurationPropertiesAutoConfiguration.class, // enables @ConfigurationProperties binding
                     NettyWebSocketClusterConfigure.class,
                     NettyClusterActuatorConfigure.class))
-            .withUserConfiguration(LocalSenderConfig.class);
+            .withUserConfiguration(LocalSenderConfig.class)
+            // drain-timeout=0 so each enabled context's graceful shutdown (which now folds a bounded
+            // drainTimeoutMs grace into shutdown, FIX D) closes immediately instead of sleeping the
+            // 60s default on every context teardown.
+            .withPropertyValues("server.netty.websocket.cluster.drain-timeout-seconds=0");
 
     @Test
     void disabledByDefault_noClusterBeans_localSenderRemains() {
@@ -252,6 +257,33 @@ class NettyWebSocketClusterConfigureTest {
                         "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
                         "server.netty.websocket.cluster.auth.enable=true")
                 .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void natsServersSetButJnatsAbsent_failsFastWithActionableMessage() {
+        // Hide io.nats.client.Connection so the @ConditionalOnClass NATS beans are suppressed AND
+        // (without the guard) the Redis brokers would be suppressed by NO_NATS_TRANSPORT → zero
+        // ClusterBroker → opaque failure. The guard bean must instead fail fast with an actionable msg.
+        // Gated on Redis: with nats.servers set + nats.registry=false the Redis *registry* beans are still
+        // active, so a Redis-less box could fail on the Redis connection bean instead (different error).
+        // With Redis present the failure is deterministically the guard's IllegalStateException.
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withClassLoader(new FilteredClassLoader("io.nats.client.Connection"))
+                .withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.nats.servers=nats://user:secret@localhost:4222",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-nats-missing",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).hasRootCauseInstanceOf(IllegalStateException.class);
+                    Throwable root = context.getStartupFailure();
+                    while (root.getCause() != null) {
+                        root = root.getCause();
+                    }
+                    assertThat(root).hasMessageContaining("io.nats:jnats");
+                });
     }
 
     @Test
