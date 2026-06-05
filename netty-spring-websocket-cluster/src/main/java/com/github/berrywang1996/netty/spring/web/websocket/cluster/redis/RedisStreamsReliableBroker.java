@@ -65,6 +65,11 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
     private final int pollCount;
     private final int dedupWindow;
 
+    /** Max accepted size (chars) of an INBOUND stream entry's payload before unwrap/decode. 0 = unlimited.
+     *  Mirrors {@code RedisPubSubBroker.inboundMaxBytes} — guards against a malicious/compromised peer
+     *  writing a huge entry into the shared stream (remote OOM on the consuming node). */
+    private volatile int inboundMaxBytes = 0;
+
     private final StatefulRedisConnection<String, String> commandConnection;
     private final AtomicReference<BrokerState> state = new AtomicReference<>(BrokerState.ACTIVE);
     /** All per-subscription blocking connections, so shutdown() can close them (interrupts XREADGROUP BLOCK). */
@@ -90,6 +95,12 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
         this.commandConnection = redisClient.connect();
         log.info("RedisStreamsReliableBroker initialized (maxlen={}, block={}ms, count={})",
                 streamMaxLen, pollBlockMs, pollCount);
+    }
+
+    /** Sets the max accepted size of an inbound stream entry's payload (chars) before unwrap/decode.
+     *  0 = unlimited. Wired by the auto-config from the same inbound-size-cap property as the pub/sub broker. */
+    public void setInboundMaxBytes(int inboundMaxBytes) {
+        this.inboundMaxBytes = Math.max(0, inboundMaxBytes);
     }
 
     @Override
@@ -192,6 +203,17 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
         String id = m.getId();
         if (seen.containsKey(id)) { ack(streamKey, group, id); return; } // in-process redelivery → drop, re-ack
         String data = m.getBody() == null ? null : m.getBody().get(FIELD);
+        // Inbound-size guard BEFORE unwrap/decode: an attacker-influenced stream entry could be huge
+        // (remote OOM). Drop it — but ACK first so it clears the PEL and is never redelivered (same
+        // handling as a poison/rejected entry below).
+        int max = inboundMaxBytes;
+        if (max > 0 && data != null && data.length() > max) {
+            log.warn("Dropping oversized reliable entry {} on {} ({} > {} chars) — possible "
+                    + "misbehaving/hostile publisher; acking to clear PEL", id, streamKey, data.length(), max);
+            seen.put(id, Boolean.TRUE);
+            ack(streamKey, group, id);
+            return;
+        }
         if (data != null) {
             data = authenticator.unwrap(data); // null = rejected (missing/invalid HMAC)
         }
@@ -220,20 +242,131 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
         catch (Exception e) { log.debug("XACK {} on {} failed", id, streamKey, e); }
     }
 
+    /**
+     * Idle window (ms) a consumer group's last-delivered entry must be older than before it is eligible for
+     * destruction. A node's id is stable/configurable, so a node that DIES and RESTARTS reuses its group
+     * {@code g:{nodeId}} — destroying it on bare heartbeat-expiry would XGROUP-DESTROY the group, wipe its
+     * retained offset + PEL, and the restarted node would resubscribe from {@code $} and silently SKIP the
+     * backlog (the very replay the reliable path promises → data loss). This window keeps a recently-active
+     * group (i.e. a node that just died and may restart) intact. Default 1h; far larger than any realistic
+     * crash-restart gap, while stream MAXLEN trimming still bounds growth. {@code 0} = never destroy on
+     * expiry (pure retain — see {@link #destroyConsumerGroupsForNode}).
+     */
+    private volatile long groupDestroyIdleMs = Duration.ofHours(1).toMillis();
+
+    /** Sets the idle window (ms) before a node's consumer group may be destroyed on heartbeat-expiry.
+     *  {@code <= 0} = never destroy on expiry (retain for possible node restart; rely on MAXLEN trimming). */
+    public void setGroupDestroyIdleMs(long groupDestroyIdleMs) {
+        this.groupDestroyIdleMs = groupDestroyIdleMs;
+    }
+
+    /**
+     * Called from the reconciliation dead-node callback. <b>Safety-gated</b> so it can NEVER wipe the
+     * offset + PEL of a node that merely crashed and will restart with the same (stable/configurable) id.
+     *
+     * <p>For each stream, a node's group {@code g:{nodeId}} is destroyed ONLY when it is provably stale:
+     * <ul>
+     *   <li>it has <b>zero pending</b> entries (nothing in-flight that a restart would need to re-process), AND</li>
+     *   <li>its <b>last-delivered entry is older than {@link #groupDestroyIdleMs}</b> (the node has been gone
+     *       long past any realistic crash-restart window).</li>
+     * </ul>
+     * If {@code groupDestroyIdleMs <= 0}, or the group's staleness cannot be confirmed from
+     * {@code XINFO GROUPS} (e.g. the field is missing or unparseable), the group is <b>retained</b> — a
+     * retained group costs only a small offset/PEL entry, bounded by the stream's MAXLEN trimming, whereas
+     * a wrongly-destroyed group means silent backlog loss on restart. We always prefer to retain on doubt.
+     */
     @Override
     public void destroyConsumerGroupsForNode(String nodeId) {
         String group = GROUP_PREFIX + nodeId;
+        long idleMs = groupDestroyIdleMs;
         try {
             Set<String> uris = commandConnection.sync().smembers(STREAMS_SET);
             if (uris == null) return;
+            int destroyed = 0;
+            int retained = 0;
             for (String uri : uris) {
-                try { commandConnection.sync().xgroupDestroy(STREAM_PREFIX + uri, group); }
-                catch (Exception e) { log.debug("XGROUP DESTROY {} on {} failed", group, uri, e); }
+                String streamKey = STREAM_PREFIX + uri;
+                if (idleMs <= 0) {
+                    retained++;
+                    continue; // pure-retain mode: never destroy on bare expiry
+                }
+                try {
+                    if (isGroupStale(streamKey, group, idleMs)) {
+                        commandConnection.sync().xgroupDestroy(streamKey, group);
+                        destroyed++;
+                    } else {
+                        retained++;
+                    }
+                } catch (Exception e) {
+                    // On any doubt, retain (do NOT destroy) — losing a backlog is worse than an idle group.
+                    log.debug("Staleness check/destroy of {} on {} failed — retaining group", group, streamKey, e);
+                    retained++;
+                }
             }
-            log.info("Destroyed reliable consumer group {} across {} streams", group, uris.size());
+            log.info("Reliable consumer group {} cleanup across {} streams: destroyed={}, retained={}",
+                    group, uris.size(), destroyed, retained);
         } catch (Exception e) {
             log.warn("destroyConsumerGroupsForNode({}) failed", nodeId, e);
         }
+    }
+
+    /**
+     * Returns true only if the group is provably safe to destroy: zero pending AND its last-delivered entry
+     * is older than {@code idleMs}. Any ambiguity (group absent → already gone, so "stale"; field missing or
+     * unparseable → conservatively NOT stale = retain) errs toward retaining the backlog.
+     */
+    private boolean isGroupStale(String streamKey, String group, long idleMs) {
+        List<Object> groups;
+        try {
+            groups = commandConnection.sync().xinfoGroups(streamKey);
+        } catch (RedisCommandExecutionException e) {
+            // Stream itself is gone (no group/key) → nothing to protect; treat as stale (destroy is a no-op anyway).
+            return true;
+        }
+        if (groups == null) {
+            return false; // can't tell → retain
+        }
+        for (Object g : groups) {
+            if (!(g instanceof List)) continue;
+            List<?> fields = (List<?>) g;
+            Map<String, Object> info = new java.util.HashMap<>();
+            for (int i = 0; i + 1 < fields.size(); i += 2) {
+                Object k = fields.get(i);
+                if (k != null) info.put(String.valueOf(k), fields.get(i + 1));
+            }
+            if (!group.equals(String.valueOf(info.get("name")))) {
+                continue;
+            }
+            // Found our group. Pending > 0 → in-flight work a restart must re-process → retain.
+            long pending = asLong(info.get("pending"), -1);
+            if (pending != 0) {
+                return false;
+            }
+            // last-delivered-id is "<millis>-<seq>"; if it's recent, the node may have just died → retain.
+            String lastId = info.get("last-delivered-id") == null ? null : String.valueOf(info.get("last-delivered-id"));
+            Long lastMs = streamIdMillis(lastId);
+            if (lastMs == null) {
+                return false; // unknown activity time → retain
+            }
+            return (System.currentTimeMillis() - lastMs) > idleMs;
+        }
+        // Group not present in this stream → already gone; destroying is a harmless no-op.
+        return true;
+    }
+
+    private static long asLong(Object o, long dflt) {
+        if (o instanceof Number) return ((Number) o).longValue();
+        try { return o == null ? dflt : Long.parseLong(String.valueOf(o)); }
+        catch (NumberFormatException e) { return dflt; }
+    }
+
+    /** Parses the millisecond timestamp from a Redis stream id ("<millis>-<seq>"); null if unparseable. */
+    private static Long streamIdMillis(String id) {
+        if (id == null) return null;
+        int dash = id.indexOf('-');
+        String ms = dash >= 0 ? id.substring(0, dash) : id;
+        try { return Long.parseLong(ms); }
+        catch (NumberFormatException e) { return null; }
     }
 
     @Override public BrokerState state() { return state.get(); }
