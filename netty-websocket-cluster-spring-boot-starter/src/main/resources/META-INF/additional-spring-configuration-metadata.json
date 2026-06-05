@@ -38,8 +38,8 @@
     {
       "name": "server.netty.websocket.cluster.drain-timeout-seconds",
       "type": "java.lang.Long",
-      "description": "Max time to wait for sessions to close during graceful shutdown.",
-      "defaultValue": 60
+      "description": "Graceful-shutdown drain window (seconds). On shutdown the node enters DRAINING and waits up to this long for in-flight cross-node deliveries to settle before deregistering. Default 0 = no wait (instant deregister, pre-1.9.0 behavior). Set a positive value to opt into a bounded grace window (a fixed wait, not a session-count drain).",
+      "defaultValue": 0
     },
     {
       "name": "server.netty.websocket.cluster.reconnect-jitter-max-seconds",

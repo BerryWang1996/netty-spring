@@ -334,7 +334,7 @@ server:
         heartbeat-interval-seconds: 3
         heartbeat-timeout-seconds: 10
         reconciliation-interval-seconds: 15
-        drain-timeout-seconds: 60
+        drain-timeout-seconds: 0              # 0 = 关闭时即时注销（即原行为）；>0 = 注销前的有界优雅排空窗口
         reconnect-jitter-max-seconds: 10
         registry-read-cache-ttl-ms: 5000
         registry-read-cache-max-size: 100000  # （预发布硬化）单播 sessionId→nodeId 缓存最大条目，防无界增长；0 或更小=不限（旧行为）

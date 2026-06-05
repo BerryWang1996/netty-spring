@@ -936,7 +936,7 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 | `cluster.heartbeat-interval-seconds` | `3` | Heartbeat write interval |
 | `cluster.heartbeat-timeout-seconds` | `10` | Missing-heartbeat → dead-node threshold |
 | `cluster.reconciliation-interval-seconds` | `15` | Slow-path dead-node sweep interval |
-| `cluster.drain-timeout-seconds` | `60` | Graceful-shutdown session-close wait |
+| `cluster.drain-timeout-seconds` | `0` | *(default changed in V1.9.0)* Graceful-shutdown drain window. `0` = instant deregister (pre-1.9.0 behavior); a positive value opts into a bounded grace window for in-flight cross-node deliveries to settle before deregistering (a fixed wait, not a session-count drain). |
 | `cluster.reconnect-jitter-max-seconds` | `10` | Max jitter before DEGRADED→RESYNC re-register |
 | `cluster.registry-read-cache-ttl-ms` | `5000` | sessionId→nodeId unicast hot-path cache TTL |
 | `cluster.registry-read-cache-max-size` | `100000` | *(since V1.9.0)* Max entries in the sessionId→nodeId unicast cache. The TTL governs only reuse, not eviction, so a hard cap (bounded LRU) prevents unbounded growth when unicasting to many distinct live remote sessions. `0` or less = unbounded (legacy, not recommended). |

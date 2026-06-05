@@ -57,8 +57,13 @@ public class ClusterProperties {
     /** Reconciliation interval in seconds (slow-path backstop for missed keyspace notifications). Default 15. */
     private long reconciliationIntervalSeconds = 15;
 
-    /** Drain timeout in seconds (max time to wait for sessions to close during graceful shutdown). Default 60. */
-    private long drainTimeoutSeconds = 60;
+    /**
+     * Graceful-shutdown drain window in seconds. On shutdown the node transitions to DRAINING and waits
+     * up to this long for in-flight cross-node deliveries to settle before it deregisters and goes LEFT.
+     * Default {@code 0} = no wait (instant deregister, matching pre-1.9.0 behavior). Set a positive value
+     * to opt into a bounded grace window (note: this is a fixed bounded wait, not a session-count drain).
+     */
+    private long drainTimeoutSeconds = 0;
 
     /** Max jitter in seconds applied before a DEGRADED→RESYNC re-registration, to avoid
      *  reconnect storms when many nodes recover simultaneously. Default 10. */
