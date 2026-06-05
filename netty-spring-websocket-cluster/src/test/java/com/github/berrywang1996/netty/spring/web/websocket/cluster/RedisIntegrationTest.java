@@ -476,6 +476,54 @@ class RedisIntegrationTest {
         clientB.shutdown();
     }
 
+    // ==================== 8. Multi pub/sub connections (N=3) ====================
+
+    @Test
+    @Order(14)
+    void multiPubSubConnectionsDeliverEveryChannel() throws Exception {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available");
+
+        RedisClient pubClient = RedisClient.create(REDIS_URI);
+        RedisClient subClient = RedisClient.create(REDIS_URI);
+        RedisPubSubBroker publisher = new RedisPubSubBroker(pubClient, new SimpleTextEnvelopeCodec());
+        // 3 SUBSCRIBE connections — channels partition across them.
+        RedisPubSubBroker subscriber = new RedisPubSubBroker(subClient, new SimpleTextEnvelopeCodec(),
+                new com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.NoOpMessageAuthenticator(), 3);
+
+        String[] uris = {"/ws/mc0", "/ws/mc1", "/ws/mc2", "/ws/mc3", "/ws/mc4"};
+        Map<String, List<ClusterEnvelope>> received = new java.util.concurrent.ConcurrentHashMap<>();
+        CountDownLatch latch = new CountDownLatch(uris.length + 1); // + 1 unicast
+        for (String uri : uris) {
+            received.put(uri, new CopyOnWriteArrayList<>());
+            subscriber.subscribe(uri, env -> { received.get(env.getUri()).add(env); latch.countDown(); });
+        }
+        List<ClusterEnvelope> unicasts = new CopyOnWriteArrayList<>();
+        subscriber.subscribeUnicast("mc-node", env -> { unicasts.add(env); latch.countDown(); });
+
+        Thread.sleep(500); // let SUBSCRIBE settle across all 3 connections
+
+        for (String uri : uris) {
+            publisher.publish(uri, new ClusterEnvelope("pub", uri, ClusterEnvelope.MessageKind.BROADCAST,
+                    ("T:" + uri).getBytes(), null, null, System.currentTimeMillis()));
+        }
+        publisher.unicast("mc-node", new ClusterEnvelope("pub", "/ws/mcU", ClusterEnvelope.MessageKind.UNICAST,
+                "T:u".getBytes(), "sX", null, System.currentTimeMillis()));
+
+        assertTrue(latch.await(6, TimeUnit.SECONDS),
+                "every channel (across 3 pub/sub connections) must deliver");
+        for (String uri : uris) {
+            assertEquals(1, received.get(uri).size(), "channel " + uri + " must receive exactly its message");
+            assertEquals("pub", received.get(uri).get(0).getOriginNodeId());
+        }
+        assertEquals(1, unicasts.size());
+        assertEquals("sX", unicasts.get(0).getTargetSessionId());
+
+        subscriber.shutdown();
+        publisher.shutdown();
+        subClient.shutdown();
+        pubClient.shutdown();
+    }
+
     // ==================== Helper: Recording local sender ====================
 
     static class RecordingSender implements MessageSender {
