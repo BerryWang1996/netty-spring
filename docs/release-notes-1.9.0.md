@@ -1,6 +1,6 @@
 # Release Notes — v1.9.0 (开发中 / in development)
 
-> 状态：**开发中（1.9.0-RC11，2026-06-06）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）；RC10 新增**全 NATS 栈**（`nats.registry=true` → NATS JetStream-KV registry/心跳/reaper，可完全不依赖 Redis；需 JetStream 服务器；ADR-001 更新为 NATS-only opt-in）；RC11 预发布安全审计硬化（15 项修复：SPI 契约、Redis 键安全、缓存有界、生命周期防御、自动装配护栏、文档一致性）。最终 1.9.0 发布日期待整个周期完成后确定。
+> 状态：**开发中（1.9.0-RC12，2026-06-06）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）；RC10 新增**全 NATS 栈**（`nats.registry=true` → NATS JetStream-KV registry/心跳/reaper，可完全不依赖 Redis；需 JetStream 服务器；ADR-001 更新为 NATS-only opt-in）；RC11 预发布安全审计硬化（15 项修复：SPI 契约、Redis 键安全、缓存有界、生命周期防御、自动装配护栏、文档一致性）；RC12 收尾 1.9.1 backlog 8 项 LOW/NIT polish（L2–L8 + N1；L1 推迟需自定义 Spring `Condition`）。最终 1.9.0 发布日期待整个周期完成后确定。
 
 ## 版本定位
 
@@ -298,6 +298,50 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 
 纯加性 + opt-in。`nats.registry` 默认 `false` ⇒ 行为与 RC9（mixed）及 all-Redis **字节级一致**。无 SPI 变更。NATS-KV bean 仅在 jnats 在 classpath **且** `nats.servers` 非空 **且** `nats.registry=true` 时存在。
 
+### ⑰ 1.9.1 backlog polish 收尾 / 1.9.1 backlog polish
+
+*Since V1.9.0-RC12.* 把 RC11 预发布审计存档的 8 项 LOW/NIT 落地（L1 仍推迟，需要自定义 Spring `Condition` 类才能覆盖「用户重写全部 4 个 Redis SPI bean」的边界场景）。**无 SPI 签名变更，无线格式变更**；除 **L3** 外无默认行为变更（详见下文升级提示）。
+
+#### 修复项
+
+- **L2 — NATS KV `register()` 写顺序反转**：membership 键先于 session 键写入；若 session 键 put 失败，cleanup 仍可经 membership 找到 orphan，避免泄漏会话记录。`removeAllForNode` 已迭代 membership 键并重建会话键删除，与新写序天然契合。
+- **L3 — Redis 三个 broker 的入站大小限制改按 UTF-8 字节计**：`String.length()`（UTF-16 char 数）→ `getBytes(UTF_8).length`（字节数）。与 `NatsClusterBroker` 既有的字节判定一致，字段名 `inboundMaxBytes` 名实相符。**⚠️ 轻微行为变更（仅集群模式）**：先前对多字节字符按 char 数放行的请求，现在按字节严格判定。**操作建议**——默认 codec（ASCII / Base64）字节级一致；自定义 codec 且 payload 含非 ASCII 字符的用户应**核查 `message-max-size-bytes`** 设置（若原本依赖字符 / 字节比例放行，请按实际字节数适度上调）。
+- **L4 — `ClusterNodeManager.doReconciliation` 死节点清理 chained 链路**：`sessionRegistry.removeAllForNode(deadNodeId)` 改为 `thenRunAsync(deregister, reconScheduler)`；清理失败时 `.exceptionally` 仅记日志、**不 deregister**，留待下一轮 sweep 重试。chained 块开头加 `state.get() == LEFT` 守护；调度被拒（reconScheduler 已 shutdown）走 `RejectedExecutionException` 静默降级。
+- **L5 — NATS reaper IT 增加 maxAge + 过期/重认领断言**：`netty-reaping` bucket 在测试中以 `ttl(10s)` 创建（与生产 30s `ensureBucket` 同形式，缩短便于测试）；新增 `reaper_claimExpires_thenReclaimSucceeds`，r1 认领后等待 12 s 跨过 TTL，r2 重认领成功。
+- **L6 — `sendMessage` 远端路径同时按 `broker.state() == ACTIVE` gate**：redis-loss 宽限期内 `nodeManager.state` 仍 ACTIVE 但 `broker.state` 已 DEGRADED 时直接 short-circuit，不再走 2 s `command-timeout` 等 Redis lookup。**未变更**：`closeSession()` 与 `topicMessage()` 路径仍仅按 `nodeManager.state` gate（仅一次浪费 lookup，非正确性问题，列入 1.9.1+ backlog）。
+- **L7 — `ClusterNodeManager.shutdown()` await scheduler termination 后再 deregister**：`heartbeatScheduler` / `reconScheduler` 顺序 `.shutdown()` + `.awaitTermination(5s)`（超时降级 `shutdownNow`，`InterruptedException` 恢复中断标志）→ 才 `heartbeat.deregister(nodeId)`。杜绝任何 in-flight `doHeartbeat()` / `doReconciliation()` 任务在 deregister 之后访问 Redis。RC11 的 DRAINING/LEFT 转换与 `Thread.sleep(drainTimeoutMs)` 序列原位保留。
+- **L8 — `RedisStreamsReliableBroker` 接 Lettuce `RedisConnectionStateListener`**：与 `RedisPubSubBroker` 同 CAS 模式（`onRedisDisconnected` → ACTIVE→DEGRADED；`onRedisConnected` → DEGRADED→ACTIVE；不覆写 SHUTDOWN）。`/actuator/health` 现在如实反映可靠 broker 传输健康，与 Pub/Sub broker 对齐。
+- **N1 — `NatsKvSessionRegistry.removeAllForNode` 空 URI guard 修正**：`if (dot > 0)` → `if (dot >= 0)`，让 `@MessageMapping("")` 路径产生的 `s..<sid>` 会话键也被正确删除。
+
+#### 新增测试（+15，全部本地真实运行）
+
+| 测试 | 覆盖项 |
+|---|---|
+| `NatsKvSessionRegistryTest.register_writesMembershipKeyBeforeSessionKey` | L2 写序 InOrder 断言 |
+| `NatsKvSessionRegistryTest.removeAllForNode_deletesSessionKeysForBothEmptyAndNormalUris` | N1 空 URI 等值边界 |
+| `RedisBrokerInboundSizingTest`（6 例，3 broker × 2 路径） | L3 emoji UTF-8 字节 cap |
+| `ReliableBroadcastIntegrationTest.reliableBroker_*degraded*` + Mockito spy 互补对 | L8 真实 `killContainerCmd` DEGRADED + 直接 listener 注入 ACTIVE 回归 |
+| `ClusterNodeManagerReliabilityTest.shutdownAwaitsSchedulerTerminationBeforeDeregister` | L7 时序 |
+| `ClusterNodeManagerReliabilityTest.reconciliationChainsRemoveAllForNodeBeforeDeregister` | L4 chained 顺序 |
+| `ClusterNodeManagerReliabilityTest.reconciliationDoesNotDeregisterDeadNodeWhenCleanupFails` | L4 失败留待重试 |
+| `NatsKvIntegrationTest.reaper_claimExpires_thenReclaimSucceeds` | L5 真实 TTL 过期/重认领 |
+| `ClusterMessageSenderTest.sendMessageShortCircuitsRemoteWhenBrokerDegraded` | L6 broker-state gate |
+
+#### 升级提示
+
+- 单机模式（`cluster.enable=false` 或默认）：与 1.7.x / 1.8.0 / RC11 **字节级一致**，零影响。
+- 集群模式且使用**默认 codec**（ASCII / Base64）：**字节级一致**，零配置改动。
+- 集群模式且使用**自定义 codec 且 payload 含非 ASCII**：核查 `message-max-size-bytes` 设置——若原本依赖 char/byte 比例隐式放行，请按实际字节数显式上调（建议放在 `~16384` 以上以覆盖通常的中文/emoji JSON）。
+- 无 SPI / 信封格式变更；运维行为变更仅 L3 一项，且仅影响多字节 payload 的临界尺寸。
+
+#### 推迟项（落入 1.9.1+ backlog）
+
+- L1（user-overrides-all-4-Redis-SPI-beans 时仍创建空闲 RedisClient）：需要自定义 `Condition` 检查 4 个 SPI 接口的覆盖状态——非平凡设计，独立周期处理。
+- `closeSession()` / `topicMessage()` 也按 `broker.state()` gate（与 L6 一致的 short-circuit），仅一次 lookup 浪费，非正确性。
+- 文档优化（@Tag("slow") 标注 12s 测试、L8 IT 15s 超时背景注释、UTF_8 导入风格统一等）。
+
+---
+
 ### ⑯ 预发布安全审计硬化 / Pre-GA Security Audit Hardening
 
 *Since V1.9.0-RC11.* 对 RC1–RC10 全量代码执行 **8 维度多代理对抗式审计**（brokers、heartbeat-reaper、session-registries、autoconfig-matrix、cluster-message-sender、cluster-node-manager、concurrency-lifecycle、docs-codec-metrics-security），24 项发现（3 HIGH、9 MEDIUM、11 LOW、1 NIT）；HIGH + MEDIUM + 文档不一致共 15 项修复落地，LOW/NIT 存入 `docs/pre-ga-audit-backlog.md` 留待 1.9.1。
@@ -412,7 +456,7 @@ server:
 
 ## 测试覆盖
 
-- **395 个测试，11 个模块，全部通过**（`mvn test`，Redis + Docker/Testcontainers live；CI 用 Testcontainers 自带 Redis）。
+- **410 个测试，11 个模块，全部通过**（`mvn test`，Redis + Docker/Testcontainers live；CI 用 Testcontainers 自带 Redis）。
 - 1.9.0 新增测试：
   - `ClusterNodeManagerReliabilityTest` — 线程隔离调度器验证、宽限期抑制逻辑、双调度器并发压测
   - `ClusterRegistryWriterTest` — token-bucket 直通路径、超速合并、零丢失断言、并发注册风暴模拟
