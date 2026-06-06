@@ -1,6 +1,6 @@
 # Release Notes — v1.9.0 (开发中 / in development)
 
-> 状态：**开发中（1.9.0-RC10，2026-06-05）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）；RC10 新增**全 NATS 栈**（`nats.registry=true` → NATS JetStream-KV registry/心跳/reaper，可完全不依赖 Redis；需 JetStream 服务器；ADR-001 更新为 NATS-only opt-in）。最终 1.9.0 发布日期待整个周期完成后确定。
+> 状态：**开发中（1.9.0-RC11，2026-06-06）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）；RC10 新增**全 NATS 栈**（`nats.registry=true` → NATS JetStream-KV registry/心跳/reaper，可完全不依赖 Redis；需 JetStream 服务器；ADR-001 更新为 NATS-only opt-in）；RC11 预发布安全审计硬化（15 项修复：SPI 契约、Redis 键安全、缓存有界、生命周期防御、自动装配护栏、文档一致性）。最终 1.9.0 发布日期待整个周期完成后确定。
 
 ## 版本定位
 
@@ -298,6 +298,46 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 
 纯加性 + opt-in。`nats.registry` 默认 `false` ⇒ 行为与 RC9（mixed）及 all-Redis **字节级一致**。无 SPI 变更。NATS-KV bean 仅在 jnats 在 classpath **且** `nats.servers` 非空 **且** `nats.registry=true` 时存在。
 
+### ⑯ 预发布安全审计硬化 / Pre-GA Security Audit Hardening
+
+*Since V1.9.0-RC11.* 对 RC1–RC10 全量代码执行 **8 维度多代理对抗式审计**（brokers、heartbeat-reaper、session-registries、autoconfig-matrix、cluster-message-sender、cluster-node-manager、concurrency-lifecycle、docs-codec-metrics-security），24 项发现（3 HIGH、9 MEDIUM、11 LOW、1 NIT）；HIGH + MEDIUM + 文档不一致共 15 项修复落地，LOW/NIT 存入 `docs/pre-ga-audit-backlog.md` 留待 1.9.1。
+
+#### HIGH（3 项）
+
+- **NATS broker SPI 契约违反**：`NatsClusterBroker.publish()`/`unicast()` 原来泄漏 jnats `IllegalStateException`/`IllegalArgumentException`——违反 `ClusterBroker` SPI 的 `ClusterBrokerException` 契约。现已 try-catch 包装，下游 `on-publish-failure` 策略正常触发。
+- **NATS heartbeat 静默吞异常**：`NatsKvNodeHeartbeat.register()`/`renewHeartbeat()` 原来 catch-log-swallow 所有异常——导致 `ClusterNodeManager` 永远不知道心跳写入失败，节点不会进入 DEGRADED。现已 rethrow 为 `RuntimeException`（`deregister()`/`findExpiredNodes()` 仍容忍异常）。
+- **可靠 broker 死节点消费者组清理过激**：`destroyConsumerGroupsForNode` 原来无条件销毁——同 id 节点崩溃重启后其 PEL 被清除，导致回放丢失。现改为 **idle-gate**（`XINFO GROUPS`）：仅销毁 zero-pending **且** 空闲超过 `group-destroy-idle-ms`（默认 1 小时）的消费者组；有任何疑点则保留。
+
+#### MEDIUM（9 项）
+
+- **NATS KV registry 无专用线程池**：`supplyAsync`/`runAsync` 未指定 executor——跑在 ForkJoinPool 上，可能饿死其他 `CompletableFuture` 任务。现改为专用 `newFixedThreadPool(4)`（`nats-kv-registry-*`），`shutdown()` 时同步关闭。
+- **Redis 可靠 broker 无入站大小限制**：接收端无上限——恶意或异常的超大条目可能 OOM。现增 `inboundMaxBytes`（默认 `messageMaxSizeBytes * 2`），超限条目 ACK + drop（不累积 PEL）。
+- **Redis registry 键中 URI 直拼**：特殊字符 URI 可能导致键格式歧义或注入。现改为 **base64url 编码**（`RedisSessionRegistry` 和 `RedisClusterModeSessionRegistry` 对称修复）。
+- **`ClusterMessageSender.nodeCache` 无界**：单播路径的 sessionId→nodeId 缓存无上限——大量不同会话的单播会无限增长。现改为 **access-order LRU `LinkedHashMap`**，默认上限 100 000 条（`registry-read-cache-max-size`）。
+- **`ClusterNodeManager` RESYNC 可复活 LEFT**：shutdown 后 RESYNC 定时器仍可能在 `lifecycleLock` 外触发状态恢复。现 `transitionTo()` 对 `current==LEFT` 直接 no-op；RESYNC future 在 shutdown 中 cancel。
+- **`ClusterNodeManager.shutdown()` drain 逻辑**：60s 默认 `drain-timeout-seconds` 让每次关闭盲等 60s。改默认为 **0**（即时注销 = 1.8.0 行为），正值 = 显式 opt-in。
+- **NATS classpath 无 fail-fast**：`nats.servers` 配了但 jnats 不在 classpath 时，无 `ClusterBroker` bean → Spring 上下文报晦涩的 `NoSuchBeanDefinitionException`。新增 `@ConditionalOnExpression(NATS_TRANSPORT) + @ConditionalOnMissingClass("io.nats.client.Connection")` 守卫 → 抛 `IllegalStateException("nats.servers is set but io.nats:jnats is not on the classpath")`。
+- **NATS 日志 URI 未脱敏**：启动日志直接输出 `nats.servers`（可能含 `nats://user:pass@host`）。新增 `redactServerUris()` 按条目掩盖 `://user[:pass]@`，与 Redis URI 脱敏对齐。
+- **可靠 broker knobs 未接线**：`inboundMaxBytes` 和 `groupDestroyIdleMs` 在 auto-config 中未从 `ClusterProperties` 注入。已补线 + 新增 `additional-spring-configuration-metadata.json` 条目。
+
+#### 文档修复（3 项）
+
+- release-notes 已知限制章节：移除已落地的功能条目（NATS / 多 pub/sub / Docker 演示），保留真正未实现项（sharded pub/sub / Observation），新增 NATS 可靠投递缺口 + 1.9.1 backlog 指针。
+- 配置参考 YAML：从"两个新条目"改为完整 RC1–RC11 全配置参考（含 `registry-read-cache-max-size`、`group-destroy-idle-ms`、`drain-timeout-seconds=0`、NATS `max_payload` 提示）。
+- `cluster-design.md` 可观测性章节：标注为设计愿景/已部分实现，指向 `api-guide.md §9` 作为已出货的权威指标列表。
+
+#### 新增配置项（RC11）
+
+| 配置项 | 默认 | 说明 |
+|---|---|---|
+| `registry-read-cache-max-size` | `100000` | 单播 sessionId→nodeId 缓存最大条目（LRU 淘汰），防无界增长；`0` 或负值 = 不限（旧行为）。 |
+| `reliable.group-destroy-idle-ms` | `3600000` | 死节点消费者组空闲超过此时间（ms）才允许被清理；防崩溃重启节点回放丢失。`0` 或负值 = 永不清理。 |
+| `drain-timeout-seconds` | `0`（**默认值变更**） | 从 60 改为 0（即时注销 = pre-1.9.0 行为）；>0 = 显式 opt-in 优雅排空窗口。 |
+
+#### 向后兼容
+
+纯内部修复 + 防御性增强。无 SPI 签名变更，无线格式变更。`drain-timeout-seconds` 默认从 60 改为 0——对从 1.8.0 升级的用户而言是**恢复**旧行为（1.8.0 无 drain 概念，即 0）；仅从 RC1–RC10 升级且曾依赖默认 60s drain 的用户需显式设值。
+
 ---
 
 
@@ -372,7 +412,7 @@ server:
 
 ## 测试覆盖
 
-- **381 个测试，11 个模块，全部通过**（`mvn test`，Redis + Docker/Testcontainers live；CI 用 Testcontainers 自带 Redis）。
+- **395 个测试，11 个模块，全部通过**（`mvn test`，Redis + Docker/Testcontainers live；CI 用 Testcontainers 自带 Redis）。
 - 1.9.0 新增测试：
   - `ClusterNodeManagerReliabilityTest` — 线程隔离调度器验证、宽限期抑制逻辑、双调度器并发压测
   - `ClusterRegistryWriterTest` — token-bucket 直通路径、超速合并、零丢失断言、并发注册风暴模拟
