@@ -3,16 +3,31 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster.nats;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.NoOpMessageAuthenticator;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.BrokerState;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBrokerException;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.EnvelopeCodec;
 import io.nats.client.Connection;
 import io.nats.client.ConnectionListener;
 import io.nats.client.JetStream;
+import io.nats.client.JetStreamApiException;
 import io.nats.client.JetStreamManagement;
+import io.nats.client.api.DiscardPolicy;
+import io.nats.client.api.Error;
+import io.nats.client.api.RetentionPolicy;
+import io.nats.client.api.StorageType;
+import io.nats.client.api.StreamConfiguration;
+import io.nats.client.api.StreamInfo;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 /** Unit tests for {@link NatsJetStreamReliableBroker} — Mockito mocks of jnats JetStream views. */
@@ -42,6 +57,52 @@ class NatsJetStreamReliableBrokerTest {
                 nodeId, 10000L, 200L, 16, 1024);
     }
 
+    private static String b64(String s) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(s.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static ClusterEnvelope envelope(String origin, String uri, String text) {
+        return new ClusterEnvelope(origin, uri, ClusterEnvelope.MessageKind.BROADCAST,
+                ("T:" + text).getBytes(StandardCharsets.UTF_8), null, null, System.currentTimeMillis());
+    }
+
+    /** Builds a real {@link StreamConfiguration} via the public builder. */
+    private static StreamConfiguration streamCfg(StorageType st, DiscardPolicy dp,
+                                                 RetentionPolicy rp, long maxMsgs, int replicas,
+                                                 String name) {
+        return StreamConfiguration.builder()
+                .name(name)
+                .subjects("netty.reliable." + name.substring("netty-cluster-reliable-".length()))
+                .storageType(st)
+                .discardPolicy(dp)
+                .retentionPolicy(rp)
+                .maxMessages(maxMsgs)
+                .replicas(replicas)
+                .build();
+    }
+
+    private static StreamInfo streamInfoWith(StreamConfiguration cfg) {
+        StreamInfo info = mock(StreamInfo.class);
+        when(info.getConfiguration()).thenReturn(cfg);
+        return info;
+    }
+
+    /** Build a real JetStreamApiException carrying the given apiErrorCode (used to simulate
+     *  "stream not found" / "consumer not found"). Uses reflection to reach the package-private
+     *  {@code Error(int, int, String)} ctor — Mockito-mocking Error inside a chained {@code when()}
+     *  trips Mockito's UnfinishedStubbing guard. */
+    private static JetStreamApiException notFoundException(int apiErrorCode) {
+        try {
+            java.lang.reflect.Constructor<Error> ctor =
+                    Error.class.getDeclaredConstructor(int.class, int.class, String.class);
+            ctor.setAccessible(true);
+            Error err = ctor.newInstance(404, apiErrorCode, "not found");
+            return new JetStreamApiException(err);
+        } catch (Exception e) {
+            throw new AssertionError("Could not synthesize Error via reflection", e);
+        }
+    }
+
     // ===== T1 — skeleton + lifecycle =====
 
     @Test
@@ -56,5 +117,70 @@ class NatsJetStreamReliableBrokerTest {
     void t1_registersConnectionListenerOnConstruct() {
         newBroker();
         verify(conn, atLeastOnce()).addConnectionListener(any(ConnectionListener.class));
+    }
+
+    // ===== T2 — ensureStream + mismatch detection =====
+
+    @Test
+    void t2_ensureStream_idempotent_skipsAddWhenExistingConfigMatches() throws Exception {
+        String b64uri = b64("/ws/x");
+        String streamName = "netty-cluster-reliable-" + b64uri;
+        StreamInfo si = streamInfoWith(streamCfg(StorageType.File, DiscardPolicy.Old,
+                RetentionPolicy.Limits, 10000L, 1, streamName));
+        when(jsm.getStreamInfo(streamName)).thenReturn(si);
+        when(js.publishAsync(anyString(), any(byte[].class)))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        NatsJetStreamReliableBroker b = newBroker();
+        b.reliablePublish("/ws/x", envelope("node-A", "/ws/x", "m1"));
+        b.reliablePublish("/ws/x", envelope("node-A", "/ws/x", "m2"));
+        b.shutdown();
+
+        // getStreamInfo called exactly once (cached after success); addStream never called.
+        verify(jsm, times(1)).getStreamInfo(streamName);
+        verify(jsm, never()).addStream(any());
+    }
+
+    @Test
+    void t2_ensureStream_createsStreamOnNotFound() throws Exception {
+        String b64uri = b64("/ws/new");
+        String streamName = "netty-cluster-reliable-" + b64uri;
+        StreamInfo created = streamInfoWith(streamCfg(StorageType.File, DiscardPolicy.Old,
+                RetentionPolicy.Limits, 10000L, 1, streamName));
+        when(jsm.getStreamInfo(streamName)).thenThrow(notFoundException(10059));
+        when(jsm.addStream(any(StreamConfiguration.class))).thenReturn(created);
+        when(js.publishAsync(anyString(), any(byte[].class)))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        NatsJetStreamReliableBroker b = newBroker();
+        b.reliablePublish("/ws/new", envelope("node-A", "/ws/new", "m1"));
+        b.shutdown();
+
+        ArgumentCaptor<StreamConfiguration> cap = ArgumentCaptor.forClass(StreamConfiguration.class);
+        verify(jsm).addStream(cap.capture());
+        StreamConfiguration sc = cap.getValue();
+        assertEquals(streamName, sc.getName());
+        assertEquals(StorageType.File, sc.getStorageType());
+        assertEquals(DiscardPolicy.Old, sc.getDiscardPolicy());
+        assertEquals(RetentionPolicy.Limits, sc.getRetentionPolicy());
+        assertEquals(10000L, sc.getMaxMsgs());
+        assertEquals(1, sc.getReplicas());
+        assertTrue(sc.getSubjects().contains("netty.reliable." + b64uri));
+    }
+
+    @Test
+    void t2_ensureStream_throwsClusterBrokerExceptionOnConfigMismatch() throws Exception {
+        String b64uri = b64("/ws/x");
+        String streamName = "netty-cluster-reliable-" + b64uri;
+        // Different storage type → mismatch.
+        StreamInfo mismatched = streamInfoWith(streamCfg(StorageType.Memory, DiscardPolicy.Old,
+                RetentionPolicy.Limits, 10000L, 1, streamName));
+        when(jsm.getStreamInfo(streamName)).thenReturn(mismatched);
+
+        NatsJetStreamReliableBroker b = newBroker();
+        // ensureStream is called inside reliablePublish — the CBE must surface.
+        assertThrows(ClusterBrokerException.class, () -> b.ensureStream(b64uri));
+        verify(jsm, never()).addStream(any());
+        b.shutdown();
     }
 }
