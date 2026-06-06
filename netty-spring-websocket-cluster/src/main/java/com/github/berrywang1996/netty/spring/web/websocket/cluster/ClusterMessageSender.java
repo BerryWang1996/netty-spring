@@ -379,7 +379,11 @@ public class ClusterMessageSender implements MessageSender {
         // S2: when degraded (Redis lost) the broker can't deliver cross-node anyway — short-circuit
         // remote sessions to "closed" WITHOUT a registry lookup, so a Redis outage never blocks the
         // unicast hot path on a registry round-trip.
-        boolean active = nodeManager.getState() == NodeState.ACTIVE;
+        // L6: also gate on broker.state()==ACTIVE so during the redis-loss-grace-period-ms debounce
+        // window (transport lost but node state machine still ACTIVE) we don't waste a bounded
+        // registry lookup the broker can't act on anyway.
+        boolean active = nodeManager.getState() == NodeState.ACTIVE
+                      && broker.state() == BrokerState.ACTIVE;
 
         for (String sessionId : sessionIds) {
             MessageSession localSession = localSender.getSession(uri, sessionId);
@@ -407,7 +411,9 @@ public class ClusterMessageSender implements MessageSender {
         }
 
         // Unicast to remote sessions via broker (using the nodeId resolved above)
-        if (!remoteSessionToNode.isEmpty() && nodeManager.getState() == NodeState.ACTIVE) {
+        if (!remoteSessionToNode.isEmpty()
+                && nodeManager.getState() == NodeState.ACTIVE
+                && broker.state() == BrokerState.ACTIVE) {
             for (Map.Entry<String, String> entry : remoteSessionToNode.entrySet()) {
                 String sessionId = entry.getKey();
                 String targetNodeId = entry.getValue();

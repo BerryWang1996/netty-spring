@@ -3,6 +3,7 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeHeartbeat;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.NodeState;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.BrokerState;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope;
 import com.github.berrywang1996.netty.spring.web.websocket.context.*;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSessionClosedException;
@@ -113,6 +114,36 @@ class ClusterMessageSenderTest {
         String lookedUpNode = registry.lookupNode("/ws/test", "session-B1")
                 .toCompletableFuture().join();
         assertEquals("node-B", lookedUpNode);
+    }
+
+    @Test
+    void sendMessageShortCircuitsRemoteWhenBrokerDegraded() throws Exception {
+        // L6: during the redis-loss-grace-period-ms debounce window, transport is lost
+        // (broker.state()==DEGRADED) but the node state machine still says ACTIVE. The
+        // unicast hot path must short-circuit remote sessions to "closed" WITHOUT a
+        // registry lookup — the broker can't deliver anyway.
+        localSender.addUri("/ws/test");
+
+        // Register a remote session in the registry so a lookup *would* succeed
+        // if the gate didn't short-circuit.
+        registry.register("/ws/test", "session-B1", "node-B", Collections.emptyMap())
+                .toCompletableFuture().join();
+
+        int lookupsBefore = registry.getLookupNodeCalls();
+
+        // Degrade the broker but leave nodeManager state == ACTIVE (the debounce window).
+        broker.setState(BrokerState.DEGRADED);
+        assertEquals(NodeState.ACTIVE, nodeManager.getState(),
+                "Node state machine must still be ACTIVE during grace-period debounce");
+
+        // Send to the remote session — must throw MessageSessionClosedException without
+        // ever calling registry.lookupNode().
+        MessageSessionClosedException ex = assertThrows(MessageSessionClosedException.class,
+                () -> clusterSender.sendMessage("/ws/test", new TextMessage("dm"), "session-B1"));
+        assertTrue(ex.getSessionIds().contains("session-B1"));
+
+        assertEquals(lookupsBefore, registry.getLookupNodeCalls(),
+                "Registry lookupNode must NOT be called when broker is DEGRADED");
     }
 
     @Test
