@@ -80,6 +80,51 @@ RC12 review).
 
 ---
 
+## RC13 review nice-to-haves (added 2026-06-06)
+
+### Q1 — IT for `NatsJetStreamReliableBroker` DEGRADED→ACTIVE recovery
+
+- **Where:** `NatsJetStreamReliableIntegrationTest` (the kill-container test currently only proves ACTIVE→DEGRADED).
+- **Issue:** ACTIVE←DEGRADED reverse transition only covered at unit level.
+- **Fix sketch:** Extend the kill-container test to restart the container and poll `broker.state() == ACTIVE` within 15 s.
+
+### Q2 — Positive HMAC round-trip IT
+
+- **Where:** `NatsJetStreamReliableIntegrationTest.hmacRejection*` (currently only asserts wrong-key rejection).
+- **Issue:** Positive case is implicit via ITs (a) and (b) but not asserted with matching `auth.secret`.
+- **Fix sketch:** Add a sibling test that uses matching secrets and asserts the receiver gets the message.
+
+### Q3 — IT for DEGRADED-state publish still attempts
+
+- **Where:** Spec §5.1 says DEGRADED still attempts publish; only unit-level coverage today.
+- **Fix sketch:** Add an IT that disconnects → confirms `reliablePublish` does not throw + JetStream eventually receives once reconnected.
+
+### Q4 — `DedupRing` capacity boundary
+
+- **Where:** `NatsJetStreamReliableBroker.DedupRing.removeEldestEntry()` ~line 535.
+- **Issue:** `LinkedHashMap` with LF 0.75 + capacity doubling = ring grows to ~1.5× cap before eviction (semantically benign but the "fixed-capacity LRU" comment over-promises).
+- **Fix sketch:** Either tighten the comment to "soft-capped (LRU eviction triggers at size > cap)" or use `LinkedHashMap(cap, 1.0f, true)` with a tighter rehash-aware eviction strategy.
+
+### Q5 — Explicit stream-name length guard
+
+- **Where:** `NatsJetStreamReliableBroker.ensureStream()` ~line 358.
+- **Issue:** NATS rejects stream names > 256 bytes; an extremely long URI would fail at `jsm.getStreamInfo` with a less-friendly diagnostic.
+- **Fix sketch:** Add a pre-check `if (streamName.length() > 256) throw new ClusterBrokerException("URI too long: ...")` for a clearer message.
+
+### Q6 — Make connection-bean reuse explicit in spec §3
+
+- **Where:** Spec `docs/superpowers/specs/2026-06-06-nats-jetstream-reliable-rc13.md` §3.
+- **Issue:** Spec says "reuses the same Connection" but doesn't name the bean qualifier (`nettyClusterNatsKvConnection`).
+- **Fix sketch:** Edit the spec to name the qualifier (doc only; no code impact).
+
+### Q7 — Reconcile `g_` vs `g.` durable consumer prefix drift
+
+- **Where:** Spec §4 table says `g.<b64url(nodeId)>`; code uses `g_<b64url(nodeId)>` because jnats client-validator rejects `.` in durable names.
+- **Issue:** Documented in code comment + release-notes §⑱; the spec table itself wasn't retroactively updated.
+- **Fix sketch:** Edit spec §4 table to match the code; the existing release-notes §⑱ paragraph is already correct.
+
+---
+
 ### Not deferred — fixed before RC12 (for reference)
 
 **Fixed in RC11 (pre-GA hardening, 15 items):**
