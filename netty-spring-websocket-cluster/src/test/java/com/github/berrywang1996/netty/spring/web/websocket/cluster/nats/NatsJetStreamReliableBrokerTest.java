@@ -365,4 +365,25 @@ class NatsJetStreamReliableBrokerTest {
         assertEquals(1, acks.get(), "poison-pill: listener throw must still ack to avoid livelock");
         b.shutdown();
     }
+
+    // ===== T5 — Connection listener state CAS =====
+
+    @Test
+    void t5_connectionListener_flipsStateOnDisconnectAndReconnect() {
+        NatsJetStreamReliableBroker b = newBroker();
+        ConnectionListener l = b.connectionListenerForTest();
+        assertNotNull(l);
+        assertEquals(BrokerState.ACTIVE, b.state());
+
+        l.connectionEvent(conn, ConnectionListener.Events.DISCONNECTED);
+        assertEquals(BrokerState.DEGRADED, b.state());
+
+        l.connectionEvent(conn, ConnectionListener.Events.RECONNECTED);
+        assertEquals(BrokerState.ACTIVE, b.state());
+
+        b.shutdown();
+        // After shutdown the listener must never overwrite SHUTDOWN.
+        l.connectionEvent(conn, ConnectionListener.Events.DISCONNECTED);
+        assertEquals(BrokerState.SHUTDOWN, b.state());
+    }
 }
