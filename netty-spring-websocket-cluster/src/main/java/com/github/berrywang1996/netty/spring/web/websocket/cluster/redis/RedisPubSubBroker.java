@@ -67,7 +67,7 @@ public class RedisPubSubBroker implements ClusterBroker {
     /** Active listeners keyed by channel name. */
     private final ConcurrentHashMap<String, ClusterMessageListener> channelListeners = new ConcurrentHashMap<>();
 
-    /** Max accepted size (chars) of an INBOUND pub/sub message before decode. 0 = unlimited.
+    /** Max accepted UTF-8 byte length of an INBOUND pub/sub message before decode. 0 = unlimited.
      *  Protects against a malicious/compromised peer publishing a huge payload (remote OOM). */
     private volatile int inboundMaxBytes = 0;
 
@@ -162,10 +162,13 @@ public class RedisPubSubBroker implements ClusterBroker {
      */
     private void onInboundMessage(String channel, String message) {
         int max = inboundMaxBytes;
-        if (max > 0 && message != null && message.length() > max) {
-            log.warn("Dropping oversized inbound cluster message on channel {} ({} > {} bytes) "
-                    + "— possible misbehaving/hostile publisher", channel, message.length(), max);
-            return;
+        if (max > 0 && message != null) {
+            int sz = message.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+            if (sz > max) {
+                log.warn("Dropping oversized inbound cluster message on channel {} ({} > {} bytes) "
+                        + "— possible misbehaving/hostile publisher", channel, sz, max);
+                return;
+            }
         }
         ClusterMessageListener listener = channelListeners.get(channel);
         if (listener != null) {
@@ -191,7 +194,7 @@ public class RedisPubSubBroker implements ClusterBroker {
         return subscribeConnections.get(Math.floorMod(channel.hashCode(), subscribeConnections.size()));
     }
 
-    /** Sets the max accepted size of an inbound pub/sub message (chars) before decode. 0 = unlimited. */
+    /** Sets the max accepted UTF-8 byte length of an inbound pub/sub message before decode. 0 = unlimited. */
     public void setInboundMaxBytes(int inboundMaxBytes) {
         this.inboundMaxBytes = Math.max(0, inboundMaxBytes);
     }

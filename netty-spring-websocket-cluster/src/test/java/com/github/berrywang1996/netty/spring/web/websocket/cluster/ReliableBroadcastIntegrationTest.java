@@ -2,11 +2,15 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster;
 
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisStreamsReliableBroker;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.BrokerState;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterSubscription;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import org.junit.jupiter.api.*;
+import org.testcontainers.DockerClientFactory;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.utility.DockerImageName;
 
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -182,5 +186,125 @@ class ReliableBroadcastIntegrationTest {
                 "restarted node-B must replay ALL 5 backlog messages (1 warmup + 5) — group offset was not wiped");
 
         second.unsubscribe(); a.shutdown(); b.shutdown();
+    }
+
+    /**
+     * L8: the reliable broker must wire a {@link io.lettuce.core.RedisConnectionStateListener} on its
+     * Lettuce client so its {@code state()} flips ACTIVE→DEGRADED the instant the transport drops.
+     * Uses a dedicated, locally-managed Testcontainers Redis so we can disrupt the transport without
+     * disturbing the shared singleton other tests reuse, and kills the container to drive a real
+     * Lettuce {@code onRedisDisconnected} event through the wired listener.
+     *
+     * <p>Why kill (not pause/unpause): Lettuce does not auto-close on command timeout in default 6.x
+     * options, so a paused container only causes command hangs — {@code onRedisDisconnected} never
+     * fires until the underlying channel actually closes. A real container kill closes the TCP
+     * socket, which Lettuce's transport reliably notices.
+     *
+     * <p>The companion ACTIVE recovery (DEGRADED→ACTIVE on a connect event) is proven separately in
+     * {@link #reliableBroker_listener_onRedisConnected_casesDegradedBackToActive()} via a Mockito
+     * spy on the client; Lettuce's EventBus delivery of {@code onRedisConnected} is asynchronous
+     * and not race-safe enough for a deterministic integration assertion.
+     */
+    @Test
+    void reliableBroker_state_flipsDegradedOnRealTransportLoss() throws Exception {
+        Assumptions.assumeTrue(dockerUsable(), "Docker required for kill+recreate IT");
+
+        // --- PART 1: ACTIVE → DEGRADED on real transport loss ---
+        @SuppressWarnings("resource")
+        GenericContainer<?> killTarget = new GenericContainer<>(DockerImageName.parse("redis:7-alpine"))
+                .withExposedPorts(6379);
+        killTarget.start();
+        try {
+            String killUri = "redis://" + killTarget.getHost() + ":" + killTarget.getMappedPort(6379);
+            RedisClient killClient = RedisClient.create(killUri);
+            killClient.setDefaultTimeout(java.time.Duration.ofMillis(500));
+            try {
+                RedisStreamsReliableBroker broker = new RedisStreamsReliableBroker(
+                        killClient, new SimpleTextEnvelopeCodec(), 10000, 200, 64, 1024);
+                try {
+                    assertEquals(BrokerState.ACTIVE, broker.state(),
+                            "broker must be ACTIVE immediately after construction");
+
+                    // Kill the redis container → TCP socket closes → Lettuce fires onRedisDisconnected
+                    // → broker CASes ACTIVE→DEGRADED through the listener wired in L8.
+                    killTarget.getDockerClient().killContainerCmd(killTarget.getContainerId()).exec();
+
+                    long degradedDeadline = System.currentTimeMillis() + 15000;
+                    while (broker.state() != BrokerState.DEGRADED
+                            && System.currentTimeMillis() < degradedDeadline) {
+                        Thread.sleep(100);
+                    }
+                    assertEquals(BrokerState.DEGRADED, broker.state(),
+                            "transport loss must flip broker state to DEGRADED via the connection-state listener");
+                } finally {
+                    broker.shutdown();
+                }
+            } finally {
+                try { killClient.shutdown(); } catch (Exception ignored) {}
+            }
+        } finally {
+            try { killTarget.stop(); } catch (Exception ignored) {}
+        }
+
+    }
+
+    /**
+     * L8 (unit-level companion to the kill-container IT): proves the CAS path
+     * {@code DEGRADED→ACTIVE} via the {@link io.lettuce.core.RedisConnectionStateListener} the broker
+     * wires on construction. We spy the {@link RedisClient} so we can capture the listener handed to
+     * {@code addListener(...)} and invoke {@code onRedisConnected} directly — independent of
+     * Lettuce's event-delivery scheduler (in 6.x the underlying EventBus may dispatch
+     * onRedisConnected asynchronously on a background thread, making the live ACTIVE-after-reconnect
+     * round-trip flaky in an IT).
+     */
+    @Test
+    void reliableBroker_listener_onRedisConnected_casesDegradedBackToActive() throws Exception {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available");
+
+        java.util.concurrent.atomic.AtomicReference<io.lettuce.core.RedisConnectionStateListener> captured =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        RedisClient spyClient = org.mockito.Mockito.spy(client);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            captured.set(invocation.getArgument(0));
+            invocation.callRealMethod();
+            return null;
+        }).when(spyClient).addListener(org.mockito.ArgumentMatchers.any(io.lettuce.core.RedisConnectionStateListener.class));
+
+        RedisStreamsReliableBroker rb = new RedisStreamsReliableBroker(
+                spyClient, new SimpleTextEnvelopeCodec(), 10000, 200, 64, 1024);
+        try {
+            assertNotNull(captured.get(),
+                    "broker must register a RedisConnectionStateListener on the client (L8 wiring)");
+            assertEquals(BrokerState.ACTIVE, rb.state(), "broker is ACTIVE on construction");
+
+            // Manually CAS to DEGRADED so the listener's onRedisConnected branch is exercised.
+            java.lang.reflect.Field sf = RedisStreamsReliableBroker.class.getDeclaredField("state");
+            sf.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            java.util.concurrent.atomic.AtomicReference<BrokerState> stateRef =
+                    (java.util.concurrent.atomic.AtomicReference<BrokerState>) sf.get(rb);
+            stateRef.set(BrokerState.DEGRADED);
+
+            captured.get().onRedisConnected(null, null);
+
+            assertEquals(BrokerState.ACTIVE, rb.state(),
+                    "onRedisConnected on the wired listener must CAS DEGRADED→ACTIVE");
+
+            // Disconnect on an already-ACTIVE broker must CAS to DEGRADED (the other half).
+            captured.get().onRedisDisconnected(null);
+            assertEquals(BrokerState.DEGRADED, rb.state(),
+                    "onRedisDisconnected on the wired listener must CAS ACTIVE→DEGRADED");
+        } finally {
+            rb.shutdown();
+        }
+    }
+
+    /** True iff Docker is available locally — keeps the pause/unpause test skip-clean in CI without Docker. */
+    private static boolean dockerUsable() {
+        try {
+            return DockerClientFactory.instance().isDockerAvailable();
+        } catch (Throwable t) {
+            return false;
+        }
     }
 }

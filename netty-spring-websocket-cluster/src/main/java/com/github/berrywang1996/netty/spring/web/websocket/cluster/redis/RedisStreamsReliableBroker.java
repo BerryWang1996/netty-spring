@@ -65,7 +65,7 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
     private final int pollCount;
     private final int dedupWindow;
 
-    /** Max accepted size (chars) of an INBOUND stream entry's payload before unwrap/decode. 0 = unlimited.
+    /** Max accepted UTF-8 byte length of an INBOUND stream entry's payload before unwrap/decode. 0 = unlimited.
      *  Mirrors {@code RedisPubSubBroker.inboundMaxBytes} — guards against a malicious/compromised peer
      *  writing a huge entry into the shared stream (remote OOM on the consuming node). */
     private volatile int inboundMaxBytes = 0;
@@ -92,12 +92,36 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
         this.pollBlockMs = pollBlockMs;
         this.pollCount = pollCount;
         this.dedupWindow = Math.max(16, dedupWindow);
+
+        // Event-driven transport health (parity with RedisPubSubBroker): flip broker state the instant
+        // the Lettuce connection drops/recovers. DEGRADED here is informational — the consume loop
+        // keeps retrying on exception (it does NOT check `state == ACTIVE`, only `!= SHUTDOWN`), so
+        // it naturally rides out a brief disconnect and resumes once Lettuce reconnects.
+        this.redisClient.addListener(new io.lettuce.core.RedisConnectionStateListener() {
+            @Override
+            public void onRedisConnected(io.lettuce.core.RedisChannelHandler<?, ?> connection, java.net.SocketAddress addr) {
+                if (state.compareAndSet(BrokerState.DEGRADED, BrokerState.ACTIVE)) {
+                    log.info("RedisStreamsReliableBroker transport reconnected — state ACTIVE");
+                }
+            }
+            @Override
+            public void onRedisDisconnected(io.lettuce.core.RedisChannelHandler<?, ?> connection) {
+                if (state.compareAndSet(BrokerState.ACTIVE, BrokerState.DEGRADED)) {
+                    log.warn("RedisStreamsReliableBroker transport disconnected — state DEGRADED");
+                }
+            }
+            @Override
+            public void onRedisExceptionCaught(io.lettuce.core.RedisChannelHandler<?, ?> connection, Throwable cause) {
+                // Surfaced via onRedisDisconnected; nothing to do here.
+            }
+        });
+
         this.commandConnection = redisClient.connect();
         log.info("RedisStreamsReliableBroker initialized (maxlen={}, block={}ms, count={})",
                 streamMaxLen, pollBlockMs, pollCount);
     }
 
-    /** Sets the max accepted size of an inbound stream entry's payload (chars) before unwrap/decode.
+    /** Sets the max accepted UTF-8 byte length of an inbound stream entry's payload before unwrap/decode.
      *  0 = unlimited. Wired by the auto-config from the same inbound-size-cap property as the pub/sub broker. */
     public void setInboundMaxBytes(int inboundMaxBytes) {
         this.inboundMaxBytes = Math.max(0, inboundMaxBytes);
@@ -207,12 +231,15 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
         // (remote OOM). Drop it — but ACK first so it clears the PEL and is never redelivered (same
         // handling as a poison/rejected entry below).
         int max = inboundMaxBytes;
-        if (max > 0 && data != null && data.length() > max) {
-            log.warn("Dropping oversized reliable entry {} on {} ({} > {} chars) — possible "
-                    + "misbehaving/hostile publisher; acking to clear PEL", id, streamKey, data.length(), max);
-            seen.put(id, Boolean.TRUE);
-            ack(streamKey, group, id);
-            return;
+        if (max > 0 && data != null) {
+            int sz = data.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+            if (sz > max) {
+                log.warn("Dropping oversized reliable entry {} on {} ({} > {} bytes) — possible "
+                        + "misbehaving/hostile publisher; acking to clear PEL", id, streamKey, sz, max);
+                seen.put(id, Boolean.TRUE);
+                ack(streamKey, group, id);
+                return;
+            }
         }
         if (data != null) {
             data = authenticator.unwrap(data); // null = rejected (missing/invalid HMAC)
