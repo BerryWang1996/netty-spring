@@ -6,6 +6,7 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.BrokerSta
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBrokerException;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.EnvelopeCodec;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MessageAuthenticator;
 import io.nats.client.Connection;
 import io.nats.client.ConnectionListener;
 import io.nats.client.JetStream;
@@ -28,6 +29,7 @@ import java.util.concurrent.CompletableFuture;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /** Unit tests for {@link NatsJetStreamReliableBroker} — Mockito mocks of jnats JetStream views. */
@@ -182,5 +184,42 @@ class NatsJetStreamReliableBrokerTest {
         assertThrows(ClusterBrokerException.class, () -> b.ensureStream(b64uri));
         verify(jsm, never()).addStream(any());
         b.shutdown();
+    }
+
+    // ===== T3 — reliablePublish =====
+
+    @Test
+    void t3_reliablePublish_wrapsWithAuthenticator_publishesToSubject() throws Exception {
+        String b64uri = b64("/ws/chat");
+        String streamName = "netty-cluster-reliable-" + b64uri;
+        StreamInfo si = streamInfoWith(streamCfg(StorageType.File, DiscardPolicy.Old,
+                RetentionPolicy.Limits, 10000L, 1, streamName));
+        when(jsm.getStreamInfo(streamName)).thenReturn(si);
+        when(js.publishAsync(anyString(), any(byte[].class)))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        MessageAuthenticator auth = mock(MessageAuthenticator.class);
+        when(auth.wrap(anyString())).thenAnswer(inv -> "WRAP|" + inv.getArgument(0));
+        NatsJetStreamReliableBroker b = new NatsJetStreamReliableBroker(conn, codec, auth, "node-A",
+                10000L, 200L, 16, 1024);
+
+        b.reliablePublish("/ws/chat", envelope("node-A", "/ws/chat", "hello"));
+
+        verify(auth).wrap(anyString());
+        ArgumentCaptor<String> sub = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<byte[]> body = ArgumentCaptor.forClass(byte[].class);
+        verify(js).publishAsync(sub.capture(), body.capture());
+        assertEquals("netty.reliable." + b64uri, sub.getValue());
+        String published = new String(body.getValue(), StandardCharsets.UTF_8);
+        assertTrue(published.startsWith("WRAP|"), "expected HMAC wrap prefix on the published body");
+        b.shutdown();
+    }
+
+    @Test
+    void t3_reliablePublish_throwsAfterShutdown() {
+        NatsJetStreamReliableBroker b = newBroker();
+        b.shutdown();
+        assertThrows(ClusterBrokerException.class,
+                () -> b.reliablePublish("/ws/x", envelope("node-A", "/ws/x", "m1")));
     }
 }
