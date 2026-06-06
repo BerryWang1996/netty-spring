@@ -618,6 +618,8 @@ A node that was offline when messages were published has its consumer-group curs
 | `poll-count` | `64` | Max entries fetched per `XREADGROUP` call. |
 | `dedup-window` | `1024` | In-process sliding-window size for PEL dedup. |
 
+> *Since V1.9.0-RC13.* The `reliable.*` knobs above apply **transport-agnostically**. In all-Redis / mixed deployments (the default) they govern the Redis Streams implementation as described. In all-NATS deployments (`nats.registry=true`) they govern an equivalent NATS JetStream implementation — see `docs/release-notes-1.9.0.md` §⑱ for the JetStream-specific mapping (`stream-max-len` → JetStream `max_msgs`, `poll-block-ms` → fetch timeout, `poll-count` → fetch batch, `group-destroy-idle-ms` → idle-gate on `ConsumerInfo.delivered.lastActive`) and the **`max_payload` operator caveat** (envelope Base64 + HMAC overhead may exceed the NATS server's default 1 MB `max_payload`).
+
 ### 9.2 HMAC Envelope Authentication
 
 *Since V1.9.0-RC3.* Transport-layer **HMAC-SHA256** authentication of cross-node envelopes via the `MessageAuthenticator` SPI. Applies to broadcast, unicast, CLOSE, and the reliable Streams path uniformly. **Gated off by default** — zero overhead until explicitly enabled.

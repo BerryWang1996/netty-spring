@@ -115,37 +115,37 @@
     {
       "name": "server.netty.websocket.cluster.reliable.enable",
       "type": "java.lang.Boolean",
-      "description": "Opt-in at-least-once reliable broadcast over Redis Streams (reliableBroadcast()). Disabled by default — when false there are no consumer threads, no extra Redis connection, and reliableBroadcast() throws. Existing topicMessage() (Pub/Sub, at-most-once) is unaffected either way.",
+      "description": "Opt-in at-least-once reliable broadcast (reliableBroadcast()). Disabled by default — when false there are no consumer threads, no extra transport connections, and reliableBroadcast() throws. Existing topicMessage() (Pub/Sub, at-most-once) is unaffected either way. Transport-agnostic: Redis Streams in all-Redis / mixed deployments; NATS JetStream when nats.registry=true (since V1.9.0-RC13).",
       "defaultValue": false
     },
     {
       "name": "server.netty.websocket.cluster.reliable.stream-max-len",
       "type": "java.lang.Integer",
-      "description": "Per-URI Redis Stream MAXLEN (approximate) for reliable broadcast — the at-least-once retention window. A node offline longer than this many entries of history on a URI misses the trimmed ones (bounded gap).",
+      "description": "Per-URI Redis Stream MAXLEN (approximate) for reliable broadcast — the at-least-once retention window. A node offline longer than this many entries of history on a URI misses the trimmed ones (bounded gap). (NATS: JetStream stream max_msgs.)",
       "defaultValue": 10000
     },
     {
       "name": "server.netty.websocket.cluster.reliable.poll-block-ms",
       "type": "java.lang.Long",
-      "description": "XREADGROUP BLOCK timeout (ms) for the reliable consume loop.",
+      "description": "XREADGROUP BLOCK timeout (ms) for the reliable consume loop. (NATS: JetStream fetch block timeout.)",
       "defaultValue": 2000
     },
     {
       "name": "server.netty.websocket.cluster.reliable.poll-count",
       "type": "java.lang.Integer",
-      "description": "XREADGROUP COUNT (max entries per read) for the reliable consume loop.",
+      "description": "XREADGROUP COUNT (max entries per read) for the reliable consume loop. (NATS: JetStream fetch batch size.)",
       "defaultValue": 64
     },
     {
       "name": "server.netty.websocket.cluster.reliable.dedup-window",
       "type": "java.lang.Integer",
-      "description": "Per-URI ring size of recently-acked stream entry ids, to de-duplicate in-process redelivery (at-least-once still allows cross-crash duplicates; handlers should be idempotent).",
+      "description": "Per-URI ring size of recently-acked stream entry ids, to de-duplicate in-process redelivery (at-least-once still allows cross-crash duplicates; handlers should be idempotent). (NATS: in-process dedup ring on JetStream stream sequence numbers.)",
       "defaultValue": 1024
     },
     {
       "name": "server.netty.websocket.cluster.reliable.group-destroy-idle-ms",
       "type": "java.lang.Long",
-      "description": "Idle window (ms) a dead node's reliable consumer group must be inactive before reconciliation may destroy it on heartbeat-expiry. A node id is stable, so a crashed node that restarts reuses its group; destroying it too eagerly would wipe the retained offset/PEL and the restarted node would skip its backlog (data loss). This window keeps a recently-active group intact past any realistic crash-restart gap. 0 or less = never destroy on expiry (pure retain; rely on stream MAXLEN trimming).",
+      "description": "Idle window (ms) a dead node's reliable consumer group must be inactive before reconciliation may destroy it on heartbeat-expiry. A node id is stable, so a crashed node that restarts reuses its group; destroying it too eagerly would wipe the retained offset/PEL and the restarted node would skip its backlog (data loss). This window keeps a recently-active group intact past any realistic crash-restart gap. 0 or less = never destroy on expiry (pure retain; rely on stream MAXLEN trimming). (NATS: idle-gate on ConsumerInfo.delivered.lastActive; same retain-on-doubt semantics.)",
       "defaultValue": 3600000
     },
     {

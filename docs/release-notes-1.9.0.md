@@ -1,6 +1,6 @@
 # Release Notes — v1.9.0 (开发中 / in development)
 
-> 状态：**开发中（1.9.0-RC12，2026-06-06）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）；RC10 新增**全 NATS 栈**（`nats.registry=true` → NATS JetStream-KV registry/心跳/reaper，可完全不依赖 Redis；需 JetStream 服务器；ADR-001 更新为 NATS-only opt-in）；RC11 预发布安全审计硬化（15 项修复：SPI 契约、Redis 键安全、缓存有界、生命周期防御、自动装配护栏、文档一致性）；RC12 收尾 1.9.1 backlog 8 项 LOW/NIT polish（L2–L8 + N1；L1 推迟需自定义 Spring `Condition`）。最终 1.9.0 发布日期待整个周期完成后确定。
+> 状态：**开发中（1.9.0-RC13，2026-06-06）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）；RC10 新增**全 NATS 栈**（`nats.registry=true` → NATS JetStream-KV registry/心跳/reaper，可完全不依赖 Redis；需 JetStream 服务器；ADR-001 更新为 NATS-only opt-in）；RC11 预发布安全审计硬化（15 项修复：SPI 契约、Redis 键安全、缓存有界、生命周期防御、自动装配护栏、文档一致性）；RC12 收尾 1.9.1 backlog 8 项 LOW/NIT polish（L2–L8 + N1；L1 推迟需自定义 Spring `Condition`）；RC13 关闭 all-NATS 可靠投递缺口（`NatsJetStreamReliableBroker`，opt-in；`reliable.enable=true && nats.registry=true` 激活，其他档位字节级不变）。最终 1.9.0 发布日期待整个周期完成后确定。
 
 ## 版本定位
 
@@ -342,6 +342,63 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 
 ---
 
+### ⑱ NATS JetStream 可靠投递 / NATS JetStream Reliable Broadcast
+
+*Since V1.9.0-RC13.* 关闭 all-NATS 部署下的可靠投递缺口（此前为「Known Limitation」）：新增 `NatsJetStreamReliableBroker`（at-least-once 可靠广播，opt-in），是 RC2 `RedisStreamsReliableBroker` 的 NATS 对偶。**仅当** `reliable.enable=true` **且** `nats.registry=true` 时激活，其他档位字节级不变（all-Redis / 混合 / 集群模式 / 全 NATS 但 `reliable.enable=false`）。
+
+#### 机制
+
+- **流名**：`netty-cluster-reliable-<b64url(uri)>`（每 URI 一条流；NATS-legal base64url 不含 `:`/`.`）。
+- **subject**：`netty.reliable.<b64url(uri)>`。
+- **耐久消费者**：`g_<b64url(nodeId)>`（每节点一份；jnats 不允许 durable 名含 `.`，使用 `_` 作分隔符）。
+- **流配置**：FILE 存储、`Limits` retention、`Old` discard、`maxMessages=reliable.stream-max-len`（默认 10000）、`maxAge=0`（仅按 MAXMSGS 修剪）、`replicas=1`（HA 用户必须自行覆写 bean 设 `replicas≥3`，否则 leader 故障 = backlog 丢失）。
+- **消费者配置**：`ackPolicy=Explicit`、`deliverPolicy=All`、`filterSubject=netty.reliable.<b64uri>`。
+- **拉取循环**：每个订阅 URI 一条专用守护线程（`nats-reliable-<nodeIdShort>-<hex(uri.hashCode())>`），调用 `JetStreamSubscription.fetch(reliable.poll-count, Duration.ofMillis(reliable.poll-block-ms))`；本地投递成功后 `msg.ack()`；监听器抛异常时仍 `msg.ack()`（poison-pill 保护，避免 livelock）。
+- **同源抑制**：与 RedisStreams 实现一致——本节点发出的 envelope 在订阅端被 `msg.ack()` 并跳过监听器。
+- **dedup window**：进程内基于 JetStream 流序列号（`msg.metaData().streamSequence()`）的 LRU 环（默认 1024，由 `reliable.dedup-window` 控制）。
+- **HMAC**：与 RedisStreams 实现一致，wrap/unwrap 发生在 broker **内部**（envelope codec 编/解码与 JetStream publish/fetch 之间）；无 HMAC 时 NoOp 透传。
+- **入站大小护栏**：`inboundMaxBytes`（UTF-8 字节）；超限 ACK + drop（不重投）。auto-config 注入 `messageMaxSizeBytes * 2`（与 Redis 一致）。
+- **DEGRADED 状态**：通过 NATS `Connection.addConnectionListener` 监听 `DISCONNECTED`/`CLOSED`/`RECONNECTED`/`CONNECTED`，CAS 切换 ACTIVE↔DEGRADED；不覆写 SHUTDOWN。`/actuator/health` 如实反映。
+- **死节点消费者清理**：`destroyConsumerGroupsForNode(deadNodeId)` 复用 RC11 idle-gate 模式——仅当 `ConsumerInfo.delivered.lastActive` 早于 `group-destroy-idle-ms`（默认 1 小时）**且** `numPending==0` 才 `deleteConsumer`；任何疑点保留。`0` = 永不销毁。
+
+#### 投递契约（与 §⑥ Redis Streams 一致）
+
+- **本地永不丢**：`reliableBroadcast(uri, msg)` 先本地 fan-out（同步 `localSender.topicMessage()`），失败抛异常给调用方；之后才异步 `js.publishAsync(...)` 跨节点持久化。
+- **跨节点 at-least-once**：耐久消费者游标驱动 replay-on-resync——节点崩溃/网络中断后重启重订阅 → JetStream 从上次 ack 位继续投递 backlog。
+- **保留窗口**：受 `reliable.stream-max-len`（`DiscardPolicy.Old`）约束——离线时间超过 MAXMSGS 修剪窗口的 backlog 会被裁掉（与 Redis Streams 一致；同样的 bounded gap）。
+- **处理器幂等性**：监听器必须幂等——dedup window 仅覆盖单进程内重投，节点重启或跨进程仍可能见到重复。
+
+#### 配置项
+
+复用 §⑥ 现有 6 个 `reliable.*` 配置（无新增配置键）；语义在 NATS 下的映射见 `additional-spring-configuration-metadata.json` 描述里的括号注释。
+
+#### ⚠️ 操作要点
+
+- **NATS server max_payload**：JetStream 与核心 NATS 共享 `max_payload`（默认 1 MB）；envelope Base64 后 (~+37%) 加上 HMAC 头部，wire body 可能超过 `max_payload`。**操作建议**——下调 `message-max-size-bytes` 或抬高 NATS server `max_payload`。超限消息由 `on-publish-failure` 处理；本地投递不受影响。
+- **`replicas=1` 默认**：单节点 NATS 部署无影响；**clustered NATS HA 用户必须覆写 bean** 设 `replicas≥3`，否则 leader 故障会丢失 backlog。
+- **FILE 存储**：耐久跨 NATS 重启，但每次 publish 产生磁盘 I/O；非持久化场景可自定义 bean 改为 `StorageType.Memory`。
+- **TLS / 凭证**：可靠 broker 复用 RC9 的 `nettyClusterNatsKvConnection` 连接（`warnIfInsecureNats` 已就位）；无新增认证路径。**威胁模型** PUBLISH-ACL 劫持：将 NATS PUBLISH ACL 限制在权威应用节点；监控 stream stats 异常。
+
+#### RC12 → RC13 升级路径
+
+- RC12 下 `nats.registry=true && reliable.enable=false`（此前是 all-NATS 唯一支持的可靠投递状态——即「不支持」）→ RC13 下可安全开启 `reliable.enable=true`：
+  - **无先前消息状态**（RC12 all-NATS 下可靠投递从未激活）→ 无数据丢失风险。
+  - 新增运维约束：**§4.1 max_payload caveat**——审计 `message-max-size-bytes` 对 NATS server `max_payload` 的比值。
+  - **无 SPI / 信封格式变更**。`ClusterMessageSender` API 与 envelope bytes 与 RC12 字节级一致。
+- 用户自定义 `@Bean ReliableBroker` 覆写（RC10–RC12 期间的临时方案）仍胜出（`@ConditionalOnMissingBean(ReliableBroker.class)` 在全部档位的 broker bean 上都生效）—— **无需任何升级动作**。
+
+#### 选择矩阵（RC13）
+
+| 档位 | `ReliableBroker`（当 `reliable.enable=true`） |
+|---|---|
+| all-Redis standalone | `RedisStreamsReliableBroker`（不变） |
+| all-Redis cluster | 不支持（RC7 互斥，不变） |
+| 混合 standalone（NATS broker + Redis registry） | `RedisStreamsReliableBroker`（不变） |
+| 混合 cluster（NATS broker + Redis cluster） | 不支持（不变） |
+| **all-NATS** (`nats.registry=true`) | **`NatsJetStreamReliableBroker`（RC13 新）** |
+
+---
+
 ### ⑯ 预发布安全审计硬化 / Pre-GA Security Audit Hardening
 
 *Since V1.9.0-RC11.* 对 RC1–RC10 全量代码执行 **8 维度多代理对抗式审计**（brokers、heartbeat-reaper、session-registries、autoconfig-matrix、cluster-message-sender、cluster-node-manager、concurrency-lifecycle、docs-codec-metrics-security），24 项发现（3 HIGH、9 MEDIUM、11 LOW、1 NIT）；HIGH + MEDIUM + 文档不一致共 15 项修复落地，LOW/NIT 存入 `docs/pre-ga-audit-backlog.md` 留待 1.9.1。
@@ -511,10 +568,9 @@ server:
 以下能力在 1.9.0 中**仍未实现**，推迟到 1.9.x 后续版本或 2.x：
 
 - **sharded pub/sub（扇出削减，`SSUBSCRIBE`/`SPUBLISH`）**：需 Lettuce 6.2+（Boot 2.7.18 为 6.1.10），推迟到 2.0.0（Boot 3.x）。注：Redis Cluster **客户端**一等支持已在 RC7 落地（HA 故障转移 + 注册表/心跳跨 slot 分布），但 RC7 的常规 cluster pub/sub **不削减**广播扇出——扇出削减正来自这里推迟的 sharded pub/sub。
-- **NATS / JetStream 可靠投递（at-least-once）**：`reliable.enable`（Redis Streams）仍为 **Redis 专属**；all-NATS（`nats.registry=true`）部署下不支持可靠投递（基于 JetStream stream 的等价实现是后续工作）。
 - **W3C TraceContext 的 Micrometer Observation / 活跃 span 续接**（`traceparent` + MDC 关联已在 RC6 落地；Observation 续接需 Boot 3.x，推迟到 2.0.0）+ 完整 OpenTelemetry instrumentation
 - **次要硬化项（1.9.1 backlog）**：见 `docs/pre-ga-audit-backlog.md`——一批已知的低优先级（LOW/NIT）项（如可靠 broker 的 DEGRADED 状态上报、宽限期与单播短路的交互、NATS register 两段写顺序等），不影响 GA 质量，留待 1.9.1 处理。
 
-> 注：以下能力**已在 1.9.0 落地**，不再属于已知限制——**NATS broker**（RC9，ADR-001 规模化档位）、**全 NATS 注册表**（RC10，`nats.registry=true`）、**多 pub/sub 连接并行解码**（RC8，`pubsub-connections`）、**可运行的多节点 Docker 示例**（RC8，docker-compose + 负载均衡 + 浏览器跨节点演示）、**Redis Cluster 客户端**（RC7）、**Testcontainers 端到端 CI + 进程内双节点 E2E**（RC5）。
+> 注：以下能力**已在 1.9.0 落地**，不再属于已知限制——**NATS broker**（RC9，ADR-001 规模化档位）、**全 NATS 注册表**（RC10，`nats.registry=true`）、**all-NATS JetStream 可靠投递**（RC13，`NatsJetStreamReliableBroker`，`reliable.enable=true && nats.registry=true` 激活）、**多 pub/sub 连接并行解码**（RC8，`pubsub-connections`）、**可运行的多节点 Docker 示例**（RC8，docker-compose + 负载均衡 + 浏览器跨节点演示）、**Redis Cluster 客户端**（RC7）、**Testcontainers 端到端 CI + 进程内双节点 E2E**（RC5）。
 
 详见 `docs/cluster-design.md` 与 `docs/development-plan.md`。
