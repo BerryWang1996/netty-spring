@@ -230,6 +230,99 @@ class NettyWebSocketClusterConfigureTest {
                 });
     }
 
+    /** RC13 case (i): all-NATS (nats.servers + nats.registry=true) AND reliable.enable=true →
+     *  the {@link com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsJetStreamReliableBroker}
+     *  bean is selected; the Redis Streams reliable bean is suppressed by its standalone-Redis-registry gate. */
+    @Test
+    void allNats_reliableEnabled_selectsNatsJetStreamReliableBroker() {
+        Assumptions.assumeTrue(ClusterTestNatsJetStream.available(), "no JetStream NATS");
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.nats.servers=" + ClusterTestNatsJetStream.url(),
+                        "server.netty.websocket.cluster.nats.registry=true",
+                        "server.netty.websocket.cluster.node-id=ctx-nats-reliable-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.reliable.enable=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ReliableBroker.class);
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ReliableBroker.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsJetStreamReliableBroker.class);
+                    // Redis client is suppressed in the all-NATS path.
+                    assertThat(context).doesNotHaveBean(io.lettuce.core.RedisClient.class);
+                });
+    }
+
+    /** RC13 case (ii): all-NATS, reliable.enable=false → existing all-NATS behavior preserved, no
+     *  ReliableBroker bean (this case was the existing pre-RC13 default and stays byte-level identical). */
+    @Test
+    void allNats_reliableDisabled_noReliableBroker() {
+        Assumptions.assumeTrue(ClusterTestNatsJetStream.available(), "no JetStream NATS");
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.nats.servers=" + ClusterTestNatsJetStream.url(),
+                        "server.netty.websocket.cluster.nats.registry=true",
+                        "server.netty.websocket.cluster.node-id=ctx-allnats-noreliable-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ReliableBroker.class);
+                });
+    }
+
+    /** RC13 case (iii): mixed deployment (NATS broker + Redis registry) AND reliable.enable=true →
+     *  the Redis Streams reliable bean is selected (mixed-mode regression — must not accidentally
+     *  activate the NATS JetStream reliable broker). */
+    @Test
+    void mixed_natsBroker_redisRegistry_reliable_stillUsesRedisStreams() {
+        Assumptions.assumeTrue(redisAvailable, "Redis needed for the registry");
+        Assumptions.assumeTrue(ClusterTestNats.available(), "no NATS (no env + no Docker)");
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.nats.servers=" + ClusterTestNats.url(),
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-mixed-reliable-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.reliable.enable=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ReliableBroker.class);
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ReliableBroker.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisStreamsReliableBroker.class);
+                });
+    }
+
+    /** RC13 case (iv): all-NATS + reliable.enable=true but jnats absent from the classpath → the
+     *  existing RC11 FIX E classpath guard fires before anything else can fail (no silent broken
+     *  bean state). Gated on Redis: with nats.servers set + Redis present, the failure is
+     *  deterministically the guard's {@link IllegalStateException} naming the missing dependency. */
+    @Test
+    void allNats_reliableEnabled_jnatsAbsent_failsFastWithActionableMessage() {
+        Assumptions.assumeTrue(redisAvailable, "Redis needed to isolate the failure to the classpath guard");
+        runner.withClassLoader(new FilteredClassLoader("io.nats.client.Connection"))
+                .withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.nats.servers=nats://user:secret@localhost:4222",
+                        "server.netty.websocket.cluster.nats.registry=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-allnats-reliable-missing",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.reliable.enable=true")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    Throwable root = context.getStartupFailure();
+                    while (root.getCause() != null) {
+                        root = root.getCause();
+                    }
+                    assertThat(root).hasMessageContaining("io.nats:jnats");
+                });
+    }
+
     @Test
     void authEnabled_wiresHmacAuthenticator() {
         Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);

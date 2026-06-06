@@ -429,6 +429,42 @@ public class NettyWebSocketClusterConfigure {
                 conn.keyValue("netty-reaping"));
     }
 
+    /** SpEL: reliable.enable=true AND nats.registry=true → activate the all-NATS JetStream reliable broker.
+     *  The existing {@link #reliableBroker} bean ({@code RedisStreamsReliableBroker}) carries the
+     *  {@code STANDALONE_REDIS_REGISTRY} SpEL gate which evaluates to false when {@code nats.registry=true},
+     *  so the two beans are mutually exclusive by construction (verified by context test #i + #ii in
+     *  {@code NettyWebSocketClusterConfigureTest}). The {@code @ConditionalOnMissingBean(ReliableBroker.class)}
+     *  on both beans further allows a user-supplied override to win across every deployment tier. */
+    static final String ALL_NATS_RELIABLE =
+            "${server.netty.websocket.cluster.reliable.enable:false} and " + ALL_NATS;
+
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnClass(io.nats.client.Connection.class)
+    @ConditionalOnExpression(ALL_NATS_RELIABLE)
+    @ConditionalOnMissingBean(ReliableBroker.class)
+    public ReliableBroker natsJetStreamReliableBroker(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterNatsKvConnection")
+            io.nats.client.Connection nats,
+            EnvelopeCodec envelopeCodec,
+            ClusterProperties properties,
+            MessageAuthenticator messageAuthenticator) {
+        ClusterProperties.Reliable r = properties.getReliable();
+        log.info("Reliable broadcast ENABLED (NATS JetStream; maxMsgs={}, fetchBlock={}ms, fetchCount={}, groupDestroyIdleMs={})",
+                r.getStreamMaxLen(), r.getPollBlockMs(), r.getPollCount(), r.getGroupDestroyIdleMs());
+        com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsJetStreamReliableBroker broker =
+                new com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsJetStreamReliableBroker(
+                        nats, envelopeCodec, messageAuthenticator, properties.getNodeId(),
+                        r.getStreamMaxLen(), r.getPollBlockMs(), r.getPollCount(), r.getDedupWindow());
+        // Inbound guard: reject envelopes larger than the outbound cap + headroom (Base64 ~+33% +
+        // envelope metadata). 0 (unlimited) → unlimited. Mirrors RedisStreamsReliableBroker wiring.
+        int maxOut = properties.getMessageMaxSizeBytes();
+        broker.setInboundMaxBytes(maxOut > 0 ? (int) Math.min((long) maxOut * 2L, Integer.MAX_VALUE) : 0);
+        // Idle window before a dead node's consumer may be reaped (heartbeat-expiry) — protects a
+        // crashed-and-restarting node's durable cursor + PEL (and thus its backlog replay).
+        broker.setGroupDestroyIdleMs(r.getGroupDestroyIdleMs());
+        return broker;
+    }
+
     @Bean(destroyMethod = "shutdown")
     @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
     @ConditionalOnMissingBean(ReliableBroker.class)
