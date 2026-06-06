@@ -29,7 +29,14 @@ class NatsKvIntegrationTest {
         conn = ClusterTestNatsJetStream.newConnection();
         for (String b : List.of("netty-sessions", "netty-nodes", "netty-reaping")) {
             if (!conn.keyValueManagement().getBucketNames().contains(b)) {
-                conn.keyValueManagement().create(KeyValueConfiguration.builder().name(b).build());
+                KeyValueConfiguration.Builder cfg = KeyValueConfiguration.builder().name(b);
+                if ("netty-reaping".equals(b)) {
+                    // Mirror production (NettyWebSocketClusterConfigure uses 30s); 10s keeps the
+                    // claim-expiry IT reasonably fast while still exercising the maxAge path.
+                    // jnats exposes KV-bucket maxAge as ttl(Duration).
+                    cfg = cfg.ttl(java.time.Duration.ofSeconds(10));
+                }
+                conn.keyValueManagement().create(cfg.build());
             }
         }
     }
@@ -73,5 +80,22 @@ class NatsKvIntegrationTest {
         assertTrue(w1 ^ w2, "exactly one winner");
         assertTrue(w1, "first claimant wins");
         assertFalse(w2, "second locked out");
+    }
+
+    @Test
+    void reaper_claimExpires_thenReclaimSucceeds() throws Exception {
+        NatsKvReaper r1 = new NatsKvReaper(conn.keyValue("netty-reaping"));
+        NatsKvReaper r2 = new NatsKvReaper(conn.keyValue("netty-reaping"));
+
+        assertTrue(
+                r1.tryClaim("expiry-target", "node-1", 5000),
+                "first claim must succeed");
+
+        // bucket maxAge = 10s; wait past it (plus a small margin for JetStream housekeeping)
+        Thread.sleep(12_000);
+
+        assertTrue(
+                r2.tryClaim("expiry-target", "node-2", 5000),
+                "after maxAge expiry, re-claim by a different reaper must succeed");
     }
 }
