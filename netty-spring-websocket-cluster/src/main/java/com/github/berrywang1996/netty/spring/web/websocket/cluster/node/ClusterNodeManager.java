@@ -306,17 +306,43 @@ public class ClusterNodeManager {
             return;
         }
 
-        try {
-            heartbeat.deregister(nodeId);
-        } catch (Exception e) {
-            log.warn("Error deregistering node {} from cluster", nodeId, e);
-        }
-
+        // FIX L7: await scheduler termination BEFORE deregister so any in-flight reconciliation
+        // (which may chain dead-node cleanup via thenRunAsync(reconScheduler)) has settled.
+        // Mirrors CoalescingRegistryWriter.shutdown pattern: bounded 5s, then shutdownNow as a
+        // last resort. This guarantees L4's chained dead-node callback runs to completion before
+        // this node deregisters itself — otherwise the chained block could race with the local
+        // deregister and observe a half-shut-down transport.
         if (heartbeatScheduler != null) {
             heartbeatScheduler.shutdown();
         }
         if (reconScheduler != null) {
             reconScheduler.shutdown();
+        }
+        try {
+            if (heartbeatScheduler != null
+                    && !heartbeatScheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                log.warn("heartbeatScheduler did not terminate within 5s — forcing shutdownNow");
+                heartbeatScheduler.shutdownNow();
+            }
+            if (reconScheduler != null
+                    && !reconScheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                log.warn("reconScheduler did not terminate within 5s — forcing shutdownNow");
+                reconScheduler.shutdownNow();
+            }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            if (heartbeatScheduler != null) {
+                heartbeatScheduler.shutdownNow();
+            }
+            if (reconScheduler != null) {
+                reconScheduler.shutdownNow();
+            }
+        }
+
+        try {
+            heartbeat.deregister(nodeId);
+        } catch (Exception ex) {
+            log.warn("deregister on shutdown failed for {}", nodeId, ex);
         }
 
         fireStateChange(prev, NodeState.LEFT);
@@ -475,14 +501,39 @@ public class ClusterNodeManager {
                         continue;
                     }
                     log.warn("Reconciliation detected dead node {} — cleaning up sessions + cache", deadNodeId);
-                    sessionRegistry.removeAllForNode(deadNodeId);
-                    heartbeat.deregister(deadNodeId);
-                    // Notify sender to invalidate cached routes to the dead node (I-3)
-                    java.util.function.Consumer<String> cb = deadNodeCallback;
-                    if (cb != null) {
-                        try { cb.accept(deadNodeId); } catch (Exception ex) {
-                            log.debug("Dead node callback failed for {}", deadNodeId, ex);
-                        }
+                    final String dead = deadNodeId; // effectively final for the lambda
+                    // FIX L4: chain deregister + cache-callback AFTER session cleanup completes, on
+                    // reconScheduler so shutdown's awaitTermination (FIX L7) covers the tail. The LEFT
+                    // guard prevents a shutdown-race from poking the transport from a dead local node.
+                    try {
+                        sessionRegistry.removeAllForNode(dead)
+                                .thenRunAsync(() -> {
+                                    if (state.get() == NodeState.LEFT) {
+                                        log.debug("Skipping deregister of dead node {} — local node LEFT", dead);
+                                        return;
+                                    }
+                                    try {
+                                        heartbeat.deregister(dead);
+                                    } catch (Exception ex) {
+                                        log.warn("Failed to deregister dead node {}", dead, ex);
+                                    }
+                                    // Notify sender to invalidate cached routes to the dead node (I-3)
+                                    java.util.function.Consumer<String> cb = deadNodeCallback;
+                                    if (cb != null) {
+                                        try { cb.accept(dead); } catch (Exception ex) {
+                                            log.debug("Dead node callback failed for {}", dead, ex);
+                                        }
+                                    }
+                                }, reconScheduler)
+                                .exceptionally(ex -> {
+                                    // Cleanup failed → leave the dead node in the nodes set so the
+                                    // next sweep retries (and we don't deregister it prematurely).
+                                    log.warn("Failed to clean sessions for dead node {} — will retry on next sweep", dead, ex);
+                                    return null;
+                                });
+                    } catch (java.util.concurrent.RejectedExecutionException rex) {
+                        // reconScheduler already shutting down — drop silently; next instance retries.
+                        log.debug("Could not schedule dead-node cleanup for {} — scheduler shutting down", dead, rex);
                     }
                 }
             }

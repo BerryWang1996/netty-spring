@@ -233,4 +233,129 @@ class ClusterNodeManagerReliabilityTest {
         assertNull(reg.lookupNode("/ws/x", "s-dead").toCompletableFuture().join(),
                 "cleanup must run when the reap claim is won");
     }
+
+    // ---- FIX L7: shutdown awaits in-flight reconciliation BEFORE local-node deregister ----
+
+    @Test
+    void shutdownAwaitsSchedulerTerminationBeforeDeregister() throws Exception {
+        final java.util.concurrent.atomic.AtomicReference<String> deregisterMarker =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicReference<String> reconMarker =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        final CountDownLatch reconStarted = new CountDownLatch(1);
+        final String myNodeId = "l7-node";
+
+        ClusterNodeHeartbeat hb = new ClusterNodeHeartbeat() {
+            @Override public void register(String nodeId, long timeoutMs) {}
+            @Override public void renewHeartbeat(String nodeId, long timeoutMs) {}
+            @Override public void deregister(String nodeId) {
+                if (myNodeId.equals(nodeId)) {
+                    deregisterMarker.set("dereg@" + reconMarker.get());
+                }
+            }
+            @Override public List<String> findExpiredNodes(long timeoutMs) {
+                reconStarted.countDown();
+                try { Thread.sleep(150); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                reconMarker.set("recon-done");
+                return Collections.emptyList();
+            }
+        };
+
+        ClusterNodeManager mgr = new ClusterNodeManager(
+                myNodeId, 60000, 60000, 50, 0, hb, new InMemorySessionRegistry());
+        mgr.start();
+        assertTrue(reconStarted.await(2, TimeUnit.SECONDS),
+                "reconciliation must start before we shut down");
+        mgr.shutdown();
+
+        assertEquals("dereg@recon-done", deregisterMarker.get(),
+                "deregister must run AFTER in-flight reconciliation finishes");
+    }
+
+    // ---- FIX L4: dead-node cleanup is chained on reconScheduler, with cleanup-failure resilience ----
+
+    @Test
+    void reconciliationChainsRemoveAllForNodeBeforeDeregister() throws Exception {
+        final java.util.concurrent.atomic.AtomicLong removeDoneAt = new java.util.concurrent.atomic.AtomicLong();
+        final java.util.concurrent.atomic.AtomicLong deregDoneAt = new java.util.concurrent.atomic.AtomicLong();
+        final CountDownLatch deregLatch = new CountDownLatch(1);
+
+        // Registry that delays removeAllForNode by 80ms then records completion time.
+        InMemorySessionRegistry slowReg = new InMemorySessionRegistry() {
+            @Override
+            public java.util.concurrent.CompletionStage<Void> removeAllForNode(String nodeId) {
+                return java.util.concurrent.CompletableFuture.runAsync(() -> {
+                    try { Thread.sleep(80); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                    super.removeAllForNode(nodeId);
+                    removeDoneAt.set(System.nanoTime());
+                });
+            }
+        };
+
+        ClusterNodeHeartbeat hb = new ClusterNodeHeartbeat() {
+            @Override public void register(String nodeId, long timeoutMs) {}
+            @Override public void renewHeartbeat(String nodeId, long timeoutMs) {}
+            @Override public void deregister(String nodeId) {
+                if ("dead-node".equals(nodeId)) {
+                    deregDoneAt.set(System.nanoTime());
+                    deregLatch.countDown();
+                }
+            }
+            @Override public List<String> findExpiredNodes(long timeoutMs) {
+                return List.of("dead-node");
+            }
+        };
+
+        ClusterNodeManager mgr = new ClusterNodeManager(
+                "live-l4-a", 600000, 10000, 100, 0, hb, slowReg);
+        mgr.setReaper((dead, me, win) -> true);
+        mgr.start();
+        assertTrue(deregLatch.await(3, TimeUnit.SECONDS),
+                "chained dead-node deregister must run within 3s");
+        mgr.shutdown();
+
+        assertTrue(removeDoneAt.get() > 0, "removeAllForNode must have completed");
+        assertTrue(deregDoneAt.get() > 0, "dead-node deregister must have completed");
+        assertTrue(removeDoneAt.get() < deregDoneAt.get(),
+                "removeAllForNode must finish BEFORE deregister (chained on reconScheduler)");
+    }
+
+    @Test
+    void reconciliationDoesNotDeregisterDeadNodeWhenCleanupFails() throws Exception {
+        final java.util.concurrent.atomic.AtomicInteger deregCalls = new java.util.concurrent.atomic.AtomicInteger();
+
+        // Registry whose removeAllForNode always fails — the chained deregister must NOT run.
+        InMemorySessionRegistry failingReg = new InMemorySessionRegistry() {
+            @Override
+            public java.util.concurrent.CompletionStage<Void> removeAllForNode(String nodeId) {
+                java.util.concurrent.CompletableFuture<Void> failed = new java.util.concurrent.CompletableFuture<>();
+                failed.completeExceptionally(new RuntimeException("simulated cleanup failure"));
+                return failed;
+            }
+        };
+
+        ClusterNodeHeartbeat hb = new ClusterNodeHeartbeat() {
+            @Override public void register(String nodeId, long timeoutMs) {}
+            @Override public void renewHeartbeat(String nodeId, long timeoutMs) {}
+            @Override public void deregister(String nodeId) {
+                if ("dead-node".equals(nodeId)) {
+                    deregCalls.incrementAndGet();
+                }
+            }
+            @Override public List<String> findExpiredNodes(long timeoutMs) {
+                return List.of("dead-node");
+            }
+        };
+
+        ClusterNodeManager mgr = new ClusterNodeManager(
+                "live-l4-b", 600000, 10000, 100, 0, hb, failingReg);
+        mgr.setReaper((dead, me, win) -> true);
+        mgr.start();
+        // Wait several reconciliation cycles — none must escalate to deregister.
+        Thread.sleep(500);
+        mgr.shutdown();
+
+        assertEquals(0, deregCalls.get(),
+                "deregister(dead-node) must NOT run when removeAllForNode failed");
+    }
 }
