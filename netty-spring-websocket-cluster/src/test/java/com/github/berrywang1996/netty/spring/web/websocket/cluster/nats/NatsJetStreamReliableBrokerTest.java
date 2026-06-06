@@ -5,6 +5,8 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleT
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.BrokerState;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBrokerException;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterMessageListener;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterSubscription;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.EnvelopeCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MessageAuthenticator;
 import io.nats.client.Connection;
@@ -12,22 +14,33 @@ import io.nats.client.ConnectionListener;
 import io.nats.client.JetStream;
 import io.nats.client.JetStreamApiException;
 import io.nats.client.JetStreamManagement;
+import io.nats.client.JetStreamSubscription;
+import io.nats.client.Message;
+import io.nats.client.PullSubscribeOptions;
+import io.nats.client.api.AckPolicy;
+import io.nats.client.api.ConsumerConfiguration;
+import io.nats.client.api.ConsumerInfo;
+import io.nats.client.api.DeliverPolicy;
 import io.nats.client.api.DiscardPolicy;
 import io.nats.client.api.Error;
 import io.nats.client.api.RetentionPolicy;
 import io.nats.client.api.StorageType;
 import io.nats.client.api.StreamConfiguration;
 import io.nats.client.api.StreamInfo;
+import io.nats.client.impl.NatsJetStreamMetaData;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -221,5 +234,135 @@ class NatsJetStreamReliableBrokerTest {
         b.shutdown();
         assertThrows(ClusterBrokerException.class,
                 () -> b.reliablePublish("/ws/x", envelope("node-A", "/ws/x", "m1")));
+    }
+
+    // ===== T4 — reliableSubscribe + consume path =====
+
+    @Test
+    void t4_subscribe_createsDurableConsumer_andStartsFetchLoop() throws Exception {
+        String b64uri = b64("/ws/sub");
+        String streamName = "netty-cluster-reliable-" + b64uri;
+        String subject = "netty.reliable." + b64uri;
+        String consumerName = "g_" + b64("node-B");
+
+        StreamInfo si = streamInfoWith(streamCfg(StorageType.File, DiscardPolicy.Old,
+                RetentionPolicy.Limits, 10000L, 1, streamName));
+        when(jsm.getStreamInfo(streamName)).thenReturn(si);
+        // Durable not yet there → notFound, then addOrUpdateConsumer succeeds.
+        JetStreamApiException nfConsumer = notFoundException(10014);
+        when(jsm.getConsumerInfo(streamName, consumerName)).thenThrow(nfConsumer);
+        ConsumerInfo created = mock(ConsumerInfo.class);
+        when(jsm.addOrUpdateConsumer(eq(streamName), any(ConsumerConfiguration.class))).thenReturn(created);
+
+        JetStreamSubscription sub = mock(JetStreamSubscription.class);
+        when(js.subscribe(eq(subject), any(PullSubscribeOptions.class))).thenReturn(sub);
+        // Block all fetches indefinitely — we just want to verify the subscribe wiring.
+        when(sub.fetch(anyInt(), any(java.time.Duration.class))).thenReturn(Collections.emptyList());
+
+        NatsJetStreamReliableBroker b = newBroker("node-A");
+        ClusterSubscription cs = b.reliableSubscribe("/ws/sub", "node-B", e -> {});
+        assertNotNull(cs);
+        assertTrue(cs.isActive());
+
+        // Verify the durable consumer was created with the right config.
+        ArgumentCaptor<ConsumerConfiguration> cap = ArgumentCaptor.forClass(ConsumerConfiguration.class);
+        verify(jsm).addOrUpdateConsumer(eq(streamName), cap.capture());
+        ConsumerConfiguration cc = cap.getValue();
+        assertEquals(consumerName, cc.getDurable());
+        assertEquals(AckPolicy.Explicit, cc.getAckPolicy());
+        assertEquals(DeliverPolicy.All, cc.getDeliverPolicy());
+        assertEquals(subject, cc.getFilterSubject());
+
+        cs.unsubscribe();
+        b.shutdown();
+    }
+
+    /** A mocked JetStream message that ack-counts and lets us preset the data + stream sequence. */
+    private static Message msg(byte[] data, long streamSeq, AtomicInteger ackCounter) {
+        Message m = mock(Message.class);
+        when(m.getData()).thenReturn(data);
+        NatsJetStreamMetaData meta = mock(NatsJetStreamMetaData.class);
+        when(meta.streamSequence()).thenReturn(streamSeq);
+        when(m.metaData()).thenReturn(meta);
+        doAnswer(inv -> { ackCounter.incrementAndGet(); return null; }).when(m).ack();
+        return m;
+    }
+
+    @Test
+    void t4_consumePath_originSelfSuppress_acksAndSkipsListener() {
+        NatsJetStreamReliableBroker b = newBroker("node-A");
+        AtomicInteger acks = new AtomicInteger();
+        AtomicInteger received = new AtomicInteger();
+        ClusterMessageListener listener = e -> received.incrementAndGet();
+
+        // Build a real envelope from node-A (the local node id) — must be self-suppressed.
+        ClusterEnvelope env = envelope("node-A", "/ws/x", "hi");
+        byte[] data = codec.encode(env).getBytes(StandardCharsets.UTF_8);
+        Message m = msg(data, 1L, acks);
+
+        b.handleMessage(m, "/ws/x", listener, new NatsJetStreamReliableBroker.DedupRing(64));
+
+        assertEquals(0, received.get(), "origin self-suppress: listener must not be invoked");
+        assertEquals(1, acks.get(), "must ack on origin self-suppress to clear PEL");
+        b.shutdown();
+    }
+
+    @Test
+    void t4_consumePath_dedupWindow_redeliveryAckedWithoutInvokingListener() {
+        NatsJetStreamReliableBroker b = newBroker("node-A");
+        AtomicInteger acks = new AtomicInteger();
+        AtomicInteger received = new AtomicInteger();
+        ClusterMessageListener listener = e -> received.incrementAndGet();
+
+        // Envelope from a DIFFERENT origin so it is not self-suppressed.
+        ClusterEnvelope env = envelope("node-B", "/ws/x", "hi");
+        byte[] data = codec.encode(env).getBytes(StandardCharsets.UTF_8);
+        NatsJetStreamReliableBroker.DedupRing dedup = new NatsJetStreamReliableBroker.DedupRing(64);
+
+        Message m1 = msg(data, 42L, acks);
+        Message m1Redeliver = msg(data, 42L, acks);   // same stream seq → dedup key collision
+
+        b.handleMessage(m1, "/ws/x", listener, dedup);
+        b.handleMessage(m1Redeliver, "/ws/x", listener, dedup);
+
+        assertEquals(1, received.get(), "listener invoked exactly once across redeliveries");
+        assertEquals(2, acks.get(), "both deliveries must be ACKed");
+        b.shutdown();
+    }
+
+    @Test
+    void t4_consumePath_oversizedInbound_isAckedWithoutDelivery() {
+        NatsJetStreamReliableBroker b = newBroker("node-A");
+        b.setInboundMaxBytes(10);   // tiny — any sane envelope blows past this
+        AtomicInteger acks = new AtomicInteger();
+        AtomicInteger received = new AtomicInteger();
+        ClusterMessageListener listener = e -> received.incrementAndGet();
+
+        ClusterEnvelope env = envelope("node-B", "/ws/x", "this-is-much-longer-than-ten-bytes");
+        byte[] data = codec.encode(env).getBytes(StandardCharsets.UTF_8);
+        assertTrue(data.length > 10, "test envelope must exceed the size guard");
+        Message m = msg(data, 1L, acks);
+
+        b.handleMessage(m, "/ws/x", listener, new NatsJetStreamReliableBroker.DedupRing(64));
+
+        assertEquals(0, received.get(), "oversized message must not be delivered");
+        assertEquals(1, acks.get(), "oversized message must be ACKed (drop from PEL, no nak)");
+        b.shutdown();
+    }
+
+    @Test
+    void t4_consumePath_poisonPillListenerThrows_messageStillAcked() {
+        NatsJetStreamReliableBroker b = newBroker("node-A");
+        AtomicInteger acks = new AtomicInteger();
+        ClusterMessageListener listener = e -> { throw new RuntimeException("boom"); };
+
+        ClusterEnvelope env = envelope("node-B", "/ws/x", "poison");
+        byte[] data = codec.encode(env).getBytes(StandardCharsets.UTF_8);
+        Message m = msg(data, 7L, acks);
+
+        b.handleMessage(m, "/ws/x", listener, new NatsJetStreamReliableBroker.DedupRing(64));
+
+        assertEquals(1, acks.get(), "poison-pill: listener throw must still ack to avoid livelock");
+        b.shutdown();
     }
 }
