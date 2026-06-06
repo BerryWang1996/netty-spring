@@ -82,8 +82,13 @@ public class NatsKvSessionRegistry implements SessionRegistry {
     public CompletionStage<Void> register(String uri, String sessionId, String nodeId, Map<String, String> metadata) {
         return CompletableFuture.runAsync(() -> {
             try {
-                kv.put(sessionKey(uri, sessionId), nodeId.getBytes(StandardCharsets.UTF_8));
+                // Put the membership key FIRST, then the session key. If the second put fails, the
+                // membership key is "over-set" — but removeAllForNode iterates membership keys and
+                // reaps both the membership entry and the (possibly missing) session entry, so an
+                // over-set is always recoverable. The reverse order would orphan the session key
+                // (no membership entry to drive cleanup), leaving a stale session→node mapping.
                 kv.put(memberKey(nodeId, uri, sessionId), new byte[0]);
+                kv.put(sessionKey(uri, sessionId), nodeId.getBytes(StandardCharsets.UTF_8));
             } catch (Exception e) {
                 throw new java.util.concurrent.CompletionException("NATS KV register failed", e);
             }
@@ -149,7 +154,11 @@ public class NatsKvSessionRegistry implements SessionRegistry {
                         // key = n.<b64(nodeId)>.<b64(uri)>.<sessionId>
                         String rest = key.substring(prefix.length());
                         int dot = rest.lastIndexOf('.');
-                        if (dot > 0) {
+                        // dot >= 0 (not > 0): for empty-uri membership keys (n.<b64nodeId>..<sid>),
+                        // rest is ".<sid>" and lastIndexOf('.') == 0. substring(0, 0) yields "", so
+                        // the reconstructed session key becomes "s..<sid>" — which is exactly what
+                        // register() wrote for an empty URI. dot > 0 would silently leak it.
+                        if (dot >= 0) {
                             String b64uri = rest.substring(0, dot);
                             String sessionId = rest.substring(dot + 1);
                             kv.delete("s." + b64uri + "." + sessionId);
