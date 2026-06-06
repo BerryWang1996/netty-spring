@@ -1,0 +1,509 @@
+{
+  "summary": "Multi-angle adversarial review of the RC13 NATS JetStream reliable broadcast spec from user/ops/security/perf/reliability/SPI/compat/test/docs angles",
+  "agentCount": 16,
+  "logs": [],
+  "result": {
+    "reviews": [
+      {
+        "findings": [
+          {
+            "severity": "medium",
+            "issue": "§1 Goal claims to close the 'all-NATS reliability gap' but RC13 spec itself does NOT enable JetStream reliable broadcast when nats.registry=true + reliable.enable=true — the spec only specifies the implementation, not the auto-config condition. Users reading §1 will expect it to 'just work' when they set reliable.enable=true with all-NATS, but per §8 (Auto-config matrix entry) and §6 (Config), the activation requires BOTH nats.registry=true AND reliable.enable=true. This is implicit and correct, but the gap-closing claim in §1 should explicitly state the two-key requirement to avoid user confusion about 'why didn't RC13 close the gap for me?'",
+            "recommendation": "Clarify §1 Goal: Change 'provide at-least-once reliable broadcast on JetStream-enabled NATS' to 'provide at-least-once reliable broadcast on JetStream-enabled NATS when both `nats.registry=true` (all-NATS stack) AND `reliable.enable=true` (opt-in per-feature) are configured'. This sets clear user expectations for activation.",
+            "specSection": "§1 Goal"
+          },
+          {
+            "severity": "high",
+            "issue": "JetStream server max_payload caveat NOT mentioned in RC13 spec. The release notes (line 455 of release-notes-1.9.0.md) document the NATS core pub/sub max_payload caveat: 'NATS default max_payload=1 MB, message-max-size-bytes defaults to 1 MiB, so after Base64 +37% + HMAC overhead, wire bytes may exceed NATS max_payload.' This caveat applies IDENTICALLY to JetStream reliable (JetStream reuses the same max_payload limit as core NATS). However, §6 (Config & defaults) and §4 (Wire-level naming) make NO mention of this critical sizing issue. An operator will blindly enable reliable.enable=true on all-NATS without realizing their default 1 MB payloads will fail after envelope encoding. The spec must surface this explicitly.",
+            "recommendation": "Add to §4 (Wire-level naming & retention) a new subsection '4.1 Payload sizing caveat' or append to the §6 (Config & defaults) section: 'JetStream payload limit note: NATS JetStream shares the server\\'s `max_payload` (default 1 MB). After envelope Base64 encoding (~+37%) and optional HMAC overhead, the wire body may exceed the server limit. When using NATS JetStream reliable, either lower `message-max-size-bytes` or raise the server\\'s `max_payload`; an oversized message is handled per `on-publish-failure` (local delivery unaffected).' This matches the RC9 NATS broker caveat already documented for users.",
+            "specSection": "§4 Wire-level naming & retention (add subsection) OR §6 Config & defaults (append note)"
+          },
+          {
+            "severity": "high",
+            "issue": "§9 Backward compatibility states 'All-NATS deployments with reliable.enable=true (NEW capability): previously documented as unsupported in release-notes-1.9.0.md Known Limitations... RC13 lifts this restriction.' However, release-notes-1.9.0.md line 514 explicitly says 'all-NATS (nats.registry=true) deployment下不支持可靠投递 (based on JetStream stream is future work)' — this is the EXACT condition RC13 closes, so the claim is accurate. BUT the phrasing 'Known Limitations... since RC10' is imprecise. The Known Limitations section (release-notes line 509–517) lists this as pushed-to-future, not as a known-limitation-still-open. The spec should cite the precise location in release notes for traceability, so the doc-update task can confirm the wording transition from 'future' to 'shipped RC13'.",
+            "recommendation": "Revise §9 text to cite exact release-notes line/section: 'Previously documented in `release-notes-1.9.0.md` §Known Limitations as deferred (\"NATS / JetStream 可靠投递... is future work\"): RC13 now ships JetStream-based reliable broadcast for all-NATS deployments (nats.registry=true && reliable.enable=true). §10 (Documentation updates) must move this from Known Limitations to shipped features.'",
+            "specSection": "§9 Backward compatibility"
+          },
+          {
+            "severity": "medium",
+            "issue": "Error message for typo or misconfiguration not specified. §6 says 'Zero new config keys' (all keys reuse reliable.* namespace). If a user typos 'nats.registr=true' or forgets nats.servers, they won't activate JetStream reliable. The spec §5 mentions 'Surface a clear error on first publish' when JetStream is not enabled on the server, but does NOT specify the error for the more likely scenario: nats.servers configured but nats.registry not set to true (mixed mode, which uses Redis reliable, not JetStream). An operator might expect JetStream reliable to activate just from reliable.enable=true + nats.servers, unaware they also need nats.registry=true. The spec's auto-config matrix (§8) is the only place that clarifies the condition, but it's sparse.",
+            "recommendation": "Add to §6 (Config & defaults) or new §6.1 (Activation requirements): 'Activation: JetStream reliable is selected when AND ONLY WHEN `reliable.enable=true` AND `nats.registry=true` (all-NATS stack) are both set. If reliable.enable=true but nats.registry=false or nats.servers empty (mixed or Redis deployments), the RedisStreamsReliableBroker is selected instead. Configuration errors are surfaced at context startup; a typo in nats.servers or missing jnats will raise IllegalStateException with a clear message.'",
+            "specSection": "§6 Config & defaults (add subsection 6.1)"
+          },
+          {
+            "severity": "medium",
+            "issue": "Upgrade path from RC12 all-NATS (no reliable) to RC13 all-NATS (with reliable) is not addressed. RC12 all-NATS deployments run nats.registry=true && reliable.enable=false; they use RedisStreamsReliableBroker (NO, wait — RC12 all-NATS does NOT use Redis reliable, they don't use reliable at all). Per release-notes line 514, RC12 all-NATS is NOT supported for reliable (hence it was in Known Limitations). §9 Backward compatibility correctly states 'All-NATS deployments with reliable.enable=false: byte-level identical.' But the spec is silent on the upgrade journey for users who ran RC12 all-NATS with reliable.enable=false (the documented unsupported state) and now want RC13 all-NATS with reliable.enable=true. They need to know: do they lose any in-flight messages? (Answer: no, because reliable.enable=false had no in-flight state.) Are there any new operational constraints? (Answer: yes, the max_payload caveat.) The spec should briefly address this in §9.",
+            "recommendation": "Append to §9 Backward compatibility a paragraph: 'RC12→RC13 all-NATS with reliable: Users running `nats.registry=true && reliable.enable=false` in RC12 (the previously unsupported state) can safely upgrade to RC13 with `reliable.enable=true`. No prior message state exists (reliable was not active), so no data-loss risk. Note the JetStream max_payload caveat (§4.1 above) when sizing messages.'",
+            "specSection": "§9 Backward compatibility"
+          },
+          {
+            "severity": "medium",
+            "issue": "Mixed (NATS broker + Redis registry) deployment with reliable.enable=true not explicitly rejected or warned in the spec. Per §1 Non-goals and the auto-config matrix (§8), mixed deployments select RedisStreamsReliableBroker (not JetStream). A user reading the spec title 'NATS JetStream Reliable Broadcast' might assume reliable works in mixed mode too. While §1 Non-goals says 'Reliable broadcast in mixed deployments (NATS broker + Redis registry). Mixed stays Redis-Streams reliable.', this is easy to miss. The spec should add a guard or warning in §6 (Config & defaults) or auto-config matrix (§8) to make it explicit that reliable.enable=true on mixed deployments will still use Redis Streams (not JetStream), so the operator knows what they get.",
+            "recommendation": "Add to §6 (Config & defaults) or §8 (Auto-config matrix entry): 'Scope: JetStream reliable is available ONLY in all-NATS deployments (nats.registry=true). Mixed deployments (nats.servers set, nats.registry=false) still use RedisStreamsReliableBroker for reliable broadcast; this is by design (ADR-001). All-Redis deployments always use RedisStreamsReliableBroker.'",
+            "specSection": "§6 Config & defaults OR §8 Auto-config matrix entry"
+          },
+          {
+            "severity": "low",
+            "issue": "Stream-trim replay limitation not called out. Release-notes-1.9.0.md (line 75–76) for Redis reliable states: 'At-least-once (within retention window)... node离线时间过长，对应积压条目已被MAXLEN ~修剪，则这部分消息不可回放 (有界缺口).' The same limitation applies to JetStream reliable: if a node is offline long enough to exceed stream-max-len, the entries are dropped by DISCARD=OLD policy. The spec §5 (Replay-on-resync) correctly describes the durable cursor mechanism but does NOT mention that the guarantee only holds within the retention window. Users should be aware that unreasonably long offline windows can cause replay gaps. A one-liner caveat in §5 would be prudent.",
+            "recommendation": "Append to §5 (Replay-on-resync) paragraph: 'Caveat: The replay guarantee (at-least-once) only holds if unacked messages remain within the stream retention window (max_msgs default 10000). If a node is offline longer than the age of all entries in the stream, the backlog is lost. Similar to Redis Streams: bounded retention (line 75–76 of release-notes-1.9.0.md).'",
+            "specSection": "§5 Data flow / Replay-on-resync"
+          },
+          {
+            "severity": "low",
+            "issue": "JetStream KV bucket vs Stream naming convention inconsistency in spec. §4 defines Stream names as `netty-cluster-reliable-<b64url(uri)>` and subjects as `netty.reliable.<b64url(uri)>`. This mirrors the KV bucket naming from RC10 (netty-sessions, netty-nodes, netty-reaping). However, the spec doesn't explicitly state whether the reliable JetStream will use a separate KV bucket (e.g., `netty-reliable-streams`) or just raw Streams (no KV layer). Per the implementation, it's raw Streams (not KV), which is correct. But the doc should clarify this to avoid operator confusion — KV is for key-value stores (registry), Streams are for reliable message queues (broadcast). A one-line clarification avoids mixing mental models.",
+            "recommendation": "Add to §4 (Wire-level naming & retention) first paragraph: 'Note: JetStream Streams (not KeyValue buckets) are used for reliable broadcast; KV buckets (from RC10) are reserved for registry/heartbeat/reaper in all-NATS deployments.'",
+            "specSection": "§4 Wire-level naming & retention"
+          },
+          {
+            "severity": "nit",
+            "issue": "§10 Documentation updates lists 'new section §⑱' but release-notes already has 15+ numbered sections (⑪–⑰). The spec should clarify whether §⑱ is truly a new top-level section or a subsection of ⑰ (1.9.1 backlog), to avoid off-by-one errors during doc-writing.",
+            "recommendation": "Change '§⑱ \"NATS JetStream 可靠投递\"' to '§⑯ \"NATS JetStream 可靠投递\" (insert between ⑮ and existing ⑯)' or confirm the exact numbering in release-notes before implementation.",
+            "specSection": "§10 Documentation updates"
+          }
+        ],
+        "lens": "USER",
+        "verdict": "NEEDS_FIX",
+        "specEditsRequested": true
+      },
+      {
+        "lens": "SECURITY",
+        "verdict": "APPROVE_WITH_NITS",
+        "specEditsRequested": true,
+        "findings": [
+          {
+            "severity": "high",
+            "issue": "MessageAuthenticator.wrap/unwrap invocation is not explicit in spec's data flow (§5). The spec states 'same envelope wrap/unwrap as Redis' but neither the publish nor consume flow diagrams show where authenticator.wrap(codec.encode(...)) and unwrap(...) are called. This is a contract gap: an implementer could omit the HMAC entirely and still technically follow the envelope/ack patterns described.",
+            "recommendation": "Explicitly add to §5 (Data flow): (a) Publish: insert 'envelopeBytes = authenticator.wrap(codec.encode(envelope))' step after envelope building and before publishAsync. (b) Consume: insert 'decoded = unwrap(bytes)' step before 'codec.decode(decoded)' and state that null return from unwrap → drop and ack (same as RedisStreamsReliableBroker line 245). Add test assertion: test must verify wrap/unwrap is invoked (e.g., mock the authenticator and assert call count > 0).",
+            "specSection": "§5 Data flow"
+          },
+          {
+            "severity": "medium",
+            "issue": "Stream/consumer naming uses base64url(uri) where 'uri' is operator-defined via @MessageMapping, but spec does not clarify URI attacker-controllability. If a user-facing API allows dynamic URI registration (e.g., HTTP endpoint to subscribe to an arbitrary topic), a malicious URI could have high byte entropy or contain special chars that compress poorly, inflating stream names or causing unintended subject hierarchies. The base64url encoding mitigates this (NATS-safe alphabet), but risk is unaddressed.",
+            "recommendation": "Add a note to §4 (Wire-level naming): 'URIs are operator-trusted (defined at bootstrap via @MessageMapping annotations); they are not user-controllable. Base64url encoding ensures NATS-legality. Operators deploying user-defined URI schemes must validate URI length and character set before creating URIs to avoid resource exhaustion on stream name length (NATS limit: 256 chars; netty-cluster-reliable-<b64url(uri)> is ~28 chars + encoded URI; cap URI to ~180 chars in base64url form, ~135 chars pre-encoding).'",
+            "specSection": "§4 Wire-level naming & retention"
+          },
+          {
+            "severity": "medium",
+            "issue": "The spec's concurrent ensureStream behavior (§5 publish, §11 risk register) mentions 'per-URI ConcurrentHashMap.computeIfAbsent cache' to avoid duplicate calls to getStreamInfo. However, the spec does NOT describe what happens if a stream already exists with DIFFERENT parameters (e.g., max_msgs=5000 instead of the default 10000, or storage=MEMORY instead of FILE). The code phrase 'idempotent (addStream-or-update)' is ambiguous: does it call getStreamInfo, verify config matches, and error if different? Or silently skip the add and leave the pre-existing config in place? This matters for security: a malicious or misconfigured pre-existing stream could have fewer slots, causing message loss that breaks replay guarantees.",
+            "recommendation": "Clarify §5 ensureStream behavior: 'Call getStreamInfo(streamName). If exists and config (storage=FILE, max_msgs=reliable.stream-max-len, discard=OLD) matches, return. If exists with DIFFERENT config, log a WARN and throw ClusterBrokerException (fail-fast; do not silently reuse a misconfigured stream). If does not exist, call addStream with the expected config.' Add to §7 tests: test case for pre-existing stream with different max_msgs → verify exception thrown.",
+            "specSection": "§5 Data flow (Publish) and §11 Risk register"
+          },
+          {
+            "severity": "medium",
+            "issue": "Connection auth inheritance is assumed but not verified in spec. §3 states 'the reliable broker takes the same Connection via DI; it opens its own JetStream and JetStreamManagement views.' This assumes the Connection object passed to the broker already has TLS/user/credentials applied by RC10's connection builder. However, the spec does NOT mandate that the broker reject a Connection without auth, nor does it warn of a path (e.g., direct URL override property) that could bypass TLS/credentials. If a misconfigured nats.servers property (no TLS, no user) is passed, both NatsClusterBroker and the new JetStream reliable broker will inherit that insecurity without explicit enforcement.",
+            "recommendation": "Add to §3 or new §5.1 (Connection security preconditions): 'The Connection is created by NettyWebSocketClusterConfigure.natsConnection() or user override (§3). The reliable broker does NOT validate the connection's TLS/auth state — it delegates that responsibility to the connection builder. Operators MUST ensure nats.servers property uses tls:// scheme and includes credentials (nats://user:pass@host). The existing warn-if-insecure-nats check (NettyWebSocketClusterConfigure.warnIfInsecureNats) MUST fire; failing to see that warning indicates an insecure setup. No new validation is added to the reliable broker itself.' Also update docs/cluster-design.md §Security to mention NATS connection auth is a prerequisite, not optional.",
+            "specSection": "§3 Components"
+          },
+          {
+            "severity": "low",
+            "issue": "Dead-node consumer cleanup (§5) uses deliveredLastTimeMs from getConsumerInfo, which reflects the LOCAL consumer's last-delivered message. However, the spec does not explicitly state that this field is idempotent (never resets unless the node explicitly consumes). In theory, if a malicious peer node could forge a direct JetStream operation (e.g., PUSH a fake consumer-info message), it might be able to manipulate deliveredLastTimeMs. In practice, this is extremely hard because JetStream consumer-info is server-maintained, not client-settable. But the spec's silence creates a subtle gap.",
+            "recommendation": "Add a note to §5 (Dead-node consumer cleanup): 'The deliveredLastTimeMs field is maintained by the JetStream server and reflects the timestamp of the last message delivered by the consumer to a client. It is not client-controllable; a peer node cannot forge this value. This field is used to detect stale consumer groups (no activity for groupDestroyIdleMs). Operators should set groupDestroyIdleMs >> max_restart_window (default 1h is conservative for crash-restart scenarios).'",
+            "specSection": "§5 Dead-node consumer cleanup (with idle gate)"
+          },
+          {
+            "severity": "low",
+            "issue": "Replay-on-resync (§5) replays the backlog within the stream retention window. The spec notes 'identical user-facing semantics to RC2 Redis Streams replay' but does NOT address the risk scenario: if a NATS Publish ACL is weak and an attacker briefly gains PUBLISH permission to the stream, they can write unsigned messages to the stream. The HMAC unwrap will reject them (§5 consume flow), but they still consume stream space and dedup-window slots, potentially causing legitimate backlog messages to be trimmed (MAXLEN ~), resulting in replay loss. This is mitigated by HMAC enforcement, but the attack surface is not explicitly discussed.",
+            "recommendation": "Add a note to §5 or new section on threat model: 'Replay-on-resync is subject to the same PUBLISH-ACL-hijack risk as Redis Streams reliable: if an attacker gains temporary PUBLISH access, they can write messages to the stream. Unsigned messages are dropped by HMAC verification without delivery (consumer dedup window is never populated). However, they consume stream space within the MAXLEN window and may cause legitimate (signed) messages to be trimmed. Mitigation: (a) restrict NATS Publish ACL to only the authoritative app nodes; (b) use nats.registry=true (JetStream-KV) for session registry so app nodes are authenticated upstream; (c) monitor JetStream stream stats for unexpected size/message-count growth.'",
+            "specSection": "§5 Replay-on-resync"
+          },
+          {
+            "severity": "nit",
+            "issue": "Thread naming in §3 ('nats-reliable-<uri>' with hashCode) differs slightly from Redis pattern (mentions 'cluster-rstream-' in RedisStreamsReliableBroker.java line 174). Spec should explicitly define the thread name pattern to aid debugging and make it testable.",
+            "recommendation": "Clarify §3 or add to §4: 'Dedicated consume thread name: nats-reliable-<nodeId.substring(0,8)>-<hex(uri.hashCode())> (mirrors Redis Streams pattern for consistency). This aids debugging and allows filtering logs by URI.',",
+            "specSection": "§3 Components"
+          }
+        ]
+      },
+      {
+        "lens": "PERF",
+        "verdict": "CONCERN",
+        "specEditsRequested": true,
+        "findings": [
+          {
+            "severity": "high",
+            "issue": "Replicas default of 1 in clustered JetStream is unsafe for HA — stream-leader loss causes instant data loss",
+            "recommendation": "Either change default replicas to 3 for clustered deployments, or add a MUST-level warning in docs: 'In HA NATS clusters, replicas=1 creates data-loss risk on stream-leader failure. Override to 3 via custom bean or accept durability gap.' Implementers should not ship a design where unacked in-flight messages are lost on single-node failure.",
+            "specSection": "§4 (Wire-level naming & retention), line 60"
+          },
+          {
+            "severity": "medium",
+            "issue": "One stream per URI creates linear scaling with no documented ceiling — 100 URIs = 100 streams, but JetStream ceiling and practical limits are not called out",
+            "recommendation": "Add explicit guidance: 'Each URI creates one JetStream stream and N durable consumers (N = node count). Recommended scale limit: ~1000 streams per NATS cluster. For deployments exceeding 1000 URIs, consider namespace sharding or app-level URI multiplexing.' Also note: 100×N consumers (for N nodes) scales quadratically with cluster size—call out consumer count in the architecture note.",
+            "specSection": "§4 (Wire-level naming & retention), and §3 (Architecture)"
+          },
+          {
+            "severity": "medium",
+            "issue": "Startup cost of per-URI ensureStream enumeration hidden — 'no node-wide upfront work' is misleading; each URI's first publish serializes getStreamInfo + optional addStream, creating O(URI count) startup latency",
+            "recommendation": "Clarify in §5 (Data flow) under Publish: 'The first publish to each URI incurs synchronous jnats JetStreamManagement.getStreamInfo + optional addStream overhead (~10ms per URI on a typical server). For deployments with many URIs, expect cumulative startup latency proportional to URI count; consider lazy initialization strategies (publish on async executor) to avoid blocking node startup.'",
+            "specSection": "§5 (Data flow, Publish subsection) and §11 (Risk register, 'Eager stream creation' mitigation)"
+          },
+          {
+            "severity": "medium",
+            "issue": "Idle fetch() loop polling creates steady-state NATS traffic — default poll-block-ms=2000 means N idle subscriptions generate N/2 fetch calls per second, creating network load and NATS server CPU cost even with zero messages",
+            "recommendation": "Add to §6 (Config & defaults): 'Steady-state idle cost: With N subscriptions idle, expect ~N/2 fetch() calls per second to NATS. Monitor NATS server CPU and adjust poll-block-ms upward (e.g., 5000–10000ms) for high-subscription-count deployments to reduce traffic and CPU footprint.' Also consider raising the default poll-block-ms from 2000 to 5000 for better idle efficiency.",
+            "specSection": "§4 (Wire-level, poll-block-ms) and §6 (Config & defaults)"
+          },
+          {
+            "severity": "low",
+            "issue": "One dedicated thread per URI subscription model is not justified — could theoretically use a pooled executor, but spec silently chooses thread-per-URI without explaining the trade-off or acknowledging the memory cost",
+            "recommendation": "Add a note in §5 or §12: 'Design rationale: Each URI subscription runs a dedicated thread (nats-reliable-<uri>) for simplicity and isolation of blocking fetch() loops. This trades memory (thread stack + resources) for architectural clarity; a pooled executor is possible but would complicate the fetch coordination and exception handling. Not in scope for RC13.'",
+            "specSection": "§5 (Data flow, Consume subsection, line 86) and §12 (Implementation order, step 4)"
+          },
+          {
+            "severity": "low",
+            "issue": "FILE storage type trade-off not mentioned — spec requires FILE for durability but does not acknowledge that disk I/O per publish is slower than in-memory storage (Redis default) and may bottleneck high-throughput use cases",
+            "recommendation": "Add a sentence in §4 (Storage type row): 'FILE storage is required for at-least-once durability but incurs disk I/O per publish. For high-throughput broadcasters, this may be a bottleneck; MEMORY storage is available but sacrifices crash durability. For cluster-session broadcasts (typical case), FILE overhead is negligible.'",
+            "specSection": "§4 (Wire-level naming & retention, Storage type row)"
+          }
+        ]
+      },
+      {
+        "lens": "RELIABILITY",
+        "verdict": "CONCERN",
+        "specEditsRequested": true,
+        "findings": [
+          {
+            "severity": "high",
+            "issue": "DEGRADED state publish behavior undefined — spec doesn't specify whether reliableBroadcast throws, queues, or fails asynchronously when transport is DEGRADED",
+            "recommendation": "Add explicit section to §5 (Data flow / Publish) or §9 (Transport health) defining: (1) reliableBroadcast behavior when state() == DEGRADED (recommend: throw ClusterBrokerException like Redis path does, or queue with async failure callback to match on-publish-failure semantics); (2) how DEGRADED maps to the publish-failure policy (log/drop). Align with RedisStreamsReliableBroker behavior for consistency.",
+            "specSection": "§5 / §9"
+          },
+          {
+            "severity": "high",
+            "issue": "MaxDeliver / poison-pill scenario not documented — JetStream may dead-letter repeatedly-failing messages or redelivery indefinitely depending on server config; spec doesn't set MaxDeliver value or document expected behavior",
+            "recommendation": "Add to §4 (Wire-level retention) or new subsection: (1) document the default MaxDeliver value assumed (or explicitly set it via StreamConfiguration builder); (2) clarify what happens when a listener throws repeatedly on the same message (is it dead-lettered after N tries, or redelivers forever?); (3) add to implementation risk register: test with a poison-pill message + throwing handler to verify behavior under expected JetStream config.",
+            "specSection": "§4 / §11"
+          },
+          {
+            "severity": "high",
+            "issue": "Stream trim overflow silence message loss — spec mentions MAX_MSGS retention but doesn't explain that nodes offline longer than the trim window experience unrecoverable message loss, only briefly documented in Redis path release notes",
+            "recommendation": "Add to §5 (Publish / Consume section) or new failure-modes subsection: (1) document that message retention is bounded to stream-max-len messages (default 10,000); (2) explicitly state: 'If a node is offline longer than it takes to accumulate stream-max-len new messages, the backlog it missed WILL NOT be recoverable (those entries are permanently trimmed by JetStream DiscardPolicy.OLD)'; (3) provide guidance on sizing stream-max-len based on expected offline duration and message rate.",
+            "specSection": "§4 / §5"
+          },
+          {
+            "severity": "medium",
+            "issue": "Concurrent ensureStream transient error handling unspecified — spec doesn't document what happens if getStreamInfo throws a transient network error during ConcurrentHashMap.computeIfAbsent, risking null-placeholder caching or future publish hangs",
+            "recommendation": "Add to §5 (Publish subsection) or §11 (Risk register): (1) clarify that if ensureStream throws transient JetStreamApiException, the compute block completes exceptionally and is NOT cached (verify ConcurrentHashMap.computeIfAbsent contract); (2) implementer must test transient failure scenario (e.g., simulate network timeout in getStreamInfo) to confirm future publishes retry ensureStream, not hang; (3) document this as a validation point in the IT plan.",
+            "specSection": "§5 / §11"
+          },
+          {
+            "severity": "medium",
+            "issue": "Idempotency requirement not clearly restated as a contract — spec hints at idempotency via dedup window (line 96) but doesn't explicitly state it as a hard requirement for user handler code",
+            "recommendation": "Add to §5 (Consume section) or new 'Handler Contract' subsection: 'Handlers MUST be idempotent. The in-process PEL dedup window (reliable.dedup-window, default 1024) covers only intra-process redelivery. After a node restarts, its dedup window is reset; if a handler previously failed or crashed before acking a message, that message will redelivery to the restarted node. Listeners should be designed to safely process the same message multiple times without duplicate-side-effects (same as Redis Streams at-least-once guarantee).'",
+            "specSection": "§5"
+          },
+          {
+            "severity": "medium",
+            "issue": "NATS JetStream metadata corruption recovery strategy not addressed — spec acknowledges JetStream-not-enabled misconfiguration but doesn't address rare corrupted stream metadata or offset recovery scenarios",
+            "recommendation": "Add to §11 (Risk register): (1) note that JetStream metadata corruption is rare but possible (e.g., corrupt offset index, stream info structure damage); (2) recovery strategy = 'contact NATS operations / delete and recreate the stream' (breaking change: backlog loss); (3) implementer should log clear error on first getStreamInfo exception that hints at corruption (vs. transient network error) so operators can investigate; (4) defer detailed recovery tooling to 2.0.0 if needed.",
+            "specSection": "§11"
+          },
+          {
+            "severity": "low",
+            "issue": "Consumer idle gate logic detail missing — spec line 117 references groupDestroyIdleMs + 'deliveredLastTimeMs' but doesn't specify whether 'delivered' means 'delivered to subscriber' or 'delivered by JetStream' or 'acked', creating ambiguity with Redis XINFO semantics",
+            "recommendation": "Add to §5 (Dead-node consumer cleanup) clarification: explicitly state that 'deliveredLastTimeMs' maps to JetStream ConsumerInfo.delivered.timestamp (the time of the most recent DELIVER event to any consumer), and clarify whether this is affected by ack delays or only tracks send-time. Verify jnats 2.20.4 ConsumerInfo API to confirm field name/semantics and update accordingly.",
+            "specSection": "§5"
+          },
+          {
+            "severity": "low",
+            "issue": "Documentation says 'handlers should be idempotent' but doesn't cite Redis docs or restate requirement clearly — users might miss this critical contract",
+            "recommendation": "In docs section §10 (Documentation updates), add explicit bullet under release notes §⑬ (NATS JetStream reliable): 'At-least-once guarantee applies within the stream retention window only; handlers MUST be idempotent to tolerate cross-restart duplicates.' Link to Redis Streams design principles in release notes for consistency.",
+            "specSection": "§10"
+          }
+        ]
+      },
+      {
+        "lens": "SPI",
+        "verdict": "NEEDS_FIX",
+        "findings": [
+          {
+            "severity": "high",
+            "issue": "Method signature mismatch in spec pseudocode. Section 5 (Data flow) shows `broker.subscribe(uri, listener)` but the actual ReliableBroker SPI defines `reliableSubscribe(String uri, String nodeId, ClusterMessageListener listener)` with 3 parameters. The nodeId parameter is missing from the spec's method signature.",
+            "recommendation": "Update §5 Data flow pseudocode (lines 84-98) to show the correct 3-parameter signature: `broker.reliableSubscribe(uri, nodeId, listener)`. Document that nodeId is the consuming node's stable identifier, passed by ClusterMessageSender.start() which obtains it from ClusterNodeManager.getNodeId().",
+            "specSection": "§5 (Data flow)"
+          },
+          {
+            "severity": "high",
+            "issue": "ConditionalOnExpression matrix creates double-bean risk. Section 3 states the existing `redisStreamsReliableBroker` bean gains complementary `&& !${...nats.registry:false}` clause, but the current auto-config (NettyWebSocketClusterConfigure.java line 433) only has `@ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)` without the NATS negation. If reliable.enable=true in an all-NATS deployment, BOTH the new NatsJetStreamReliableBroker AND redisStreamsReliableBroker could satisfy @ConditionalOnMissingBean(ReliableBroker.class), causing Spring to fail with 'multiple beans of type ReliableBroker' or arbitrary bean selection.",
+            "recommendation": "Spec must explicitly state: 'Existing redisStreamsReliableBroker bean gains @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY + \" && !${...nats.registry:false}\") to suppress it in all-NATS mode.' This ensures exactly one ReliableBroker bean is selected. Additionally, document the 5-tier matrix entry (§8) to show that all-NATS with reliable.enable=true selects NatsJetStreamReliableBroker (never Redis).",
+            "specSection": "§3 (Auto-config) and §8 (Matrix entry)"
+          },
+          {
+            "severity": "medium",
+            "issue": "Subscribe idempotency semantics undefined. Section 5 states 'Idempotent per URI' in the caption but does not define what 'idempotent' means for subscribe(). If a node calls reliableSubscribe(uri, nodeId, listener) twice for the same URI, should the second call (a) error, (b) return a new ClusterSubscription handle, (c) be a no-op, or (d) reuse the existing subscription? The SPI returns ClusterSubscription, implying multiple concurrent subscriptions are possible, but the spec pseudocode shows only one listener per URI consumed by a single thread.",
+            "recommendation": "Clarify in §5 after the consume pseudocode: 'If reliableSubscribe is called again for the same (uri, nodeId) pair before unsubscribe(), the behavior is [choice, e.g., 'create a second consumer thread']. Multiple listeners on a single URI is not supported; the most recent listener is used.' Match the documented behavior to the implementation intent (likely one subscription per URI per node, new call replaces old).",
+            "specSection": "§5 (Data flow)"
+          },
+          {
+            "severity": "medium",
+            "issue": "Shutdown ordering and ack semantics undefined. The spec does not state whether pending unacked messages should be flushed before shutdown() closes connections. The Redis impl sets state=SHUTDOWN then closes blocking connections (lines 403-410), which interrupts fetch loops mid-iteration. In-flight messages may be unacked, left in the PEL. The spec must clarify the contract: are unacked messages intentionally left in the stream (relying on replay-on-resync on restart), or should acks be flushed first?",
+            "recommendation": "Document in the shutdown() SPI definition (after line 68 of ReliableBroker.java): 'shutdown() immediately stops all consume loops and releases connections. Any unacked messages remain in the stream PEL; they will be replayed on node restart. This is safe because the durable consumer retains the cursor.' This aligns with the 'retain on doubt' philosophy documented in RedisStreamsReliableBroker.destroyConsumerGroupsForNode().",
+            "specSection": "§2 (Architecture) or new footnote"
+          },
+          {
+            "severity": "nit",
+            "issue": "Pseudocode notation inconsistency. Section 5, lines 84-98 show a bare `broker.subscribe(...)` call, but the actual method name is `reliableSubscribe`. The pseudocode uses function-like notation (`broker.subscribe()`) which could be misread as a method name.",
+            "recommendation": "Change line 84 from `broker.subscribe(uri, listener)` to `broker.reliableSubscribe(uri, nodeId, listener)` for accuracy and clarity. Add a comment explaining nodeId is this node's stable id from ClusterNodeManager.",
+            "specSection": "§5 (Data flow), line 84"
+          }
+        ],
+        "specEditsRequested": true
+      },
+      {
+        "lens": "COMPAT",
+        "verdict": "APPROVE_WITH_NITS",
+        "findings": [
+          {
+            "severity": "medium",
+            "issue": "Automatic activation of reliable delivery on nats.registry=true + reliable.enable=true upgrades",
+            "recommendation": "§9 backward-compatibility section should explicitly note: RC12 documented all-NATS as unsupported for reliable delivery (listed in Known Limitations). RC13 lifts this restriction without requiring explicit user acknowledgment (silent behavior change on upgrade). Decision: acceptable because (a) the feature was explicitly deferred/unsupported, users couldn't rely on it being unavailable, and (b) the default is reliable.enable=false, so existing all-NATS deployments are unaffected unless they explicitly opt in. However, add a note in the 1.9.0 Known Limitations section mentioning the removal of this item.",
+            "specSection": "§9 (Backward compatibility)"
+          },
+          {
+            "severity": "low",
+            "issue": "Specification imprecision: config semantics equivalence claim",
+            "recommendation": "§4 table and §6 should add a clarification note stating: 'Semantically equivalent to Redis Streams: poll-block-ms maps to JetStream fetch(N, blockMs) timeout, stream-max-len maps to stream max_msgs retention. Users with existing configurations can apply them unchanged — transport-specific tuning is a future scope.' This preemptively addresses questions about whether the same settings achieve identical behavior on both transports.",
+            "specSection": "§4 (Wire-level naming & retention) and §6 (Config & defaults)"
+          },
+          {
+            "severity": "low",
+            "issue": "Missing explicit context test case in spec",
+            "recommendation": "§7 Tests table should add one more row (item iii): 'all-NATS reliable: nats.registry=true, reliable.enable=true → NatsJetStreamReliableBroker selected, RedisStreamsReliableBroker absent' (parallel to the all-NATS registry selection test already listed for context case #iii).",
+            "specSection": "§7 (Tests)"
+          },
+          {
+            "severity": "nit",
+            "issue": "Specification doesn't cross-reference the known limitation being removed",
+            "recommendation": "§9 (Backward compatibility) should add: 'This change fulfills the RC12 Known Limitation \"NATS / JetStream 可靠投递 ... all-NATS deployments\", which documented that all-NATS did not yet support reliable delivery. RC13 removes that limitation.'",
+            "specSection": "§9 (Backward compatibility)"
+          }
+        ],
+        "specEditsRequested": false
+      },
+      {
+        "lens": "TEST",
+        "verdict": "NEEDS_FIX",
+        "specEditsRequested": true,
+        "findings": [
+          {
+            "severity": "high",
+            "issue": "HMAC integrity rejection not tested — spec describes envelope wrapping with HMAC (§2, §5) but the test plan (§7) has no IT that proves an unsigned/invalid envelope is rejected when auth.enable=true on the NATS JetStream path",
+            "recommendation": "Add to §7 IT cases: '(d) hmac-rejection: publisher with auth.enable=true, subscriber with auth.enable=false (or invalid key); assert received count remains 0 (unsigned envelope is silently dropped)'",
+            "specSection": "§7 Tests"
+          },
+          {
+            "severity": "high",
+            "issue": "DEGRADED state integration test missing — spec wires a ConnectionListener (§5) and defines the state machine (§3, ACTIVE/DEGRADED/SHUTDOWN), but §7 test plan lists only unit tests for state, not an IT that kills the NATS connection and observes state flip. Redis got this in RC12 L8.",
+            "recommendation": "Add to §7 IT cases: '(c) degraded-on-transport-loss (like Redis L8): real JetStream container kill → state() flips to DEGRADED; restart → flips back to ACTIVE. Proves the ConnectionListener wiring works end-to-end.'",
+            "specSection": "§7 Tests"
+          },
+          {
+            "severity": "medium",
+            "issue": "Stream trim boundary not tested — spec defines retention policy (§4: LIMITS + OLD, max_msgs only) but no IT proves that when the stream exceeds max_msgs, old messages are trimmed and lost. This is an edge case for durable systems where retention trade-offs should be proven.",
+            "recommendation": "Either: (a) add a new IT case '(d) stream-trim-on-overflow: publish >max_msgs entries, assert oldest are gone (lost)', OR (b) fold into the DEGRADED IT: node down for interval, stream trims, node restarts and sees fewer messages than published (proving trimming works as designed).",
+            "specSection": "§7 Tests"
+          },
+          {
+            "severity": "medium",
+            "issue": "Poison-pill listener not tested — spec describes ack-on-success (§5) with exception handling but no IT proves that if listener.onMessage() throws an exception, the consume loop does not infinite-loop, deadlock, or leak memory. The loop should catch, log, and ack anyway (like Redis lines 257-261).",
+            "recommendation": "Add to §7 unit or IT: test a listener that throws on first call, then succeeds on redelivery. Verify the message eventually acks and the loop continues (no livelock).",
+            "specSection": "§7 Tests"
+          },
+          {
+            "severity": "medium",
+            "issue": "jnats absence error handling ambiguous for reliable path — spec lists FIX E (RC11) as covering fail-fast when nats.servers is set but jnats is absent (for the broker/KV path), but does not clarify whether the reliable broker also validates this on first publish and surfaces an error message.",
+            "recommendation": "Clarify in §5 (data flow) or §11 (risk register): 'JetStream not enabled on the server — if both reliable.enable=true and nats.registry=true but jnats is absent (or NATS lacks -js), the first publish() will fail; the auto-config should fail-fast like RC11 FIX E does for KV.' Add a context test case to prove this.",
+            "specSection": "§3, §5, §7, or §11"
+          },
+          {
+            "severity": "low",
+            "issue": "Replay-on-resync test uses unsubscribe instead of Connection.close() — §7(b) specifies 'unsubscribe → publish 2 → resubscribe' which works (durable cursor preserved), but doesn't simulate real node downtime (connection loss). The Redis L8 comment notes this gap (connection actually closes on real disconnects).",
+            "recommendation": "Consider adding a second variant of the replay test that calls Connection.close() to simulate actual network loss (more realistic), OR add a note in §7(b): 'unsubscribe() is sufficient since the durable cursor is preserved; real connection loss is tested in case (c) degraded-on-transport-loss which proves reconnect replay.'",
+            "specSection": "§7 Tests, case (b)"
+          },
+          {
+            "severity": "nit",
+            "issue": "Helper class extraction ambiguity in test plan — §3 states '(no new helper class needed)' as a design lock, but test plan doesn't flag that extraction of a helper (e.g., JetStreamCursorTracker or PELDeduplicator) is a refactor that keeps the test plan valid (only the unit test file structure changes).",
+            "recommendation": "Add a note to §3 or test plan: 'If the implementer extracts a helper class for dedup/cursor/stream management, the unit test SPI contracts remain unchanged — the test plan is robust to this factorization.'",
+            "specSection": "§3 Components or §7 Tests"
+          }
+        ]
+      },
+      {
+        "lens": "DOCS",
+        "verdict": "NEEDS_FIX",
+        "specEditsRequested": true,
+        "findings": [
+          {
+            "severity": "high",
+            "issue": "§10 release-notes Known-Limitations language is inconsistent with RC13 claim: Line 514 of release-notes-1.9.0.md states all-NATS deployments do NOT support reliable, yet RC13 spec claims to deliver exactly that. Spec §10 says 'Move NATS/JetStream 可靠投递 from Known-Limitations to shipped RC13' but does not explicitly call out updating/removing the deferral language from release-notes line 514.",
+            "recommendation": "Spec §10 must explicitly state: '(1) Update release-notes §⑮ language from \"all-NATS deployments do not support reliable, implementation is future work\" to \"all-NATS reliable (JetStream) was deferred to RC13, now shipped—see §⑱\". (2) Update Known-Limitations section (line 509+) to remove the NATS reliable deferral item and reference §⑱ as shipped.'",
+            "specSection": "§10 Documentation updates"
+          },
+          {
+            "severity": "high",
+            "issue": "§10 ADR-001 table edit instruction is vague: Spec says 'change the row for all-NATS reliable from deferred to shipped RC13' but does not cite which table in cluster-design.md ADR-001 (lines 387–413) needs the edit. The existing implementation-range table at lines 15–50 already shows all-NATS reliable as ✅ 1.9.0 RC10 (not deferred). Unclear whether spec refers to a different table or section that does not exist.",
+            "recommendation": "Spec §10 must cite exact location: 'Update cluster-design.md lines [X-Y] (ADR-001 decision table or implementation-range table) row for \"all-NATS reliable\" from [current text] to \"✅ 1.9.0 RC13 (NATS JetStream reliable broker implementation)\".' Also clarify: does RC13 replace the RC10 row, or add a new fine-grained row distinguishing RC10 (registry) vs. RC13 (reliable broker)?",
+            "specSection": "§10 Documentation updates"
+          },
+          {
+            "severity": "high",
+            "issue": "§10 api-guide.md instruction is under-specified: Spec says 'note the reliable.* keys apply transport-agnostically; one-line pointer to release notes' but does not indicate (a) which section of api-guide.md (presumably §9 cluster config), (b) what the current table says, (c) what new row/column to add, or (d) exact wording of the pointer.",
+            "recommendation": "Spec §10 must be concrete: '(1) Locate api-guide.md §9 cluster configuration table (currently around line [X]). (2) Add a row or note distinguishing reliable.* behavior on Redis (existing) vs. NATS JetStream (RC13). (3) Add a one-line pointer sentence: \"For NATS-specific mapping of reliable.* keys to JetStream configuration, see release-notes-1.9.0.md §⑱.\"' Include draft text in spec.",
+            "specSection": "§10 Documentation updates"
+          },
+          {
+            "severity": "medium",
+            "issue": "§10 Chinese/English bilingual style not shown: Spec says write §⑱ mirroring §⑥ (Redis Streams) bilingual pattern, but provides no draft section header, Chinese body structure, or English parallel. Release-notes lines 58–80 show the pattern (Chinese header + body + bracketed English terms), but RC13 spec shows no equivalent draft, leaving bilingual structure to implementer guesswork.",
+            "recommendation": "Spec §10 must include a draft §⑱ section outline: e.g., '⑱ NATS JetStream 可靠投递 (since RC13) — Chinese intro paragraph (3–4 lines) with key points + bracketed English terms (like at-least-once, stream, consumer group, durable). Then English subsection under same number explaining the same content to mirror §⑥ pattern.' Provide concrete draft text, not just abstract instruction.",
+            "specSection": "§10 Documentation updates"
+          },
+          {
+            "severity": "medium",
+            "issue": "§10 metadata.json descriptions lack complete NATS mapping: Spec says descriptions should get parenthetical mapping (e.g., 'NATS: maps to JetStream stream max_msgs'), but spec does not define all mappings. For example, reliable.group-destroy-idle-ms is mentioned in spec §5 as 'idle-gate condition for durable consumer cleanup' but spec does NOT explicitly state what NATS field/concept it maps to (is it JetStream consumer MaxAckPending? Idle timer? Custom logic?). Implementer cannot write accurate metadata without this specification.",
+            "recommendation": "Spec §6 must expand the config table (lines 134–143) to explicitly show NATS mappings for each key. E.g., 'reliable.group-destroy-idle-ms → JetStream consumer idle-gate window (custom logic; no direct server-side field)' or similar. Then §10 instruction can say: 'For each reliable.* key, append \"(NATS: [mapping from §6 config table])\" to its metadata.json description.'",
+            "specSection": "§6 Config & defaults / §10 Documentation updates"
+          },
+          {
+            "severity": "medium",
+            "issue": "Workaround migration language missing from spec §10: Users who added custom ReliableBroker bean workarounds during RC10–RC12 deferral must be told (a) the new auto-bean uses @ConditionalOnMissingBean, so their custom bean still wins if present, (b) they should evaluate dropping it vs. keeping it. Spec §3 mentions the conditional but §10 does NOT call out adding explicit upgrade language to release-notes upgrade guide (§升级指南) or Known-Limitations.",
+            "recommendation": "Spec §10 must state: 'Add to release-notes upgrade guide: \"Users with custom ReliableBroker bean overrides from RC10–RC12 workarounds: the new NatsJetStreamReliableBroker is auto-configured via @ConditionalOnMissingBean, so your custom bean still takes precedence. Evaluate removing your override (to use the auto-bean) or keeping it for customization. No action needed for forward compatibility.\"'",
+            "specSection": "§10 Documentation updates"
+          },
+          {
+            "severity": "low",
+            "issue": "Spec §5 (Data flow / Dead-node consumer cleanup) section 'Replay-on-resync' subsection does not state the exact idle-gate semantics for all-NATS reliable broker. Spec says 'idle gate (post-RC11 fix #5)' but does not define the behavior when group info cannot be fetched (404) vs. when it exists but is idle vs. when it has pending messages. Implementer must infer from code.",
+            "recommendation": "Spec §5 dead-node cleanup section should clarify: '(1) If consumer does not exist (404), skip silently. (2) If consumer exists with numPending==0 AND (now - deliveredLastTimeMs) > groupDestroyIdleMs, delete. (3) Otherwise, retain.' Exact JetStream API method names (getConsumerInfo, deleteConsumer) should match §3 risk register.",
+            "specSection": "§5 Data flow — Dead-node consumer cleanup"
+          },
+          {
+            "severity": "nit",
+            "issue": "Spec §4 Wire-level naming table inconsistency: Durable consumer name is shown as 'g.<b64url(nodeId)>' but spec §5 consume section shows 'g.<b64nodeId>' (without dot notation clarity). Minor formatting inconsistency — should both be 'g.<b64url(nodeId)>' for clarity.",
+            "recommendation": "Normalize all occurrences of durable consumer naming to 'g.<b64url(nodeId)>' (explicit function notation) throughout spec §3, §4, §5, and test names (e.g., §7 test coverage table).",
+            "specSection": "§4 Wire-level naming / §5 Data flow"
+          }
+        ]
+      }
+    ],
+    "verifications": [
+      {
+        "lens": "RC13 NATS JetStream Reliable Spec — Adversarial Review of 9 Findings",
+        "verdict": "partial",
+        "agreesWithReviewer": false,
+        "reasoning": "**Verdict: PARTIAL — 1 confirmed, 3 refuted, 4 polish items (not blockers).**\n\nCONFIRMED ISSUE (1):\n- **Finding 2 (HIGH):** JetStream max_payload caveat absent from spec §4/§6. The caveat is documented in release-notes line 455 but not in the RC13 spec. This is a real gap—users setting reliable.enable=true with all-NATS need to know about the payload sizing constraint. Belongs in release-notes update (§10 task) or as a footnote in spec §4/§6.\n\nREFUTED (no gap exists):\n- **Finding 1 (MEDIUM):** §1 Goal **explicitly states** the two-key requirement: \"Selected only when `nats.registry=true && reliable.enable=true`\" is in the first sentence of §1 Goal. No gap.\n- **Finding 6 (MEDIUM):** Mixed deployments (NATS broker + Redis registry) **already documented** in §1 Non-goals (\"Mixed stays Redis-Streams reliable\") and §8 matrix. No gap.\n- **Finding 8 (LOW):** §4 wire-level naming clearly shows Streams (not KV): `netty-cluster-reliable-<b64uri>`, Ack policy EXPLICIT, Durable consumer `g.<b64nodeId>`. No ambiguity.\n- **Finding 9 (NIT):** Section numbering ⑱ is correct. Release-notes goes ⑩–⑰; ⑱ is the next section for \"NATS JetStream 可靠投递\". No off-by-one error.\n\nPOLISH ITEMS (valid but not blockers):\n- **Finding 3 (HIGH→PARTIAL):** Citation in §9 is accurate (release-notes line 514 does say all-NATS reliable was \"future work\"). Could cite precise section/line for doc-writer traceability. Implementer polish, not a spec defect.\n- **Finding 4 (HIGH→PARTIAL):** Error handling for misconfiguration (e.g., nats.servers set but nats.registry=false) is an implementation detail. Spec doesn't need to prescribe error messages; auto-config bean logic (§3) handles it. The matrix (§8) clearly shows that mixed mode selects RedisStreamsReliable, not JetStream.\n- **Finding 5 (MEDIUM→PARTIAL):** RC12→RC13 upgrade path is implicitly covered (\"reliable.enable=false: byte-level identical\" in §9). Explicit paragraph would help operationally, but not critical for spec.\n- **Finding 7 (LOW→PARTIAL):** §5 says \"within stream retention window\" but doesn't spell out the consequence. One-liner caveat (matching Redis Streams limit caveat in release-notes line 75–76) would improve clarity. Valid polish.\n\n**Agree with reviewer?** Partially. The reviewer correctly identified Finding 2 (max_payload gap) and 4 valid polish items (3, 5, 7). However, the reviewer overstated 3 findings as \"blockers\" when they are either already documented (1, 6, 8, 9) or are implementation concerns (4). Finding 2 alone is a confirmed spec gap requiring attention in the release-notes update task (§10)."
+      },
+      {
+        "lens": "spec-review-adversarial",
+        "verdict": "partial",
+        "agreesWithReviewer": true,
+        "reasoning": "\nCONFIRMED FINDINGS (4):\n\n**HIGH - MessageAuthenticator wrap/unwrap (REAL):** The spec line 73 says the envelope building is \"(originNodeId, traceparent, payload codec'd, HMAC wrapped) — UNCHANGED\" but this is vague—it conflates \"building\" with \"wrapping.\" More critically, the consume flow (lines 88-99) shows `unwrap(envelopeBytes)` explicitly at line 92, yet the publish flow diagram (lines 71-79) does NOT show where wrap() is called. The code shows wrap() happens inside ReliableBroker.reliablePublish(), not in ClusterMessageSender. The spec's diagram is incomplete—it should explicitly show `envelopeBytes = authenticator.wrap(codec.encode(envelope))` before publishAsync(). Implementer could misread and omit HMAC entirely on the publish side. The test recommendation (assert wrap/unwrap invoked via mock) is actionable. VERDICT: Real gap, blocker for correct implementation.\n\n**MEDIUM - concurrent ensureStream config mismatch (REAL):** Line 75 says \"idempotent (addStream-or-update)\" and risk register line 204 mentions the computeIfAbsent cache, but neither clarifies: if a stream exists with max_msgs=5000 instead of 10000, does the code verify config match and error, or silently reuse the misconfigured stream? Silently reusing a smaller stream causes message loss. The Redis implementation doesn't have this problem because XADD with MAXLEN is idempotent (it just trims). But for NATS JetStream, the spec must mandate fail-fast on config mismatch. VERDICT: Real gap, blocker for reliability.\n\n**MEDIUM - Connection auth inheritance silent path (PARTIAL):** The spec correctly delegates to line 41 \"the same Connection via DI\" and the code does call warnIfInsecureNats(). However, the spec does NOT explicitly state that the reliable broker relies on this warning and does NOT add its own enforcement. An operator could miss the warning and deploy an insecure NATS connection that only the broker bean checks, not the reliable broker bean. The recommendation to document this explicitly in §3/§5.1 is reasonable defensive writing, but it's not a contract blocker—the existing warnIfInsecureNats is sufficient. VERDICT: Partial—the warning exists but should be called/acknowledged explicitly in the spec.\n\n**MEDIUM - URI length and base64url encoding (PARTIAL):** Lines 53-54 define stream name as `netty-cluster-reliable-<b64url(uri)>` and subject as `netty.reliable.<b64url(uri)>`. The base64url encoding does make URIs NATS-safe. However, the spec is SILENT on NATS stream-name length limits (256 chars per NATS docs). If an operator allows extremely long URIs (~200+ chars), the base64url encoding blows up and stream creation fails. The recommendation to add a defensive note about URI length caps (~135 chars pre-encoding) is informative but not a blocker—NATS will fail fast with a clear error. VERDICT: Partial—base64url mitigates, but a length note would prevent surprises.\n\nREFUTED FINDINGS (2):\n\n**LOW - Dead-node consumer cleanup deliveredLastTimeMs idempotency (REFUTED):** The finding suggests deliveredLastTimeMs \"could be forged\" by a malicious peer. This is false. JetStream consumer-info is maintained SERVER-SIDE and not client-controllable. A peer node cannot PUSH a fake consumer-info message—it can only query the server's state via getConsumerInfo(). The spec's silence is not a gap; it's correctly delegating to NATS server semantics. The recommended note is defensive but not necessary to unblock implementation. VERDICT: Refuted—the risk is imaginary.\n\n**LOW - Replay-on-resync PUBLISH-ACL hijack threat model (REFUTED):** The finding claims the spec is \"silent\" on the attack where an attacker gains PUBLISH access and writes unsigned messages. But line 104-105 explicitly says \"identical user-facing semantics to RC2 Redis Streams replay,\" and the Redis threat model already exists (RedisStreamsReliableBroker line 245 unwrap/drops unsigned). The HMAC verification happens at line 92 of the consume flow in the spec: `if envelope.originNodeId == myNodeId: ack (origin self-suppress) elif dedupWindow.contains(envelope.id): ack else: ... msg.ack()` — there's no step where unsigned messages are delivered. The recommendation to add a \"threat model\" section is polish, not a blocker. VERDICT: Refuted—HMAC verification is in the spec; threat-model doc is optional.\n\nNIT - Thread naming (CONFIRMED, trivial):** Line 86 says \"nats-reliable-<uri>\" but should specify the full pattern. The recommendation is reasonable polish for debugging. Does not block implementation.\n\nQUALITY ASSESSMENT:\n\nThe spec's main gaps are two medium-severity items that directly affect implementation correctness:\n1. The publish flow diagram does not show authenticator.wrap() — implementer needs explicit instruction.\n2. The ensureStream behavior does not clarify config-mismatch handling — implementer could silently reuse a misconfigured stream.\n\nBoth gaps are fixable with 1-2 sentence additions and one test case each. They are NOT architectural blockers; the implementation can discover them via integration testing and the fix is straightforward (call wrap explicitly, add getStreamInfo + config verify before addStream).\n\nThe remaining findings (connection auth, URI length, thread naming) are minor documentation gaps that do not block correct implementation—NATS/jnats will fail fast with clear errors if misconfigured.\n\nSEVERITY RE-ASSESSMENT:\n- Finding 1 (wrap/unwrap): CONFIRMED HIGH, but fixable with explicit diagram + test\n- Finding 2 (URI length): CONFIRMED MEDIUM, but mitigation exists (NATS fails fast)\n- Finding 3 (ensureStream config): CONFIRMED MEDIUM, and requires clarification\n- Finding 4 (connection auth): CONFIRMED MEDIUM, but existing warnIfInsecureNats covers it—spec should reference it\n- Finding 5 (deliveredLastTimeMs): REFUTED (server-maintained, not client-forgeable)\n- Finding 6 (PUBLISH-ACL threat): REFUTED (HMAC verification already in spec)\n- Finding 7 (thread naming): CONFIRMED NIT\n\nOVERALL VERDICT: The spec is 75% complete. It has two concrete gaps (wrap/unwrap diagram, ensureStream config mismatch) that need explicit fixes. The remaining gaps are refinements. Implementer can proceed but must address findings 1 and 3 before merging to main. The approval verdict \"APPROVE_WITH_NITS\" is appropriate, but findings 1 and 3 should be marked as \"fix before implementation\" not \"nice-to-have.\"\n"
+      },
+      {
+        "lens": "perf-findings-adversarial-review",
+        "verdict": "partial",
+        "agreesWithReviewer": true,
+        "reasoning": "The adversarial review confirms 4 of 6 findings are REAL documentation gaps, and 2 are valid concerns that are already mitigated in the spec. However, none are blockers for RC13:\n\nCONFIRMED GAPS (documentation, not design):\n1. Finding 3 (ensureStream latency): Spec correctly describes lazy per-URI model but does not document the ~10ms publish-path cost on first URI. FIX: 2-3 sentences in §5 Publish subsection + §11 risk entry.\n2. Finding 4 (idle polling load): Spec does not document default poll-block-ms value or steady-state NATS server load from N/2 fetches per second per N idle subs. FIX: Document the default, note the latency/load trade-off in §6. CAVEAT: do not change the default without load testing.\n3. Finding 5 (thread-per-URI rationale): Spec does not explain why per-URI threads instead of pooled executor. FIX: 2-3 sentences in §5 Consume or §12 explaining isolation, blocking fetch coordination, and exception handling simplicity.\n4. Finding 6 (FILE storage trade-off): Spec does not mention disk I/O per publish or bottleneck risk for high-throughput. FIX: 1-2 sentences in §4 Storage type row noting FILE durability cost.\n\nVALID CONCERNS (already mitigated):\n1. Finding 1 (replicas=1 unsafe): REAL, but mitigation is EXPLICIT: \"cluster-NATS users override via custom bean\" (line 60) + §1 Non-goals delegates replicas tuning to power users. The risk register correctly acknowledges this. RECOMMENDATION: Add MUST-level warning to release notes or implementation docs, but spec is not defective.\n2. Finding 2 (no ceiling on stream count): REAL, but belongs in operational sizing guides, not spec. The spec correctly documents the model (one stream per URI, linear scaling). Arbitrary \"~1000 streams\" ceiling without testing would be misleading.\n\nREVIEWER ASSESSMENT: Accurate on documentation gaps (4/6), but overstates blocker severity. All findings are polish-level (docs + operational guidance), not spec defects. The design is sound; the spec is clear on mitigations (override bean, lazy per-URI, explicit risk register). RC13 can ship; these should be addressed in release notes and implementation task descriptions.\""
+      },
+      {
+        "lens": "RC13 NATS JetStream Reliable Spec",
+        "verdict": "partial",
+        "agreesWithReviewer": false,
+        "reasoning": "The reviewer identifies 8 findings; I confirm only 4 as valid (all polish/minor, not blockers). The others are either misreadings (findings #1, #5, #8) or out-of-scope per the spec's explicit non-goals (#6). Finding #1 misses that §9 and Redis code comments EXPLICITLY state DEGRADED is informational for publish; the spec is clear that reliablePublish does NOT check DEGRADED state, only SHUTDOWN. Finding #5 misses that the spec reuses \"at-least-once\" language which mandates idempotency, and release notes already document handler idempotency extensively. Finding #8 confuses scope: spec is not a release-notes document; release-notes-1.9.0.md already contains the guidance. Finding #6 (metadata corruption) is explicitly out-of-scope per non-goals (\"power users override the bean\") and appropriately deferred to 2.0.0 ops tooling. The VALID polish items (#2 MaxDeliver, #3 stream retention ops guidance, #4 ensureStream exception propagation, #7 jnats ConsumerInfo field name) should be added to spec or deferred to implementation phase per pattern. Overall, the spec is HIGH-quality with no blocking defects; the identified concerns are mostly reviewer misreading or scope confusion. High finding #3 (stream trim message loss) is the only substantive gap worth addressing before implementation (add sizing guidance), but it's not a blocker since power-users already have override path."
+      },
+      {
+        "lens": "RC13 NATS JetStream Reliable Spec - SPI Defects Review",
+        "verdict": "partial",
+        "agreesWithReviewer": true,
+        "reasoning": "Three of five findings are confirmed HIGH or MEDIUM severity defects that must be fixed before implementation:\n\n1. **Method signature mismatch (Finding 1 & 5, HIGH)**: Spec line 84 shows 2-param `broker.subscribe(uri, listener)` but actual SPI (ReliableBroker.java:54) requires 3-param `reliableSubscribe(uri, nodeId, listener)`. The pseudocode is incorrect and will mislead implementers. CONFIRMED BLOCKER.\n\n2. **Double-bean risk (Finding 2, HIGH - REFUTED)**: Reviewer claims the Redis reliable bean lacks NATS negation. However, the actual codebase (NettyWebSocketClusterConfigure.java:124) already applies `STANDALONE_REDIS_REGISTRY = STANDALONE_TRANSPORT + \" and \" + NOT_ALL_NATS`, where `NOT_ALL_NATS = \"!(\" + NATS_TRANSPORT + \" and \" + NATS_REGISTRY + \")\"`. This correctly suppresses the Redis bean in all-NATS mode. The protection exists; the spec is documenting what's already correct. NOT A BLOCKER.\n\n3. **Subscribe idempotency semantics (Finding 3, MEDIUM)**: The spec claims idempotency per URI but never defines the contract — does a second call return a new handle, error, or no-op? The SPI returns `ClusterSubscription`, implying multiple handles could exist. RedisStreamsReliableBroker catches BUSYGROUP on duplicate creation, silently succeeding. The spec must clarify this for implementers. CONFIRMED DOCUMENTATION GAP.\n\n4. **Shutdown ordering (Finding 4, MEDIUM)**: The spec does not document whether unacked messages should be flushed on shutdown. RedisStreamsReliableBroker intentionally closes connections without draining pending acks, leaving them in the PEL. This behavior is safe (durable cursor + replay-on-resync) but undocumented. CONFIRMED DOCUMENTATION GAP.\n\n5. **Notation inconsistency (Finding 5, NIT)**: Same as Finding 1 — line 84 method name is wrong. CONFIRMED.\n\nSUMMARY: Finding 2 is incorrectly framed (the protection exists); Findings 1 & 5 are the same real error; Findings 3 & 4 are real but are documentation gaps, not implementation blockers. The spec's proposed fix for Finding 2 is redundant but harmless as explicit documentation. The method signature must be fixed before writing pseudocode. The idempotency and shutdown semantics gaps should be clarified in the SPI javadoc and/or spec to guide implementers."
+      },
+      {
+        "lens": "RC13 NATS JetStream Reliable Broker Spec Test Coverage Review",
+        "verdict": "partial",
+        "agreesWithReviewer": true,
+        "reasoning": "The reviewer has identified real gaps in the spec's test plan. Two HIGH-severity findings are confirmed: (1) the §7 test plan lacks an IT that verifies HMAC envelope rejection when auth is mismatched, and (2) no IT is listed for DEGRADED state transition on connection loss (only ConnectionListener wiring is described in §5, but not verified by tests). These are architectural contracts that should be covered by integration tests. Two MEDIUM findings are confirmed with caveats: poison-pill exception handling is listed in the unit test plan by name but lacks detail on the implementation contract; jnats absence error handling is mentioned in the risk register but the error surface is not specified. Two PARTIAL findings are reasonable polish items rather than blockers: stream trim is a NATS platform feature (not custom code), and replay-on-resync testing is adequate for the specified scenario but could explicitly cover both clean unsubscribe and actual network loss. One finding (helper class extraction) is refuted — the design lock \"(no new helper class needed)\" constrains public SPI, not internal refactoring. Overall: the spec is architecturally sound, but the test plan has gaps that should be filled before implementation. The two HIGH findings should be addressed; the MEDIUM findings need clarification; the PARTIAL findings are improvements, not blockers."
+      },
+      {
+        "lens": "Spec documentation instruction clarity and completeness",
+        "verdict": "confirmed",
+        "agreesWithReviewer": true,
+        "reasoning": "All eight findings are real and verified against the actual spec and referenced docs. The highest-severity issues (1–3, 5–6) are not design failures but documentation-instruction clarity gaps: the spec talks about what to do (move items from Known-Limitations, update tables, add notes) without specifying *where* or *how* concretely, forcing implementers to infer intent. Item 5 is most serious — §6 cannot prescribe metadata.json entries without first defining the NATS config-to-JetStream-field mappings it references. Item 4 (bilingual pattern) and Item 8 (naming consistency) are minor polish. None are blockers on the actual NatsJetStreamReliableBroker implementation, but all merit concrete specification updates to prevent misinterpretation or incomplete docs. The reviewer's proposed fixes (concrete table citations, draft section outlines, explicit mapping definitions, migration guidance, semantic clarification) are reasonable and proportionate."
+      }
+    ],
+    "synthesis": {
+      "readyToProceed": true,
+      "specEditsBeforePlan": [
+        {
+          "section": "§5 Data flow (Publish)",
+          "edit": "Make HMAC envelope wrapping explicit in the publish pseudocode: insert step 'envelopeBytes = authenticator.wrap(codec.encode(envelope))' before publishAsync, mirroring the unwrap step already shown in the consume flow. Add a one-line note that wrap/unwrap occur inside ReliableBroker.reliablePublish/consume loop (not in ClusterMessageSender), so the HMAC contract is identical to the Redis Streams path."
+        },
+        {
+          "section": "§5 Data flow (Publish, ensureStream)",
+          "edit": "Clarify ensureStream behavior on pre-existing streams with mismatched config: 'Call getStreamInfo(streamName). If the stream exists with config matching expectations (storage=FILE, max_msgs=reliable.stream-max-len, discard=OLD, replicas=reliable.stream-replicas), reuse it. If the stream exists with a DIFFERENT config, log WARN with both expected and actual values and throw ClusterBrokerException (fail-fast; do not silently reuse). If it does not exist, addStream with the expected config. Transient JetStreamApiException from getStreamInfo propagates out of computeIfAbsent so the cache is NOT poisoned and the next publish retries.'"
+        },
+        {
+          "section": "§5 Data flow / §9 Transport health",
+          "edit": "Define reliablePublish behavior across broker state: 'reliablePublish honors state()==SHUTDOWN by throwing ClusterBrokerException. state()==DEGRADED is informational only — publish is still attempted (matches Redis Streams reliable broker); failures from the underlying JetStream call are handled per on-publish-failure (log-and-drop|throw). The ConnectionListener installed in §3 flips state to DEGRADED on disconnect and back to ACTIVE on reconnect; an IT covers this in §7.'"
+        },
+        {
+          "section": "§4 Wire-level naming & retention (add subsection 4.1) / §6 Config & defaults",
+          "edit": "Add a payload-sizing caveat: 'JetStream shares the NATS server max_payload (default 1 MB). After envelope Base64 (~+37%) and optional HMAC overhead, the wire body may exceed max_payload. Operators must either lower message-max-size-bytes or raise the server max_payload; oversized messages are handled per on-publish-failure (local delivery unaffected). This mirrors the RC9 NATS broker caveat in release-notes §⑮.'"
+        },
+        {
+          "section": "§5 Data flow (Replay-on-resync)",
+          "edit": "Append the retention caveat: 'At-least-once replay only holds within the stream retention window (reliable.stream-max-len, default 10000 with DiscardPolicy.OLD). If a node is offline long enough that its unacked entries are trimmed, those messages are permanently lost (bounded gap). This is the same bounded-retention guarantee as Redis Streams reliable (release-notes §⑥).'"
+        },
+        {
+          "section": "§5 Data flow (Dead-node consumer cleanup)",
+          "edit": "Spell out the idle-gate semantics: '(1) getConsumerInfo for g.<b64url(nodeId)> — if 404, skip. (2) If exists with numPending==0 AND (now - deliveredLastTimeMs) > reliable.group-destroy-idle-ms, deleteConsumer. (3) Otherwise retain (conservative: never delete a consumer with pending acks). deliveredLastTimeMs is the JetStream server-maintained ConsumerInfo.delivered.lastActive (jnats 2.20.4) and is not client-settable.'"
+        },
+        {
+          "section": "§5 Data flow (Consume) / Handler contract",
+          "edit": "Add an explicit handler-contract note: 'Listeners MUST be idempotent. The in-process dedup window (reliable.dedup-window, default 1024) covers only intra-process redelivery; across node restarts the window is reset and unacked messages are replayed by the durable consumer. Same at-least-once contract as Redis Streams reliable.'"
+        },
+        {
+          "section": "§5 Data flow (Consume) / §11 Risk register",
+          "edit": "Add poison-pill handling: 'If listener.onMessage throws, log WARN and ack the message anyway (matches RedisStreamsReliableBroker lines 257–261). This prevents livelock from a permanently-failing handler. JetStream MaxDeliver is left at the server default; the in-process catch-and-ack is the authoritative poison-pill guard.'"
+        },
+        {
+          "section": "§3 Components",
+          "edit": "Define the dedicated consume thread name pattern: 'nats-reliable-<nodeId.substring(0,8)>-<hex(uri.hashCode())>' (mirrors RedisStreamsReliableBroker 'cluster-rstream-*' pattern) to aid log filtering and make it testable."
+        },
+        {
+          "section": "§3 Components / §8 Auto-config matrix",
+          "edit": "Explicitly document the existing Redis-reliable suppression in all-NATS mode: 'The redisStreamsReliableBroker @ConditionalOnExpression already evaluates to STANDALONE_TRANSPORT && !(nats.servers && nats.registry) via STANDALONE_REDIS_REGISTRY, so the new NatsJetStreamReliableBroker is the sole ReliableBroker bean when nats.registry=true && reliable.enable=true. Both beans carry @ConditionalOnMissingBean(ReliableBroker.class), so user-supplied overrides still win.'"
+        },
+        {
+          "section": "§5 Data flow (Consume) — pseudocode",
+          "edit": "Correct the SPI signature in the pseudocode: replace 'broker.subscribe(uri, listener)' with 'broker.reliableSubscribe(uri, nodeId, listener)' to match the actual ReliableBroker SPI (3 params). Add a one-line note that nodeId is the consuming node's stable id from ClusterNodeManager.getNodeId(), used to build the durable consumer name g.<b64url(nodeId)>."
+        },
+        {
+          "section": "§2 Architecture / shutdown contract",
+          "edit": "Document shutdown semantics: 'shutdown() stops all consume loops and closes the JetStream views; unacked messages are intentionally left in the stream PEL and will be replayed on next start via the durable consumer cursor. This matches the Redis Streams reliable broker shutdown contract.'"
+        },
+        {
+          "section": "§7 Tests",
+          "edit": "Add IT cases: '(c) degraded-on-transport-loss — Testcontainers JetStream container kill flips state() to DEGRADED, restart flips back to ACTIVE (mirrors Redis L8); (d) hmac-rejection — publisher with auth.enable=true + valid key, subscriber with wrong key, asserts received count remains 0; (e) all-NATS reliable auto-config — nats.registry=true && reliable.enable=true selects NatsJetStreamReliableBroker and RedisStreamsReliableBroker is absent. Add unit cases for poison-pill (handler throws → message still acks, loop continues) and ensureStream config mismatch (pre-existing stream with different max_msgs → ClusterBrokerException). At least one test must assert authenticator.wrap()/unwrap() are invoked on the publish and consume paths.'"
+        },
+        {
+          "section": "§10 Documentation updates",
+          "edit": "Make the doc edits concrete: '(1) release-notes-1.9.0.md: move the all-NATS reliable item out of Known Limitations (currently around line 514) and add new §⑱ NATS JetStream 可靠投递 mirroring §⑥ bilingual structure (Chinese intro paragraph with bracketed English terms + parallel English subsection); reference the §4.1 max_payload caveat. (2) cluster-design.md ADR-001 implementation-range table (lines 15–50): update the all-NATS reliable row to ✅ 1.9.0 RC13 (was deferred/RC10 registry-only). (3) api-guide.md §9 cluster config table: add a one-line pointer that reliable.* keys apply transport-agnostically and link to release-notes §⑱ for NATS-specific mapping. (4) metadata.json: append a parenthetical NATS mapping to each reliable.* description (e.g., stream-max-len → JetStream stream max_msgs; poll-block-ms → JetStream fetch block timeout; group-destroy-idle-ms → custom idle-gate on ConsumerInfo.delivered.lastActive). (5) Add upgrade-guide bullet: users with custom ReliableBroker beans from RC10–RC12 workarounds keep precedence via @ConditionalOnMissingBean — no action required.'"
+        }
+      ],
+      "implementationNotes": [
+        "§1 Goal phrasing: optionally restate the two-key requirement (nats.registry=true AND reliable.enable=true) inline; skeptic confirms it is already in §1 but a doc-writer-friendly restatement aids release-notes authors.",
+        "URI length guidance: add an operator note (NATS stream-name limit 256 chars → cap user-defined URIs at ~135 chars pre-base64url) to the implementation/ops docs; NATS will fail-fast otherwise so this is not a spec defect.",
+        "Connection auth inheritance: reference the existing NettyWebSocketClusterConfigure.warnIfInsecureNats in implementation comments and docs/cluster-design.md §Security so operators know the reliable broker inherits (not re-validates) NATS TLS/credentials.",
+        "Replicas default = 1: add a MUST-level warning to release-notes-1.9.0.md §⑱ for clustered-NATS HA deployments — recommend operator-provided ReliableBroker bean override raising replicas to 3 (or override stream-replicas if that config is exposed). Power-user override path is already noted in §1 Non-goals.",
+        "Scale ceiling and consumer count: add operational guidance (≈one stream per URI, ≈N consumers per URI for N nodes; recommended limit ≤1000 streams per NATS cluster) to docs/cluster-design.md §Capacity, not the spec.",
+        "Startup latency: implementation should consider lazy/async ensureStream for deployments with many URIs; document the per-URI ~10ms first-publish cost in release notes.",
+        "Idle poll cost: document steady-state ~N/2 fetch() calls per second per N idle subscriptions and recommend raising poll-block-ms (e.g., 5000–10000ms) for high-subscription-count deployments; leave the default unchanged pending load testing.",
+        "Thread-per-URI rationale: add a 2–3 sentence design-rationale note to the implementation comments (isolation of blocking fetch loops, simpler exception handling) — pooled executor is a future optimization.",
+        "FILE storage trade-off: add a one-line note to release notes that FILE storage incurs per-publish disk I/O; MEMORY is available as an override for non-durable use cases.",
+        "PUBLISH-ACL hijack threat model: add an ops note to docs/cluster-design.md §Security listing the standard mitigations (restrict NATS PUBLISH ACL to authoritative app nodes, monitor stream stats), mirroring the Redis Streams threat model.",
+        "Subscribe idempotency contract: document in ReliableBroker SPI javadoc that calling reliableSubscribe twice for the same (uri, nodeId) returns a fresh ClusterSubscription handle (or whichever choice the implementation locks in) and the latest listener wins; matches RedisStreamsReliableBroker BUSYGROUP-silent behavior.",
+        "JetStream metadata corruption: add to risk register and ops docs that recovery = delete-and-recreate stream (bounded backlog loss); detailed tooling deferred to 2.0.0."
+      ],
+      "overallVerdict": "Spec is architecturally sound and ready to proceed to plan-writing. No genuine blockers — the confirmed gaps (HMAC wrap explicit in publish flow, ensureStream config-mismatch handling, SPI signature in pseudocode, DEGRADED publish semantics, max_payload caveat, replay/retention caveat, idle-gate semantics, handler idempotency contract, doc-update concreteness) are all 1–2 sentence spec edits, not redesigns. Apply the listed spec edits, then move to writing-plans; remaining items (replicas=1 HA warning, scale/throughput/idle-poll/thread-per-URI rationale, URI length, ACL threat model) belong in the plan and release notes."
+    }
+  }
+}
