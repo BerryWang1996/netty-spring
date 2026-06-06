@@ -24,6 +24,7 @@ import io.nats.client.api.DeliverPolicy;
 import io.nats.client.api.DiscardPolicy;
 import io.nats.client.api.Error;
 import io.nats.client.api.RetentionPolicy;
+import io.nats.client.api.SequenceInfo;
 import io.nats.client.api.StorageType;
 import io.nats.client.api.StreamConfiguration;
 import io.nats.client.api.StreamInfo;
@@ -33,6 +34,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.nio.charset.StandardCharsets;
+import java.time.ZonedDateTime;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.concurrent.CompletableFuture;
@@ -385,5 +388,73 @@ class NatsJetStreamReliableBrokerTest {
         // After shutdown the listener must never overwrite SHUTDOWN.
         l.connectionEvent(conn, ConnectionListener.Events.DISCONNECTED);
         assertEquals(BrokerState.SHUTDOWN, b.state());
+    }
+
+    // ===== T6 — destroyConsumerGroupsForNode with idle gate =====
+
+    private static ConsumerInfo consumerInfo(long numPending, ZonedDateTime lastActive) {
+        ConsumerInfo info = mock(ConsumerInfo.class);
+        when(info.getNumPending()).thenReturn(numPending);
+        SequenceInfo seq = mock(SequenceInfo.class);
+        when(seq.getLastActive()).thenReturn(lastActive);
+        when(info.getDelivered()).thenReturn(seq);
+        return info;
+    }
+
+    @Test
+    void t6_destroyConsumerGroupsForNode_reapsIdleZeroPending_retainsRecentOrPending() throws Exception {
+        String dead = "node-dead";
+        String consumerName = "g_" + b64(dead);
+        String streamIdle = "netty-cluster-reliable-" + b64("/ws/idle");
+        String streamBusy = "netty-cluster-reliable-" + b64("/ws/busy");
+        String streamRecent = "netty-cluster-reliable-" + b64("/ws/recent");
+
+        ConsumerInfo idleInfo = consumerInfo(0L, ZonedDateTime.now().minusHours(2));
+        ConsumerInfo busyInfo = consumerInfo(5L, ZonedDateTime.now().minusHours(2));
+        ConsumerInfo recentInfo = consumerInfo(0L, ZonedDateTime.now().minusMinutes(1));
+        when(jsm.getStreamNames()).thenReturn(Arrays.asList(streamIdle, streamBusy, streamRecent, "unrelated-stream"));
+        when(jsm.getConsumerInfo(streamIdle, consumerName)).thenReturn(idleInfo);
+        when(jsm.getConsumerInfo(streamBusy, consumerName)).thenReturn(busyInfo);
+        when(jsm.getConsumerInfo(streamRecent, consumerName)).thenReturn(recentInfo);
+        when(jsm.deleteConsumer(anyString(), anyString())).thenReturn(true);
+
+        NatsJetStreamReliableBroker b = newBroker("node-A");
+        b.setGroupDestroyIdleMs(java.time.Duration.ofHours(1).toMillis());
+        b.destroyConsumerGroupsForNode(dead);
+        b.shutdown();
+
+        verify(jsm, times(1)).deleteConsumer(streamIdle, consumerName);
+        verify(jsm, never()).deleteConsumer(streamBusy, consumerName);
+        verify(jsm, never()).deleteConsumer(streamRecent, consumerName);
+        // Unrelated stream prefix must never even be queried.
+        verify(jsm, never()).getConsumerInfo(eq("unrelated-stream"), anyString());
+    }
+
+    @Test
+    void t6_destroyConsumerGroupsForNode_idleZero_retainsEverything() throws Exception {
+        when(jsm.getStreamNames()).thenReturn(Collections.singletonList(
+                "netty-cluster-reliable-" + b64("/ws/x")));
+
+        NatsJetStreamReliableBroker b = newBroker("node-A");
+        b.setGroupDestroyIdleMs(0);   // pure-retain mode
+        b.destroyConsumerGroupsForNode("node-dead");
+        b.shutdown();
+
+        verify(jsm, never()).deleteConsumer(anyString(), anyString());
+        verify(jsm, never()).getConsumerInfo(anyString(), anyString());
+    }
+
+    @Test
+    void t6_destroyConsumerGroupsForNode_consumerNotFound_silentlyContinues() throws Exception {
+        String streamA = "netty-cluster-reliable-" + b64("/ws/a");
+        JetStreamApiException nf = notFoundException(10014);
+        when(jsm.getStreamNames()).thenReturn(Collections.singletonList(streamA));
+        when(jsm.getConsumerInfo(eq(streamA), anyString())).thenThrow(nf);
+
+        NatsJetStreamReliableBroker b = newBroker("node-A");
+        b.destroyConsumerGroupsForNode("node-dead");
+        b.shutdown();
+
+        verify(jsm, never()).deleteConsumer(anyString(), anyString());
     }
 }
