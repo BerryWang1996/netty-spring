@@ -147,6 +147,56 @@ class ClusterMessageSenderTest {
     }
 
     @Test
+    void closeSessionShortCircuitsRemoteWhenBrokerDegraded() throws Exception {
+        // P1 (RC14): closeSession's remote-unicast path must also short-circuit when the broker
+        // is DEGRADED (redis-loss-grace-period-ms debounce window) — the bounded registry lookup
+        // is wasted work because the broker can't unicast the CLOSE control envelope anyway.
+        localSender.addUri("/ws/test");
+
+        // Register a remote session in the registry so a lookup *would* find it
+        // if the gate didn't short-circuit.
+        registry.register("/ws/test", "session-B1", "node-B", Collections.emptyMap())
+                .toCompletableFuture().join();
+
+        int lookupsBefore = registry.getLookupNodeCalls();
+
+        // Degrade the broker but leave nodeManager state == ACTIVE (the debounce window).
+        broker.setState(BrokerState.DEGRADED);
+        assertEquals(NodeState.ACTIVE, nodeManager.getState(),
+                "Node state machine must still be ACTIVE during grace-period debounce");
+
+        // closeSession must return false (could not close) without ever calling lookupNode().
+        boolean closed = clusterSender.closeSession("/ws/test", "session-B1", 1000, "bye");
+        assertFalse(closed, "closeSession must report no-op when broker is DEGRADED");
+        assertEquals(lookupsBefore, registry.getLookupNodeCalls(),
+                "Registry lookupNode must NOT be called when broker is DEGRADED");
+    }
+
+    @Test
+    void topicMessageShortCircuitsRemoteWhenBrokerDegraded() throws Exception {
+        // P1 (RC14): topicMessage's cross-node publish path must also short-circuit when the broker
+        // is DEGRADED (redis-loss-grace-period-ms debounce window). Local fan-out still happens; only
+        // the broker.publish(...) call is avoided so a doomed publish does not waste a transport round-trip.
+        localSender.addUri("/ws/test");
+
+        int publishedBefore = broker.getPublishedEnvelopes().size();
+
+        // Degrade the broker but leave nodeManager state == ACTIVE (the debounce window).
+        broker.setState(BrokerState.DEGRADED);
+        assertEquals(NodeState.ACTIVE, nodeManager.getState(),
+                "Node state machine must still be ACTIVE during grace-period debounce");
+
+        clusterSender.topicMessage("/ws/test", new TextMessage("hello"));
+
+        // Local fan-out must still have happened.
+        assertEquals(1, localSender.topicMessageCount.get(),
+                "Local fan-out must still occur when broker is DEGRADED");
+        // But the broker must NOT have been asked to publish.
+        assertEquals(publishedBefore, broker.getPublishedEnvelopes().size(),
+                "broker.publish must NOT be called when broker is DEGRADED");
+    }
+
+    @Test
     void localQueryMethodsDelegateToLocalSender() {
         localSender.addUri("/ws/test");
 

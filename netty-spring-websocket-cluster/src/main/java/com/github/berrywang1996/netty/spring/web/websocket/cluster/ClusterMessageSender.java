@@ -337,8 +337,11 @@ public class ClusterMessageSender implements MessageSender {
         // 1. Local fan-out first (always, even if broker is degraded)
         localSender.topicMessage(uri, message);
 
-        // 2. Publish to cluster broker (at-most-once) — skip if degraded
-        if (nodeManager.getState() == NodeState.ACTIVE) {
+        // 2. Publish to cluster broker (at-most-once) — skip if degraded.
+        // P1 (RC14): also gate on broker.state()==ACTIVE so during the redis-loss-grace-period-ms
+        // debounce window (transport lost but node state machine still ACTIVE) we don't issue a
+        // publish the broker would refuse anyway. Mirrors the L6 gate in sendMessage().
+        if (nodeManager.getState() == NodeState.ACTIVE && broker.state() == BrokerState.ACTIVE) {
             ClusterEnvelope envelope = buildBroadcastEnvelope(uri, message);
             if (exceedsSizeLimit(envelope)) {
                 handlePublishFailure("broadcast for URI " + uri + " exceeds messageMaxSizeBytes ("
@@ -454,8 +457,11 @@ public class ClusterMessageSender implements MessageSender {
             return true;
         }
 
-        // Not local — send close intent to the owning node via unicast
-        if (nodeManager.getState() == NodeState.ACTIVE) {
+        // Not local — send close intent to the owning node via unicast.
+        // P1 (RC14): also gate on broker.state()==ACTIVE so during the redis-loss-grace-period-ms
+        // debounce window (transport lost but node state machine still ACTIVE) we don't waste a
+        // bounded registry lookup the broker can't unicast anyway. Mirrors the L6 gate in sendMessage().
+        if (nodeManager.getState() == NodeState.ACTIVE && broker.state() == BrokerState.ACTIVE) {
             String targetNodeId = lookupNodeCached(uri, sessionId);
             if (targetNodeId != null) {
                 try {
