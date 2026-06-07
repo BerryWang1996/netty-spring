@@ -12,6 +12,11 @@
       "description": "Unique identifier for this node. Null or empty auto-generates a UUID."
     },
     {
+      "name": "server.netty.websocket.cluster.redis.cluster-nodes",
+      "type": "java.lang.String",
+      "description": "Comma-separated Redis Cluster seed nodes (host:port,host:port,...). Empty (default) = standalone/sentinel via redis.uri. Non-empty selects the RedisClusterClient transport path — the broker, registry, heartbeat and reaper all run against Redis Cluster (since 1.9.0-RC7). Mutually exclusive with reliable.enable in RC7 (Redis Streams XADD/XREADGROUP cross-slot semantics are deferred); use the standalone/sentinel path for at-least-once reliable broadcast."
+    },
+    {
       "name": "server.netty.websocket.cluster.redis.uri",
       "type": "java.lang.String",
       "description": "Redis connection URI. Topology is selected by the scheme: redis://host:port (standalone), redis-sentinel://host:port/?sentinelMasterId=... (sentinel). Use rediss:// for TLS and redis://:password@host for auth — Redis is a trusted control plane and MUST be secured in production.",
@@ -163,6 +168,12 @@
       "name": "server.netty.websocket.cluster.auth.permissive",
       "type": "java.lang.Boolean",
       "description": "Migration mode: when true, UNSIGNED inbound envelopes are accepted (while still signing outbound) so HMAC can be rolled out node-by-node without cross-node message loss; flip to false (strict) once all nodes sign. Default false.",
+      "defaultValue": false
+    },
+    {
+      "name": "server.netty.websocket.cluster.trace-propagation.enable",
+      "type": "java.lang.Boolean",
+      "description": "Opt-in W3C TraceContext propagation across cluster hops (since 1.9.0-RC6). Disabled by default — when false, behavior and wire bytes are identical to pre-RC6 (no MDC mutation, no envelope traceparent field). When true, the outbound publisher injects the current traceparent (from MDC / OpenTelemetry context) into the envelope, and inbound consumers extract it onto MDC for the duration of dispatch so logs and downstream spans correlate across nodes. Opt-in to keep zero-dep deployments byte-identical.",
       "defaultValue": false
     }
   ],
