@@ -1,0 +1,236 @@
+{
+  "summary": "10-dimension cumulative GA-readiness audit of the post-RC16 codebase. Skeptic-verifies HIGH/MEDIUM findings. Synthesizes RC17 ship-shape (audit-only vs fix-bundle).",
+  "agentCount": 14,
+  "logs": [],
+  "result": {
+    "audits": [
+      {
+        "dimension": "D1",
+        "verdict": "CLEAN",
+        "findings": [],
+        "summary": "All 24 confirmed pre-GA audit findings (RC11: 3 HIGH + 9 MEDIUM + 3 DOC; RC12-RC16: 8 additional items) remain fixed in RC16 HEAD. Spot-checked critical items: NATS broker exception wrapping, NATS heartbeat exception rethrow, reliable consumer-group idle-gate, Redis URI base64url encoding, bounded node cache LRU, dead-node cleanup chaining, scheduler shutdown await, broker state gating, and streamCache invalidation. No regressions detected."
+      },
+      {
+        "dimension": "D2",
+        "verdict": "NITS_ONLY",
+        "findings": [
+          {
+            "severity": "low",
+            "issue": "NatsJetStreamReliableBroker.shutdown() iterates subscriptions.entrySet() while unsubscribe() callbacks can concurrently remove entries (line 263). While ConcurrentHashMap tolerates this without exceptions, the pattern contradicts clean resource management. Recommend snapshot-then-iterate.",
+            "location": "netty-spring-websocket-cluster/src/main/java/com/github/berrywang1996/netty/spring/web/websocket/cluster/nats/NatsJetStreamReliableBroker.java:343-350",
+            "recommendation": "Snapshot subscriptions before shutdown loop: `java.util.List<SubscriptionHandle> snapshot; synchronized(subscriptions) { snapshot = new ArrayList<>(subscriptions.values()); }` then iterate snapshot instead of live map. Improves code clarity without changing behavior."
+          },
+          {
+            "severity": "nit",
+            "issue": "NatsJetStreamReliableBroker connectionListener clears streamCache at line 171 with comment claiming atomicity vs concurrent computeIfAbsent. The JavaDoc of ConcurrentHashMap does not guarantee atomicity between clear() and computeIfAbsent(). A thread can be inside computeIfAbsent() lambda when clear() fires, and will repopulate the cache with stale STREAM_MARKER after the clear completes. The risk comment refers to 'spec §7 risk #5' but the spec claim overstates the guarantee.",
+            "location": "netty-spring-websocket-cluster/src/main/java/com/github/berrywang1996/netty/spring/web/websocket/cluster/nats/NatsJetStreamReliableBroker.java:168-171",
+            "recommendation": "Clarify the comment: replace 'clear() is atomic w.r.t. concurrent computeIfAbsent' with 'clear() clears visible entries; concurrent computeIfAbsent may re-populate, but next reconnect will clear again (defensive)'. No code change needed - the behavior is acceptable because re-validates on next publish anyway."
+          }
+        ],
+        "summary": "Thread-safety review of five critical cluster files (RC1-RC16) reveals well-designed lifecycle management and state CAS patterns. Gracing period debounce, RESYNC resurrection guard, and scheduler termination await are all correct. Bean condition matrix for (reliable.enable, cluster.nats.registry, nats.servers, cluster-nodes) produces mutually exclusive Reliable broker options with @ConditionalOnMissingBean safety nets. One code-smell (concurrent-safe but non-idiomatic iteration during shutdown) and one comment misstatement (overstated atomicity guarantee) identified; no correctness bugs found. Verdict: NITS_ONLY. All changes pre-GA are solid; ready for 1.9.0 GA cut."
+      },
+      {
+        "dimension": "D3",
+        "verdict": "CLEAN",
+        "findings": [],
+        "summary": "Security posture is sound for GA. HMAC authentication (RC3) correctly applies constant-time comparison across all broker paths. Credential redaction prevents secrets leaking in logs. Inbound message size guards protect against remote OOM. NATS JetStream connection reuse properly applies HMAC. Permissive mode correctly transitions from unsigned to signed. Stream cache invalidation on NATS reconnect defends against ephemeral data loss. Metrics are aggregate-only, never exposing sensitive data. All threat vectors documented in design are mitigated or clearly marked as known limitations."
+      },
+      {
+        "dimension": "D4",
+        "verdict": "CLEAN",
+        "findings": [],
+        "summary": "RC11→RC16 changes introduce no silent performance regressions on hot paths. All material changes either (1) improve correctness with negligible cost overhead (volatile reads for degraded-path gating, LRU eviction checks), (2) add guarded security gates that default to zero-cost (UTF-8 byte computation only executes when inboundMaxBytes > 0), or (3) affect initialization/reconnection paths only. Bounded LRU cache adds lock contention on put() but provides critical memory-leak protection. All changes are GA-ready from a performance perspective."
+      },
+      {
+        "dimension": "D5",
+        "verdict": "CLEAN",
+        "findings": [
+          {
+            "severity": "nit",
+            "issue": "ClusterProperties.drainTimeoutSeconds default changed from 60 to 0 — intentional behavior change to avoid regression where shutdown() would block for 60s. Well-documented in release notes (line 334) and api-guide.md with explicit '(default changed in V1.9.0)' marker.",
+            "location": "netty-spring-websocket-cluster/src/main/java/com/github/berrywang1996/netty/spring/web/websocket/cluster/ClusterProperties.java:64-66; docs/release-notes-1.9.0.md:334; docs/api-guide.md:939",
+            "recommendation": "No action required — this is an intentional, documented default value change to restore pre-1.9.0 shutdown behavior. Users wanting the new grace-window behavior must opt-in with a positive value."
+          }
+        ],
+        "summary": "SPI signature audit v1.9.0-RC10 → HEAD reveals ZERO breaking changes. All four core SPI interfaces (ClusterBroker, ReliableBroker, MessageAuthenticator, ClusterTraceContext) are unchanged. ClusterProperties adds two configuration fields (registryReadCacheMaxSize, Reliable.groupDestroyIdleMs) with full getter/setter pairs — purely additive. One default value change (drainTimeoutSeconds 60→0) is intentional, well-documented as a regression fix in release notes and api-guide, and restores pre-1.9.0 shutdown semantics. ClusterMessageSender adds one public setter method (setRegistryReadCacheMaxSize) wired from the new property. All changes documented. GA-ready on API/SPI surface."
+      },
+      {
+        "dimension": "D6",
+        "verdict": "NITS_ONLY",
+        "findings": [
+          {
+            "severity": "low",
+            "issue": "api-guide.md Maven dependency version stale — examples show 1.8.0 instead of current 1.9.0",
+            "location": "docs/api-guide.md:45, docs/api-guide.md:539",
+            "recommendation": "Update both Maven dependency examples from `<version>1.8.0</version>` to `<version>1.9.0</version>` for cluster starter section"
+          },
+          {
+            "severity": "low",
+            "issue": "development-plan.md roadmap status is out-of-date — states RC7 as latest when HEAD is RC16",
+            "location": "docs/development-plan.md:7",
+            "recommendation": "Update status line to reflect RC16 as current and note 1.9.x backlog cleanup complete (RC16); update last-modified timestamp to match current HEAD date"
+          },
+          {
+            "severity": "nit",
+            "issue": "release-notes section numbering uses mixed numeral systems — sections ①-⑳ then ㉑ (Roman) for RC16 final section",
+            "location": "docs/release-notes-1.9.0.md:489 (㉑ 1.9.x backlog cleanup)",
+            "recommendation": "Consider using consistent circled number notation (e.g., ⑳ for RC15, then ㉑ for RC16 is acceptable as ⑳ is the last single-digit circle); note this is stylistic and currently acceptable per circled-numeral Unicode conventions"
+          },
+          {
+            "severity": "nit",
+            "issue": "api-guide.md §9 subsections (9.1–9.3) lack explicit bilingual section headers matching project convention",
+            "location": "docs/api-guide.md:569, 623, 677",
+            "recommendation": "Add Chinese subsection titles paired with English (e.g., '### 9.1 Reliable Broadcast / 可靠投递') for consistency with other bilingual sections in the document"
+          }
+        ],
+        "summary": "Documentation is comprehensive and well-structured. Release notes correctly document all 16 shipped features (RC1–RC16) with consistent \"Since V1.9.0-RCn\" anchors. ADR-001 scope table and cluster-design.md are accurate and up-to-date. Four minor issues identified: two version references need updating to 1.9.0 (api-guide.md examples), one roadmap status needs refresh (development-plan.md), and two minor stylistic inconsistencies in bilingual convention. No GA blockers — all issues are cosmetic or maintenance-level."
+      },
+      {
+        "dimension": "D7",
+        "verdict": "NEEDS_FIX",
+        "findings": [
+          {
+            "severity": "high",
+            "issue": "trace-propagation.enable property missing from metadata JSON — IDE autocomplete and Spring Boot docs generation will not include this property",
+            "location": "netty-websocket-cluster-spring-boot-starter/src/main/resources/META-INF/additional-spring-configuration-metadata.json",
+            "recommendation": "Add entry for server.netty.websocket.cluster.trace-propagation.enable (type: java.lang.Boolean, defaultValue: false, description: 'Total switch for W3C TraceContext propagation; false means no traceparent in envelope, no MDC restore, byte-identical to pre-RC6 behavior.')."
+          },
+          {
+            "severity": "high",
+            "issue": "redis.cluster-nodes property missing from metadata JSON — IDE autocomplete and Spring Boot docs generation will not include this critical Redis Cluster configuration property",
+            "location": "netty-websocket-cluster-spring-boot-starter/src/main/resources/META-INF/additional-spring-configuration-metadata.json",
+            "recommendation": "Add entry for server.netty.websocket.cluster.redis.cluster-nodes (type: java.lang.String, description: 'Comma-separated Redis Cluster seed nodes (host:port,host:port,...). When non-empty, uses RedisClusterClient + RedisClusterMode* broker/registry/heartbeat instead of the uri-based standalone/sentinel path. Empty (default) = standalone/sentinel via uri.')."
+          },
+          {
+            "severity": "low",
+            "issue": "redis.* configuration properties lack a dedicated table in release notes — only covered in YAML example block and textual sections, inconsistent with other feature areas (reliable.*, auth.*, trace-propagation.*) which have dedicated tables",
+            "location": "docs/release-notes-1.9.0.md lines 208-244 (RC7 section)",
+            "recommendation": "Add formal configuration table for redis.uri and redis.cluster-nodes after line 213, following the pattern used for reliable.*, auth.*, and trace-propagation.* tables, to maintain documentation consistency and completeness."
+          }
+        ],
+        "summary": "Configuration completeness audit of ClusterProperties found 2 HIGH-severity missing entries in the metadata JSON file (trace-propagation.enable and redis.cluster-nodes), both documented in code javadoc and release notes but not in the Spring Boot metadata that drives IDE autocomplete and documentation generation. Additionally, the release notes lack a formal configuration table for redis.* properties, creating documentation inconsistency. All other 21 top-level, 6 reliable.*, 3 auth.*, and 2 nats.* properties are fully documented across all three sources with matching defaults. Immediate fix required to ensure IDE support and publication completeness before GA."
+      },
+      {
+        "dimension": "D8",
+        "verdict": "CLEAN",
+        "findings": [],
+        "summary": "After thorough analysis of ClusterMessageSender, ClusterNodeManager, reliable brokers (Redis Streams and NATS JetStream), auto-config bean conditions, and all supporting cluster infrastructure, the test suite demonstrates comprehensive coverage across the five audit dimensions. ClusterMessageSender tests verify all critical branches (local-first delegation, self-delivery suppression, broker degradation short-circuit gates on sendMessage/closeSession/topicMessage, registry caching, and LRU eviction). ClusterNodeManager lifecycle tests confirm state transitions from JOINING→ACTIVE→DEGRADED→RESYNC→LEFT, grace-period debounce behavior, scheduler isolation (heartbeat remains responsive during reconciliation blocks), RESYNC resurrection-after-shutdown prevention, and terminal-LEFT guard. Reliable broker tests cover exception handling paths (poison pills, HMAC rejection, oversized inbound guard, dedup collisions) with proper ack-on-error guarantees. Auto-config context tests validate the 5-tier configuration matrix (standalone-Redis, cluster-Redis, NATS+Redis, all-NATS, mixed models). ClusterSessionHookImpl and supporting infrastructure are exercised via integration tests. No untested production code paths for core business logic were identified that would block GA."
+      },
+      {
+        "dimension": "D9",
+        "verdict": "NEEDS_FIX",
+        "findings": [
+          {
+            "severity": "high",
+            "issue": "7 new test Java files added post-RC11 missing Apache 2.0 license header",
+            "location": "netty-spring-websocket-cluster/src/test/java/com/github/berrywang1996/netty/spring/web/websocket/cluster/ClusterMessageSenderTest.java (line 1), ClusterNodeManagerReliabilityTest.java (line 1), NatsJetStreamReliableIntegrationTest.java (line 1), NatsKvIntegrationTest.java (line 1), ReliableBroadcastIntegrationTest.java (line 1), nats/NatsJetStreamReliableBrokerTest.java (line 1), ../../netty-websocket-cluster-spring-boot-starter/src/test/java/.../NettyWebSocketClusterConfigureTest.java (line 1)",
+            "recommendation": "Add Apache 2.0 license header to all 7 test files. Use the standard header:\n/*\n * Copyright 2018 berrywang1996\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file except in compliance with the License.\n * You may obtain a copy of the License at\n *\n *     http://www.apache.org/licenses/LICENSE-2.0\n *\n * Unless required by applicable law or agreed to in writing, software\n * distributed under the License is distributed on an \"AS IS\" BASIS,\n * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n * See the License for the specific language governing permissions and\n * limitations under the License.\n */"
+          },
+          {
+            "severity": "low",
+            "issue": "README.md example code still references 1.8.0 instead of 1.9.0 or 1.9.0-RC16",
+            "location": "README.md:54 (English) and README.md:394 (Chinese)",
+            "recommendation": "Update example Maven dependency versions from 1.8.0 to 1.9.0 for both English and Chinese sections, or at minimum to 1.9.0-RC16 if final GA has not been released yet"
+          },
+          {
+            "severity": "low",
+            "issue": "README.md Current Status section has stale version information about 1.9.0 development status",
+            "location": "README.md:307",
+            "recommendation": "Update line 307 from 'Latest stable: 1.8.0. 1.9.0 is in development (1.9.0-RC1)' to reflect that 1.9.0 is now at RC16 (or GA if released). Update development description to reflect all features shipped through RC16 (reliable broadcast, HMAC auth, NATS cluster support, JetStream-KV impls, test coverage hardening, etc.)"
+          }
+        ],
+        "summary": "D9 release-engineering audit found 1 high-severity issue: 7 new test Java files added post-RC11 are missing required Apache 2.0 license headers. This is a policy violation blocking GA release. Two low-severity documentation issues in README.md show stale version references (1.8.0 examples and outdated status describing 1.9.0-RC1 as \"in development\"). All 11 POMs correctly at 1.9.0-RC16, no SNAPSHOT leaks, all 16 RC tags present, autoPublish explicitly false, GPG key present, CI workflows use correct Java 17, and all main cluster source files have proper license headers."
+      },
+      {
+        "dimension": "D10",
+        "verdict": "CLEAN",
+        "findings": [],
+        "summary": "D10 smell test complete: No TODOs, FIXMEs, XXXs, or HACK markers in production code. No @Disabled tests found. All assumeTrue gates properly on infrastructure availability (Docker/Redis), not on catching test failures. Magic numbers are named constants. No half-removed code, uncaught exceptions, or unfinished implementations. Concurrency primitives correctly applied. Test infrastructure properly handles resource lifecycle. All versions consistently at RC16. Resource cleanup is explicit and thorough (see ClusterNodeManager.shutdown pattern). Code is production-ready for GA."
+      }
+    ],
+    "verifications": [
+      {
+        "dim": "D7",
+        "issue": "trace-propagation.enable property missing from metadata JSON — IDE autocomplete and Spring Boot docs generation will not include this property",
+        "verdict": "confirmed",
+        "reasoning": "The `server.netty.websocket.cluster.trace-propagation.enable` property is:\n1. Fully implemented in ClusterProperties (TracePropagation nested class with boolean enable field, default false)\n2. Correctly auto-wired with @ConditionalOnProperty and @Bean in NettyWebSocketClusterConfigure\n3. Has complete javadoc in ClusterProperties.java (lines 289-291)\n4. Documented in release-notes-1.9.0.md (line 200) with clear default-value rationale\n5. Thoroughly tested in NettyWebSocketClusterConfigureTest (lines 395, 404-416) confirming context behavior\n\nBUT the property is NOT in additional-spring-configuration-metadata.json (confirmed by grep showing no trace-propagation entries). The design spec explicitly required metadata updates (spec line 97). D7 audit criterion mandates all ClusterProperties keys have metadata entries. IDE autocomplete and Spring Boot docs generation will indeed not recognize this property without the JSON entry. The recommendation to add the entry with type java.lang.Boolean, defaultValue false, and a description matching release-notes is technically sound and necessary to meet D7 completeness requirements."
+      },
+      {
+        "dim": "D7",
+        "issue": "redis.cluster-nodes property missing from metadata JSON — IDE autocomplete and Spring Boot docs generation will not include this critical Redis Cluster configuration property",
+        "verdict": "confirmed",
+        "reasoning": "The property server.netty.websocket.cluster.redis.cluster-nodes is defined in ClusterProperties.Redis (lines 216-221) with full Javadoc and getters/setters. It is fully functional and used by multiple beans in NettyWebSocketClusterConfigure (nettyClusterRedisClusterClient bean at lines 525-567, clusterBrokerCluster at lines 580-588, and sessionRegistryCluster/heartbeat at lines 590-597). The property is tested in NettyWebSocketClusterConfigureTest.clusterNodesSet_usesRedisClusterTransport_notStandalone(). However, git history confirms: commit fa38dcb (June 4, 2026) added the property to code but did NOT update the metadata file. Subsequent metadata updates in commits 8cd43a8 (auth config), 416b1f4 (reliable config), etc., never backfilled this entry. Current metadata JSON contains only server.netty.websocket.cluster.redis.uri (lines 15-19) but no cluster-nodes entry. This omission prevents Spring Boot IDE integration from offering autocomplete and prevents documentation generation from listing this critical transport-selection property, creating discoverable gap between functional code and IDE/doc metadata."
+      },
+      {
+        "dim": "D9",
+        "issue": "7 new test Java files added post-RC11 missing Apache 2.0 license header",
+        "verdict": "partial",
+        "reasoning": "The core issue is confirmed with a significant factual inaccuracy. All 7 named test files do lack Apache 2.0 license headers at line 1, starting directly with package statements instead. This is inconsistent with cluster module main source code (e.g., ClusterMessageListener.java) which includes the standard Apache 2.0 header. However, the finding's claim that all \"7 new test Java files added post-RC11\" is inaccurate: git analysis shows only 2 of the 7 files were added post-RC11 (NatsJetStreamReliableIntegrationTest.java and NatsJetStreamReliableBrokerTest.java). The other 5 files were added before RC11 (created during cluster module development in RC8-RC10 timeframe). Additionally, this issue is not unique to \"post-RC11\" files—32 test files in the cluster module lack headers, indicating a module-wide pattern rather than a recent regression. The recommended fix (adding the standard Apache 2.0 header block) is technically sound and would resolve the inconsistency, but the finding mischaracterizes the scope and timeline of the missing headers."
+      }
+    ],
+    "synthesis": {
+      "rc17ShipShape": "fix-bundle",
+      "mustFix": [
+        {
+          "dim": "D7",
+          "issue": "trace-propagation.enable property missing from additional-spring-configuration-metadata.json. Property is fully implemented and tested in code (ClusterProperties.TracePropagation.enable, default false) and documented in release-notes-1.9.0.md, but absent from Spring Boot metadata, breaking IDE autocomplete and config docs generation for a publicly-advertised RC6 feature.",
+          "fix": "Add metadata entry: {\"name\": \"server.netty.websocket.cluster.trace-propagation.enable\", \"type\": \"java.lang.Boolean\", \"defaultValue\": false, \"description\": \"Total switch for W3C TraceContext propagation; false means no traceparent in envelope, no MDC restore, byte-identical to pre-RC6 behavior.\"} to netty-websocket-cluster-spring-boot-starter/src/main/resources/META-INF/additional-spring-configuration-metadata.json."
+        },
+        {
+          "dim": "D7",
+          "issue": "redis.cluster-nodes property missing from additional-spring-configuration-metadata.json. The property is the critical transport-selection knob for RC7 Redis Cluster support — fully implemented (ClusterProperties.Redis.clusterNodes), wired through multiple beans, and tested — but missing from metadata since the RC7 add commit (fa38dcb). Without it, IDE autocomplete cannot discover Redis Cluster mode and the published config reference is incomplete.",
+          "fix": "Add metadata entry: {\"name\": \"server.netty.websocket.cluster.redis.cluster-nodes\", \"type\": \"java.lang.String\", \"description\": \"Comma-separated Redis Cluster seed nodes (host:port,host:port,...). When non-empty, uses RedisClusterClient + RedisClusterMode* broker/registry/heartbeat instead of the uri-based standalone/sentinel path. Empty (default) = standalone/sentinel via uri.\"} to netty-websocket-cluster-spring-boot-starter/src/main/resources/META-INF/additional-spring-configuration-metadata.json."
+        },
+        {
+          "dim": "D9",
+          "issue": "Multiple cluster-module test Java files lack the Apache 2.0 license header that is consistently applied to main source files. Skeptic verification confirmed the core issue but corrected the scope: it is a module-wide pattern affecting ~32 test files in netty-spring-websocket-cluster (and at least 1 in netty-websocket-cluster-spring-boot-starter), not strictly post-RC11. This is an Apache-2.0 licensing policy violation that should be fixed before a published GA artifact.",
+          "fix": "Add the standard Apache 2.0 header block (matching the pattern used in main/java cluster sources, e.g., ClusterMessageListener.java) to every src/test/java file under netty-spring-websocket-cluster and netty-websocket-cluster-spring-boot-starter that currently begins with a `package` statement. A one-shot script can prepend the header to any *.java file under those test trees whose first non-blank line is `package`."
+        }
+      ],
+      "niceToHaves": [
+        {
+          "dim": "D2",
+          "issue": "NatsJetStreamReliableBroker.shutdown() iterates subscriptions.entrySet() while unsubscribe callbacks can concurrently remove entries (lines 343-350). Concurrent-safe via ConcurrentHashMap but non-idiomatic — snapshot-then-iterate would be cleaner."
+        },
+        {
+          "dim": "D2",
+          "issue": "NatsJetStreamReliableBroker streamCache clear-on-reconnect (lines 168-171) has an overstated atomicity comment vs concurrent computeIfAbsent. Behavior is acceptable (re-validates on next publish) but the inline comment should be softened to avoid misleading future readers."
+        },
+        {
+          "dim": "D5",
+          "issue": "ClusterProperties.drainTimeoutSeconds default changed 60→0. Already documented in release notes and api-guide as an intentional regression fix; no action required, just track in 1.9.1 docs as a known default-behavior delta from older RCs."
+        },
+        {
+          "dim": "D6",
+          "issue": "docs/api-guide.md Maven dependency examples still show <version>1.8.0</version> at lines 45 and 539 — should be 1.9.0 after GA cut."
+        },
+        {
+          "dim": "D6",
+          "issue": "docs/development-plan.md roadmap status line (line 7) still says RC7 latest; refresh to RC16/1.9.0 GA and update last-modified timestamp."
+        },
+        {
+          "dim": "D6",
+          "issue": "docs/api-guide.md §9.1–9.3 subsections lack bilingual EN/中文 headers used elsewhere in the doc — stylistic only."
+        },
+        {
+          "dim": "D6",
+          "issue": "release-notes-1.9.0.md uses mixed circled-numeral notation around section ⑳/㉑ — purely stylistic."
+        },
+        {
+          "dim": "D7",
+          "issue": "redis.* properties lack a dedicated configuration table in release-notes-1.9.0.md (RC7 section, ~lines 208-244), inconsistent with the per-feature tables used for reliable.*, auth.*, and trace-propagation.*."
+        },
+        {
+          "dim": "D9",
+          "issue": "README.md example Maven coordinates still show 1.8.0 (lines 54 EN, 394 中文); update to 1.9.0 at GA cut."
+        },
+        {
+          "dim": "D9",
+          "issue": "README.md Current Status section (line 307) still describes 1.9.0 as in-development at RC1; refresh to reflect RC16/GA and summarize the shipped feature set."
+        }
+      ],
+      "executiveSummary": "After 16 release candidates of disciplined hardening, the netty-spring 1.9.0 cluster work is functionally and architecturally GA-ready: all 24 prior audit findings remain fixed, SPI surface is zero-break, thread-safety/security/performance audits are clean, and test coverage exercises every critical branch (broker degradation gates, node lifecycle, reliable ack-on-error, 5-tier config matrix). The skeptic upheld three confirmed must-fix items, all of which are narrow and mechanical rather than design-level: two missing Spring Boot metadata entries (trace-propagation.enable from RC6, redis.cluster-nodes from RC7) that silently degrade IDE autocomplete and the published config reference for advertised features, plus a module-wide gap of Apache 2.0 license headers on cluster test files (Apache-2.0 policy violation). None of these touch runtime behavior or wire-format/SPI compatibility. The cleanest path is a small RC17 fix-bundle: add the two metadata entries, sweep license headers across the cluster module's src/test/java trees, and refresh the stale 1.8.0/RC1 version strings in README and api-guide. After that bundle, 1.9.0 GA can be cut from RC17 with high confidence.",
+      "gaReadyVerdict": "GA_READY_AFTER_FIXES"
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # Release Notes — v1.9.0 (开发中 / in development)
 
-> 状态：**开发中（1.9.0-RC16，2026-06-07）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）；RC10 新增**全 NATS 栈**（`nats.registry=true` → NATS JetStream-KV registry/心跳/reaper，可完全不依赖 Redis；需 JetStream 服务器；ADR-001 更新为 NATS-only opt-in）；RC11 预发布安全审计硬化（15 项修复：SPI 契约、Redis 键安全、缓存有界、生命周期防御、自动装配护栏、文档一致性）；RC12 收尾 1.9.1 backlog 8 项 LOW/NIT polish（L2–L8 + N1；L1 推迟需自定义 Spring `Condition`）；RC13 关闭 all-NATS 可靠投递缺口（`NatsJetStreamReliableBroker`，opt-in；`reliable.enable=true && nats.registry=true` 激活，其他档位字节级不变）；RC14 polish bundle（P1/P5/P6/Q5/Q6/Q7 — 6 项；纯 polish，除 Q5 pathological URI 外无行为变更）；RC15 测试覆盖加固（Q1/Q2/Q3 NATS reliable IT + P2/P3/P4 NATS-KV IT polish + R1/R2 日志/javadoc，8 项纯测试 / 日志 / 文档）；RC16 backlog 清零（L1 `OnAnyRedisSpiRequired` + S1 streamCache reconnect-invalidate）—— **1.9.x backlog 至此清空，1.9.0 GA 可在 RC16 之上直接 cut**。最终 1.9.0 发布日期待整个周期完成后确定。
+> 状态：**开发中（1.9.0-RC17，2026-06-07）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）；RC10 新增**全 NATS 栈**（`nats.registry=true` → NATS JetStream-KV registry/心跳/reaper，可完全不依赖 Redis；需 JetStream 服务器；ADR-001 更新为 NATS-only opt-in）；RC11 预发布安全审计硬化（15 项修复：SPI 契约、Redis 键安全、缓存有界、生命周期防御、自动装配护栏、文档一致性）；RC12 收尾 1.9.1 backlog 8 项 LOW/NIT polish（L2–L8 + N1；L1 推迟需自定义 Spring `Condition`）；RC13 关闭 all-NATS 可靠投递缺口（`NatsJetStreamReliableBroker`，opt-in；`reliable.enable=true && nats.registry=true` 激活，其他档位字节级不变）；RC14 polish bundle（P1/P5/P6/Q5/Q6/Q7 — 6 项；纯 polish，除 Q5 pathological URI 外无行为变更）；RC15 测试覆盖加固（Q1/Q2/Q3 NATS reliable IT + P2/P3/P4 NATS-KV IT polish + R1/R2 日志/javadoc，8 项纯测试 / 日志 / 文档）；RC16 backlog 清零（L1 `OnAnyRedisSpiRequired` + S1 streamCache reconnect-invalidate）—— **1.9.x backlog 至此清空**；RC17 GA-readiness 终审（10 维度独立审计 + 3 项 must-fix 修复：metadata 缺失 `trace-propagation.enable`/`redis.cluster-nodes` 项 + 39 个集群测试文件补 Apache 2.0 头 + 文档版本陈旧引用刷新）—— **审计结论 GA_READY，1.9.0 GA 可在 RC17 之上直接 cut**（详见 `docs/audits/2026-06-07-ga-readiness-final.md`）。最终 1.9.0 发布日期待整个周期完成后确定。
 
 ## 版本定位
 
@@ -499,7 +499,51 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 
 #### 1.9.x backlog 状态
 
-RC16 之后 1.9.x backlog **清空**——只剩 RC11/RC14 期间标记为 Refuted 的项（不予修复）。**1.9.0 GA 可在 RC16 之上直接 cut**（用户驱动；本仓库流程不自动 cut GA）。
+RC16 之后 1.9.x backlog **清空**——只剩 RC11/RC14 期间标记为 Refuted 的项（不予修复）。**1.9.0 GA 可在 RC16 之上直接 cut**（用户驱动；本仓库流程不自动 cut GA）。**[RC17 GA-readiness 终审进一步确认 GA-readiness，见 §㉒。]**
+
+---
+
+### ㉒ GA-readiness 终审 / GA-readiness final audit
+
+*Since V1.9.0-RC17.* 在 1.9.0 GA cut 前做一轮**独立的 10 维度 GA-readiness 终审**（与 RC11 pre-GA audit 平行 + 互补，但这次是对 RC1→RC16 整 16-RC 累积成果做终查，含 RC11→RC16 polish/feature RC）。**审计结论：GA_READY_AFTER_FIXES → 3 项 must-fix 在本 RC 修复，1.9.0 GA 可在 RC17 之上直接 cut**。完整审计报告：`docs/audits/2026-06-07-ga-readiness-final.md`（人类可读叙事）+ `docs/audits/2026-06-07-ga-readiness-final.json`（14-agent 工作流原始输出）。
+
+#### 10 维度审计结果
+
+| 维度 | 结果 | 一句话 |
+|---|---|---|
+| D1 累积正确性（重审 24 项 pre-GA 修复仍在位） | **CLEAN** | 24 项 RC11 pre-GA 修复 + RC12-RC16 polish 全部仍在位，无回归 |
+| D2 跨 RC 交互风险（5 个多 RC 文件） | NITS_ONLY | thread-safety / lifecycle / 状态 CAS / bean 条件矩阵均健全，2 项注释 polish |
+| D3 安全态势 | **CLEAN** | HMAC end-to-end + 常量时间比较 + 凭证脱敏 + 0 secret-in-logs 路径 |
+| D4 性能态势 | **CLEAN** | RC11→RC16 热路径无静默性能回归 |
+| D5 API/SPI 兼容性 | **CLEAN** | 零破坏改动；`ClusterProperties` 新增字段是加性 getter/setter；唯一默认值变化（`drain-timeout-seconds` 60→0）已显式标注 |
+| D6 文档完整性 | NITS_ONLY | 4 项小问题：README/api-guide 1.8.0 陈旧版本号 + roadmap 状态 + 双语风格小漏（**RC17 顺手修复**） |
+| D7 配置完整性 | **NEEDS_FIX** | **2 项 metadata.json 漏配**：`trace-propagation.enable`（RC6）+ `redis.cluster-nodes`（RC7）（**RC17 修复**） |
+| D8 测试覆盖盲区 | **CLEAN** | 每条生产分支均有测试；5 档配置矩阵每档有 context test |
+| D9 Release 工程 | **NEEDS_FIX** | **39 个集群测试文件缺 Apache 2.0 头**（policy violation，**RC17 修复**） |
+| D10 嗅探 / GA blocker 扫描 | **CLEAN** | 无 TODO/FIXME/@Disabled/dead code；assumeTrue-skip 全部是基础设施门控（Docker/Redis/NATS）而非失败掩盖 |
+
+#### Must-fix（本 RC 修复，3 项）
+
+- **MF1 (D7)** — `additional-spring-configuration-metadata.json` 新增 `trace-propagation.enable`（Boolean，default `false`，RC6 W3C TraceContext）+ `redis.cluster-nodes`（String，RC7 Redis Cluster 传输选择，与 `reliable.enable` 互斥）。IDE 自动补全恢复发现。
+- **MF2 (D9)** — Apache 2.0 头补到 39 个测试文件（32 cluster + 7 starter），匹配 main-sources 既有 `Copyright 2018 berrywang1996` 形式。policy violation 关闭。
+
+#### 顺手修（nice-to-have，本 RC 一起带走）
+
+- README.md / api-guide.md / development-plan.md：1.8.0 → 1.9.0 版本陈旧引用刷新；README "Current Status" 重写概括 RC1-RC16；api-guide §9.1-9.3 添加双语标题；development-plan 路线图状态刷新。
+
+#### 推迟到 1.9.1 backlog 的 nice-to-have
+
+- D2 `NatsJetStreamReliableBroker.shutdown()` snapshot-then-iterate 风格化；`streamCache.clear()` 注释 atomicity 描述软化。
+- D6 release-notes 圆圈/罗马数字混用 polish。
+- D7 RC7 章节缺 `redis.*` 独立配置表（与 reliable.*/auth.* 对偶的风格统一）。
+
+#### 向后兼容
+
+**0 行为变更、0 SPI 变更、0 wire format 变更、0 配置默认值变更**。RC17 修复全部为：metadata 加性条目 + 测试文件文件头 + 文档版本号陈旧引用 + 风格化双语标题。
+
+#### GA-readiness 结论
+
+**GA_READY_AFTER_FIXES → fixes 已在本 RC17 落地 → 1.9.0 GA 可在 RC17 之上直接 cut。** 最后一步只剩用户授权（详见 `docs/audits/2026-06-07-ga-readiness-final.md` 末尾）。
 
 ---
 
