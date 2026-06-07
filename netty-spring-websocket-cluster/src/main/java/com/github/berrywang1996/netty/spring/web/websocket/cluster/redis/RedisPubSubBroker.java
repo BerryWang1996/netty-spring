@@ -27,6 +27,7 @@ import io.lettuce.core.pubsub.StatefulRedisPubSubConnection;
 import lombok.extern.slf4j.Slf4j;
 
 import java.net.SocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -163,7 +164,7 @@ public class RedisPubSubBroker implements ClusterBroker {
     private void onInboundMessage(String channel, String message) {
         int max = inboundMaxBytes;
         if (max > 0 && message != null) {
-            int sz = message.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+            int sz = message.getBytes(StandardCharsets.UTF_8).length;
             if (sz > max) {
                 log.warn("Dropping oversized inbound cluster message on channel {} ({} > {} bytes) "
                         + "— possible misbehaving/hostile publisher", channel, sz, max);

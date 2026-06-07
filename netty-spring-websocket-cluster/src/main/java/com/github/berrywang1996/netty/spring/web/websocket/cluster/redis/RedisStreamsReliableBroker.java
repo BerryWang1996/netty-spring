@@ -28,6 +28,7 @@ import io.lettuce.core.XReadArgs;
 import io.lettuce.core.api.StatefulRedisConnection;
 import lombok.extern.slf4j.Slf4j;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -232,7 +233,7 @@ public class RedisStreamsReliableBroker implements ReliableBroker {
         // handling as a poison/rejected entry below).
         int max = inboundMaxBytes;
         if (max > 0 && data != null) {
-            int sz = data.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+            int sz = data.getBytes(StandardCharsets.UTF_8).length;
             if (sz > max) {
                 log.warn("Dropping oversized reliable entry {} on {} ({} > {} bytes) — possible "
                         + "misbehaving/hostile publisher; acking to clear PEL", id, streamKey, sz, max);

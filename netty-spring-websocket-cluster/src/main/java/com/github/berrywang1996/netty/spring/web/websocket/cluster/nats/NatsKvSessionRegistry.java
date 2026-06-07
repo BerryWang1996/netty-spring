@@ -154,10 +154,8 @@ public class NatsKvSessionRegistry implements SessionRegistry {
                         // key = n.<b64(nodeId)>.<b64(uri)>.<sessionId>
                         String rest = key.substring(prefix.length());
                         int dot = rest.lastIndexOf('.');
-                        // dot >= 0 (not > 0): for empty-uri membership keys (n.<b64nodeId>..<sid>),
-                        // rest is ".<sid>" and lastIndexOf('.') == 0. substring(0, 0) yields "", so
-                        // the reconstructed session key becomes "s..<sid>" — which is exactly what
-                        // register() wrote for an empty URI. dot > 0 would silently leak it.
+                        // dot >= 0 (not > 0): empty-uri keys are "n.<b64nodeId>..<sid>" so
+                        // lastIndexOf('.') == 0 and substring(0,0) gives "" — matching register()'s "s..<sid>".
                         if (dot >= 0) {
                             String b64uri = rest.substring(0, dot);
                             String sessionId = rest.substring(dot + 1);
