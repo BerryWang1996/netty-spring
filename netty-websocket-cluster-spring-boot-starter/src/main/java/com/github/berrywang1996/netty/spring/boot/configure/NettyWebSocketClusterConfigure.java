@@ -41,6 +41,7 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisSt
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ReliableBroker;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.SessionRegistry;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.support.OnAnyRedisSpiRequired;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
 import com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSender;
@@ -58,6 +59,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClas
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
@@ -135,6 +137,7 @@ public class NettyWebSocketClusterConfigure {
 
     @Bean(destroyMethod = "shutdown")
     @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
+    @Conditional(OnAnyRedisSpiRequired.class)
     @ConditionalOnMissingBean(RedisClient.class)
     public RedisClient nettyClusterRedisClient(ClusterProperties properties) {
         String uri = properties.getRedis().getUri();
@@ -242,6 +245,7 @@ public class NettyWebSocketClusterConfigure {
 
     @Bean(name = "nettyClusterRedisConnection", destroyMethod = "close")
     @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
+    @Conditional(OnAnyRedisSpiRequired.class)
     @ConditionalOnMissingBean(name = "nettyClusterRedisConnection")
     public StatefulRedisConnection<String, String> nettyClusterRedisConnection(RedisClient redisClient) {
         return redisClient.connect();

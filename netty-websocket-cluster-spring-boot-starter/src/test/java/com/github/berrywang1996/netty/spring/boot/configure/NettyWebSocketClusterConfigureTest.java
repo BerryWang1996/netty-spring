@@ -1,7 +1,11 @@
 package com.github.berrywang1996.netty.spring.boot.configure;
 
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterMessageSender;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeHeartbeat;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterReaper;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.SessionRegistry;
 import com.github.berrywang1996.netty.spring.web.websocket.context.*;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -18,6 +22,7 @@ import java.util.Collections;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 /**
  * Spring-context wiring tests for the cluster auto-configuration — verifies the headline
@@ -408,6 +413,92 @@ class NettyWebSocketClusterConfigureTest {
                     assertThat(context).doesNotHaveBean(
                             com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterTraceContext.class);
                 });
+    }
+
+    // ---- L1 (RC16): OnAnyRedisSpiRequired gates Redis client/connection ----
+    // The Condition matches when AT LEAST ONE of the 4 Redis-backed SPI beans
+    // (SessionRegistry, ClusterBroker, ClusterNodeHeartbeat, ClusterReaper) is NOT
+    // user-overridden — i.e. an auto-config default would still need the Redis client.
+    // When all 4 are user-overridden, the Redis client + connection beans are gated off.
+
+    /** L1 (i): all 4 SPI overridden — auto-config no longer creates RedisClient/connection. */
+    @Test
+    void clusterMode_allFourSpiOverridden_doesNotCreateRedisClient() {
+        runner.withUserConfiguration(AllFourSpiOverridesConfig.class)
+                .withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.node-id=ctx-l1-all-overrides",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    // No Redis client / connection created — the gate worked.
+                    assertThat(context).doesNotHaveBean(io.lettuce.core.RedisClient.class);
+                    assertThat(context).doesNotHaveBean("nettyClusterRedisConnection");
+                    // All 4 user-supplied SPI beans are present.
+                    assertThat(context).hasBean("customSessionRegistry");
+                    assertThat(context).hasBean("customClusterBroker");
+                    assertThat(context).hasBean("customClusterNodeHeartbeat");
+                    assertThat(context).hasBean("customClusterReaper");
+                    // Sanity: cluster mode is still wired (cluster sender is @Primary).
+                    assertThat(context.getBean(MessageSender.class)).isInstanceOf(ClusterMessageSender.class);
+                });
+    }
+
+    /** L1 (ii): only SessionRegistry overridden — RedisClient still created (the other 3 SPI
+     *  default to Redis-backed impls and need it). Partial-override regression guard. */
+    @Test
+    void clusterMode_onlySessionRegistryOverridden_stillCreatesRedisClient() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withUserConfiguration(OnlySessionRegistryOverrideConfig.class)
+                .withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-l1-only-registry",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    // RedisClient still needed — broker / heartbeat / reaper still default to Redis impls.
+                    assertThat(context).hasSingleBean(io.lettuce.core.RedisClient.class);
+                    // User's SessionRegistry override won.
+                    assertThat(context).hasBean("customSessionRegistry");
+                });
+    }
+
+    /** L1 (iii): zero overrides — RedisClient IS created (RC15 behavior preserved). */
+    @Test
+    void clusterMode_zeroOverrides_createsRedisClient_regression() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-l1-no-overrides",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(io.lettuce.core.RedisClient.class);
+                });
+    }
+
+    /** Helper @Configuration that supplies user @Bean overrides for ALL 4 Redis-backed SPI interfaces.
+     *  Mocks (not real impls) — these context tests are NOT integration tests and do not exercise the
+     *  cluster runtime; they only verify the auto-config bean-graph wiring. */
+    @Configuration
+    static class AllFourSpiOverridesConfig {
+        @Bean(name = "customSessionRegistry")
+        SessionRegistry customSessionRegistry() { return mock(SessionRegistry.class); }
+        @Bean(name = "customClusterBroker")
+        ClusterBroker customClusterBroker() { return mock(ClusterBroker.class); }
+        @Bean(name = "customClusterNodeHeartbeat")
+        ClusterNodeHeartbeat customClusterNodeHeartbeat() { return mock(ClusterNodeHeartbeat.class); }
+        @Bean(name = "customClusterReaper")
+        ClusterReaper customClusterReaper() { return mock(ClusterReaper.class); }
+    }
+
+    /** Helper @Configuration with ONE user override (partial-override path). */
+    @Configuration
+    static class OnlySessionRegistryOverrideConfig {
+        @Bean(name = "customSessionRegistry")
+        SessionRegistry customSessionRegistry() { return mock(SessionRegistry.class); }
     }
 
     @Configuration
