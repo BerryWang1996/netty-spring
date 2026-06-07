@@ -96,6 +96,22 @@ review round).
 
 ---
 
+## RC14 review nice-to-haves (added 2026-06-07)
+
+### R1 — `topicMessage` DEGRADED-else log message
+
+- **Where:** `ClusterMessageSender.java` (the else-branch of the new P1 gate).
+- **Issue:** Log message says `"node state is {}"` which during the redis-loss grace window reads "ACTIVE" even though the gate fired because **broker.state() == DEGRADED**. Slightly misleading for triage.
+- **Fix sketch:** Include `broker.state()` in the log message so the operator sees both states.
+
+### R2 — `closeSession` return-false semantics on DEGRADED
+
+- **Where:** `ClusterMessageSender.closeSession()` returning `false` when broker is DEGRADED.
+- **Issue:** Caller can't distinguish "no such session" from "transport degraded, try again later". Not a regression (matches RC12 L6 `sendMessage` semantics) but worth a doc note.
+- **Fix sketch:** Document in javadoc; or add a dedicated `MessageSenderState.degraded()` return to disambiguate (larger SPI change).
+
+---
+
 ### Not deferred — fixed before RC12 (for reference)
 
 **Fixed in RC11 (pre-GA hardening, 15 items):**
