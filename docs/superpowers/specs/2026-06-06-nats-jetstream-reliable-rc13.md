@@ -54,7 +54,7 @@ Three classes:
 | File | Purpose |
 |---|---|
 | `netty-spring-websocket-cluster/.../cluster/nats/NatsJetStreamReliableBroker.java` | The `ReliableBroker` impl. Owns: per-URI `ensureStream(b64uri)` (idempotent `JetStreamManagement.addStream` with mismatch detection); `publishAsync(subject, envelopeBytes)`; per-URI durable pull-subscription thread (`nats-reliable-<nodeIdShort>-<hex(uri.hashCode())>`) running `fetch(N, blockMs)` loop; `msg.ack()` on local-delivery success; lifecycle (`start`/`shutdown`); state (ACTIVE/DEGRADED/SHUTDOWN); transport listener wired off the existing JetStream connection. |
-| (no new helper class needed) | JetStream connection acquisition reuses the existing all-NATS JetStream `Connection` bean from RC10 (`NatsKvSessionRegistry` et al. already share it). The reliable broker takes the same `Connection` via DI; it opens its own `JetStream` and `JetStreamManagement` views. **Connection auth (user/credentials/TLS) inherits from RC9-vetted bean — no new auth path.** The broker uses one dedicated `OS` thread per subscribed URI (rationale: each fetch loop is blocking; per-URI threads simplify exception handling and isolation. Pooled-executor optimization is deferred.) |
+| (no new helper class needed) | JetStream connection acquisition reuses the existing all-NATS JetStream `Connection` bean from RC10 (`NatsKvSessionRegistry` et al. already share it) — specifically the bean qualified as `@Qualifier("nettyClusterNatsKvConnection")` established in RC10. The reliable broker takes the same `Connection` via DI; it opens its own `JetStream` and `JetStreamManagement` views. **Connection auth (user/credentials/TLS) inherits from RC9-vetted bean — no new auth path.** The broker uses one dedicated `OS` thread per subscribed URI (rationale: each fetch loop is blocking; per-URI threads simplify exception handling and isolation. Pooled-executor optimization is deferred.) |
 | `NatsJetStreamReliableBrokerTest.java` (unit, Mockito) + `NatsJetStreamReliableIntegrationTest.java` (Testcontainers IT) | See §7. |
 
 **Auto-config matrix wiring** (§8 has the full matrix). New `@Bean natsJetStreamReliableBroker` in
@@ -78,7 +78,7 @@ overrides still win.
 | Max messages | `reliable.stream-max-len` (default 10000) | Reuses existing key |
 | Max age | `0` (unlimited) | Only MAXMSGS governs retention; matches Redis semantics |
 | Replicas | `1` | Simplest default. **⚠️ Clustered NATS HA users MUST override** via custom bean to set replicas≥3, otherwise leader loss = backlog loss. |
-| Durable consumer name | `g.<b64url(nodeId)>` | Mirrors Redis `g:{nodeId}`. NATS allows `.` in consumer names, NOT `:`. |
+| Durable consumer name | `g_<b64url(nodeId)>` | Mirrors Redis `g:{nodeId}`. NATS allows `.` and `_` in consumer names but NOT `:`. The jnats client-side validator rejects `.` in **durable** names (a `.` is parsed as a subject token), so the implementation uses `_` as the separator (RC13 implementer discovery; matches code at `NatsJetStreamReliableBroker.CONSUMER_PREFIX`). |
 | Ack policy | `EXPLICIT` | At-least-once requires explicit ack on local-delivery success |
 | Deliver policy | `ALL` | New durable starts at first available message; resume from cursor on reconnect (durable handles this) |
 | Replay-on-resync | Automatic via durable cursor | Same semantics as Redis |
@@ -156,7 +156,7 @@ Notes:
 ```
 broker.reliableSubscribe(uri, nodeId, listener)        // SPI 3-arg signature
   → ensureStream(b64(uri))
-  → lazy-create durable pull consumer "g.<b64url(nodeId)>" on the URI's stream
+  → lazy-create durable pull consumer "g_<b64url(nodeId)>" on the URI's stream  // '_' separator: §4
   → spawn dedicated thread "nats-reliable-<nodeIdShort>-<hex(uri.hashCode())>"
   → loop:
       List<Message> batch = consumer.fetch(reliable.poll-count, reliable.poll-block-ms)
@@ -206,7 +206,7 @@ When `ClusterReaper` declares `deadNodeId` dead, `destroyConsumerGroupsForNode(d
 
 ```
 streamNames = jsm.getStreamNames(prefix="netty-cluster-reliable-")
-String consumerName = "g." + b64url(deadNodeId)
+String consumerName = "g_" + b64url(deadNodeId)   // '_' separator: §4 jnats validator constraint
 for each streamName in streamNames:
     try {
         ConsumerInfo info = jsm.getConsumerInfo(streamName, consumerName)
@@ -270,7 +270,7 @@ Configuration errors are surfaced at context startup:
 
 | Test | Coverage | Type |
 |---|---|---|
-| `NatsJetStreamReliableBrokerTest` (Mockito) | (1) `reliablePublish` invokes `authenticator.wrap()` and publishes to `netty.reliable.<b64uri>`; (2) `reliableSubscribe(uri, nodeId, listener)` creates durable consumer `g.<b64url(nodeId)>`; (3) `ensureStream` idempotent (calls `getStreamInfo` first; only `addStream` on STREAM_NOT_FOUND); (4) **ensureStream mismatch → `ClusterBrokerException`** (pre-existing stream with different `max_msgs`); (5) **poison-pill ack** (listener throws → `msg.ack()` still invoked, loop continues); (6) origin self-suppression; (7) dedup window; (8) `inboundMaxBytes` UTF-8 byte guard ACKs the message (does not nak). | unit |
+| `NatsJetStreamReliableBrokerTest` (Mockito) | (1) `reliablePublish` invokes `authenticator.wrap()` and publishes to `netty.reliable.<b64uri>`; (2) `reliableSubscribe(uri, nodeId, listener)` creates durable consumer `g_<b64url(nodeId)>` (see §4 — `_` not `.`, jnats validator); (3) `ensureStream` idempotent (calls `getStreamInfo` first; only `addStream` on STREAM_NOT_FOUND); (4) **ensureStream mismatch → `ClusterBrokerException`** (pre-existing stream with different `max_msgs`); (5) **poison-pill ack** (listener throws → `msg.ack()` still invoked, loop continues); (6) origin self-suppression; (7) dedup window; (8) `inboundMaxBytes` UTF-8 byte guard ACKs the message (does not nak). | unit |
 | `NatsJetStreamReliableIntegrationTest` (Testcontainers `nats:2.10 -js`) | (a) publish → receive round-trip on a single node; (b) **replay-on-resync (headline)**: subscribe → publish 3 → close subscription → publish 2 while down → re-`reliableSubscribe(uri, sameNodeId, listener)` → assert 5 received, 0 loss; (c) **dead-node consumer cleanup with idle gate**: r1 subscribes + acks all → simulate r1 dead via `destroyConsumerGroupsForNode("r1")` immediately → assert consumer retained (idle < threshold); set system-time forward (via a small `groupDestroyIdleMs` of 2s in the test) + wait → re-invoke `destroyConsumerGroupsForNode` → assert consumer deleted; (d) **DEGRADED state IT** (mirrors RC12 L8): subscribe → `nats:2.10 -js` container `kill` → poll `broker.state() == DEGRADED` within 10 s → restart → poll back to ACTIVE within 15 s; (e) **HMAC rejection IT**: configure two brokers with mismatched `auth.secret`, publisher with key A subscribes with key B, asserts received count remains 0; publisher with key A subscribes with key A asserts received. | IT |
 | `NettyWebSocketClusterConfigureTest` (+2 context cases) | (i) `nats.registry=true, reliable.enable=true` → `NatsJetStreamReliableBroker` bean present, `RedisStreamsReliableBroker` bean absent; (ii) `nats.registry=true, reliable.enable=false` → no `ReliableBroker` bean (existing all-NATS behavior preserved); (iii) `nats.servers=...,nats.registry=false (mixed), reliable.enable=true` → `RedisStreamsReliableBroker` selected (regression for mixed path); (iv) `nats.registry=true, reliable.enable=true` but `io.nats:jnats` absent on classpath → RC11 FIX E guard fires (no silent broken-bean state). | context |
 
@@ -398,7 +398,7 @@ safely upgrade to RC13 with `reliable.enable=true`:
 
 - **Placeholder scan:** None. All sections have concrete values, naming, behavior, code/pseudocode.
 - **Internal consistency:** §3 (components) ↔ §4 (wire-level) ↔ §5 (data flow) ↔ §6 (config) ↔ §8 (matrix)
-  all use the same `g.<b64url(nodeId)>` consumer name, `netty.reliable.<b64url(uri)>` subject,
+  all use the same `g_<b64url(nodeId)>` consumer name, `netty.reliable.<b64url(uri)>` subject,
   `netty-cluster-reliable-<b64url(uri)>` stream — checked. SPI signatures (`reliablePublish` /
   `reliableSubscribe(uri, nodeId, listener)` / `destroyConsumerGroupsForNode`) match the actual
   `ReliableBroker.java` (verified against repo).
