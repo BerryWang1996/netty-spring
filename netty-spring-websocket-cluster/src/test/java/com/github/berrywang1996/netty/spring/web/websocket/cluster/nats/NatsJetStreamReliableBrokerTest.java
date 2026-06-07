@@ -187,6 +187,29 @@ class NatsJetStreamReliableBrokerTest {
     }
 
     @Test
+    void ensureStream_rejectsExcessivelyLongStreamName() throws Exception {
+        // Q5 (RC14): stream-name length guard — pre-check fires BEFORE any jsm call. NATS rejects
+        // stream names > 255 chars; the broker must throw a clear ClusterBrokerException up front
+        // rather than letting the less-friendly jnats diagnostic surface on jsm.getStreamInfo.
+        // streamName = "netty-cluster-reliable-" (23 chars) + b64uri; we need streamName.length() > 255,
+        // so b64uri.length() must be > 232. Base64url ratio of raw URI bytes is ~4/3 (no padding),
+        // so a 200-char ascii URI produces a 268-char b64uri → 291-char streamName.
+        StringBuilder uri = new StringBuilder("/ws/");
+        for (int i = 0; i < 200; i++) uri.append('a');
+        String longUri = uri.toString();
+
+        NatsJetStreamReliableBroker b = newBroker();
+        ClusterBrokerException ex = assertThrows(ClusterBrokerException.class,
+                () -> b.reliablePublish(longUri, envelope("node-A", longUri, "hello")));
+        assertTrue(ex.getMessage().contains("Stream name too long"),
+                "expected clear diagnostic, got: " + ex.getMessage());
+        // Guard must short-circuit BEFORE any jnats round-trip.
+        verify(jsm, never()).getStreamInfo(anyString());
+        verify(jsm, never()).addStream(any());
+        b.shutdown();
+    }
+
+    @Test
     void t2_ensureStream_throwsClusterBrokerExceptionOnConfigMismatch() throws Exception {
         String b64uri = b64("/ws/x");
         String streamName = "netty-cluster-reliable-" + b64uri;

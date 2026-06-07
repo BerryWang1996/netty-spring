@@ -352,6 +352,13 @@ public class NatsJetStreamReliableBroker implements ReliableBroker {
     void ensureStream(String b64uri) {
         streamCache.computeIfAbsent(b64uri, k -> {
             String streamName = STREAM_PREFIX + b64uri;
+            // Q5 (RC14): pre-check stream-name length before any jnats round-trip. NATS rejects
+            // stream names > 255 chars; very long URIs would otherwise surface as a less-friendly
+            // jnats diagnostic on jsm.getStreamInfo / jsm.addStream. Throw early with a clear message.
+            if (streamName.length() > 255) {
+                throw new ClusterBrokerException("Stream name too long: " + streamName.length()
+                        + " > 255 (max NATS stream name length); reduce URI length (uri-b64=" + b64uri + ")");
+            }
             StreamConfiguration desired = StreamConfiguration.builder()
                     .name(streamName)
                     .subjects(SUBJECT_PREFIX + b64uri)
