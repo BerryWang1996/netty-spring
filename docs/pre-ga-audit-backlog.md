@@ -1,9 +1,10 @@
-# Pre-GA Audit + RC12 / RC13 / RC14 Review Backlog (deferred to 1.9.1+)
+# Pre-GA Audit + RC12 / RC13 / RC14 / RC15 Review Backlog (deferred to 1.9.1+)
 
 > **1.9.0 GA 前做过一轮多代理审计**（33 项原始发现 → 24 项经对抗式验证确认）。
 > **3 个 HIGH + 9 个 MEDIUM + 3 个文档不一致已在 GA 前的 RC11 修复**（见 release-notes-1.9.0.md §⑯）。
 > **RC12 又落地了 8 个 LOW/NIT polish 项**（L2–L8 + N1；见 release-notes-1.9.0.md §⑰）。
 > **RC14 又落地了 6 个 RC12/RC13 review nice-to-haves**（P1/P5/P6/Q5/Q6/Q7；见 release-notes-1.9.0.md §⑲；Q4 经复核为 reviewer false positive 不修复）。
+> **RC15 又落地了 8 项测试覆盖加固**（Q1/Q2/Q3 + P2/P3/P4 + R1/R2；见 release-notes-1.9.0.md §⑳；RC15 实现发现的 S1 留待后续）。
 > 下面是 **仍未处理** 的项，集中推迟到 **1.9.1**（或更晚）。
 > 每项都给出位置、问题、推迟理由、建议修法，便于后续直接落地。
 
@@ -37,26 +38,11 @@ review round).
 
 > ~~**P1** — fixed in RC14 (see "Fixed in RC14" reference below).~~
 
-### P2 — `@Tag("slow")` annotation for long-running ITs
+> ~~**P2** — fixed in RC15 (see "Fixed in RC15" reference below).~~
 
-- **Where:** `NatsKvIntegrationTest.reaper_claimExpires_thenReclaimSucceeds` (12 s sleep).
-- **Issue:** No `@Tag("slow")` so CI can't optionally skip slow groups. Existing `Testcontainers` gate already
-  filters docker-less runs, so the impact is small.
-- **Fix sketch:** Add `@org.junit.jupiter.api.Tag("slow")` and document the convention in the test class header.
+> ~~**P3** — fixed in RC15 (see "Fixed in RC15" reference below).~~
 
-### P3 — Documentation for IT timing constants
-
-- **Where:** `ReliableBroadcastIntegrationTest.degradedDeadline = +15000ms` (L8 IT).
-- **Issue:** No inline comment explaining why 15 s (≈ typical Docker `killContainerCmd` + Lettuce channel-inactive
-  + listener-CAS latency budget).
-- **Fix sketch:** One-line comment.
-
-### P4 — Investigate L5 12s sleep margin if flakes appear
-
-- **Where:** `NatsKvIntegrationTest.reaper_claimExpires_thenReclaimSucceeds`.
-- **Issue:** 12 s sleep with 2 s margin above the 10 s `ttl()`; on heavily loaded CI, JetStream housekeeping may
-  exceed the margin.
-- **Fix sketch:** If flakes are observed, bump to 15 s + raise `ttl()` to 12 s OR retry-and-assert pattern.
+> ~~**P4** — fixed in RC15 (see "Fixed in RC15" reference below).~~
 
 > ~~**P5** — fixed in RC14 (see "Fixed in RC14" reference below).~~
 
@@ -66,22 +52,11 @@ review round).
 
 ## RC13 review nice-to-haves (added 2026-06-06)
 
-### Q1 — IT for `NatsJetStreamReliableBroker` DEGRADED→ACTIVE recovery
+> ~~**Q1** — fixed in RC15 (see "Fixed in RC15" reference below).~~
 
-- **Where:** `NatsJetStreamReliableIntegrationTest` (the kill-container test currently only proves ACTIVE→DEGRADED).
-- **Issue:** ACTIVE←DEGRADED reverse transition only covered at unit level.
-- **Fix sketch:** Extend the kill-container test to restart the container and poll `broker.state() == ACTIVE` within 15 s.
+> ~~**Q2** — fixed in RC15 (see "Fixed in RC15" reference below).~~
 
-### Q2 — Positive HMAC round-trip IT
-
-- **Where:** `NatsJetStreamReliableIntegrationTest.hmacRejection*` (currently only asserts wrong-key rejection).
-- **Issue:** Positive case is implicit via ITs (a) and (b) but not asserted with matching `auth.secret`.
-- **Fix sketch:** Add a sibling test that uses matching secrets and asserts the receiver gets the message.
-
-### Q3 — IT for DEGRADED-state publish still attempts
-
-- **Where:** Spec §5.1 says DEGRADED still attempts publish; only unit-level coverage today.
-- **Fix sketch:** Add an IT that disconnects → confirms `reliablePublish` does not throw + JetStream eventually receives once reconnected.
+> ~~**Q3** — fixed in RC15 (see "Fixed in RC15" reference below).~~
 
 > ~~**Q4** — refuted by RC14 brainstorm complementary review (reviewer false positive).~~ `DedupRing`'s
 > `LinkedHashMap(cap*2, 0.75f, true)` uses `cap*2` as **table-capacity** (rehash-avoidance hint), not as
@@ -98,17 +73,20 @@ review round).
 
 ## RC14 review nice-to-haves (added 2026-06-07)
 
-### R1 — `topicMessage` DEGRADED-else log message
+> ~~**R1** — fixed in RC15 (see "Fixed in RC15" reference below).~~
 
-- **Where:** `ClusterMessageSender.java` (the else-branch of the new P1 gate).
-- **Issue:** Log message says `"node state is {}"` which during the redis-loss grace window reads "ACTIVE" even though the gate fired because **broker.state() == DEGRADED**. Slightly misleading for triage.
-- **Fix sketch:** Include `broker.state()` in the log message so the operator sees both states.
+> ~~**R2** — fixed in RC15 (see "Fixed in RC15" reference below).~~
 
-### R2 — `closeSession` return-false semantics on DEGRADED
+---
 
-- **Where:** `ClusterMessageSender.closeSession()` returning `false` when broker is DEGRADED.
-- **Issue:** Caller can't distinguish "no such session" from "transport degraded, try again later". Not a regression (matches RC12 L6 `sendMessage` semantics) but worth a doc note.
-- **Fix sketch:** Document in javadoc; or add a dedicated `MessageSenderState.degraded()` return to disambiguate (larger SPI change).
+## RC15 implementation discoveries (added 2026-06-07)
+
+### S1 — `NatsJetStreamReliableBroker.streamCache` is not invalidated on transport reconnect
+
+- **Where:** `NatsJetStreamReliableBroker.streamCache` (per-URI `ConcurrentHashMap<String, Object>` set inside `ensureStream`).
+- **Issue:** When the NATS server is restarted with ephemeral storage (or its streams are externally deleted), the broker's cache still indicates "stream exists for this URI" — subsequent publish attempts assume the stream exists and may fail server-side. In production with `FILE` storage and a properly-restarted NATS server, streams persist so the cache is correct; the failure mode is only in tests / ephemeral / data-loss scenarios. Surfaced during the Q3 (RC15) IT, where the implementer worked around it by spawning a fresh broker pair on a new URI for the post-reconnect path.
+- **Why deferred:** Production scenarios (FILE storage + standard NATS restart) are unaffected; the test-only workaround is documented in release-notes-1.9.0.md §⑳ implementation notes. Fix needs the same RC11/RC12-style adversarial design pass: invalidate the cache on `ConnectionListener.RECONNECTED`? Re-validate via `getStreamInfo` lazily on first post-reconnect publish? Trade off against `ensureStream` complexity.
+- **Fix sketch:** Add a `ConnectionListener` callback that clears `streamCache` on `RECONNECTED`, OR validate cache entries lazily by retrying `addStream` on JetStream `STREAM_NOT_FOUND` error during publish (and add a unit test stubbing the not-found path).
 
 ---
 
@@ -129,6 +107,16 @@ review round).
 - Q5 `NatsJetStreamReliableBroker.ensureStream()` pre-checks `streamName.length() > 255` and throws `ClusterBrokerException("Stream name too long: ...")` before any jsm round-trip (clearer than the jnats-side diagnostic).
 - Q6 RC13 spec §3 names the `@Qualifier("nettyClusterNatsKvConnection")` bean explicitly (doc only).
 - Q7 RC13 spec §4 table + §5 consume / dead-node cleanup pseudocode + §7 test description + self-review aligned to `g_<b64url(nodeId)>` (code uses `_` because the jnats client-side validator rejects `.` in durable names).
+
+**Fixed in RC15 (test/IT coverage hardening, 8 items):**
+- Q1 `NatsJetStreamReliableIntegrationTest` extends DEGRADED kill test with `container.start()` + 30 s ACTIVE poll, using `ServerSocket(0)` + `withCreateContainerCmdModifier` to bind a stable host port.
+- Q2 new `reliableBroker_hmacRoundTripWithMatchingSecrets` IT — positive HMAC complement to RC13's reject-on-mismatch.
+- Q3 new `reliableBroker_publishDoesNotThrowWhenDegraded` IT — `assertDoesNotThrow` during DEGRADED + eventual post-reconnect delivery on a fresh broker pair (workaround for S1 stream-cache staleness, see below).
+- P2 `NatsKvIntegrationTest.reaper_claimExpires_thenReclaimSucceeds` annotated `@Tag("slow")` + class-header convention note.
+- P3 `ReliableBroadcastIntegrationTest` L8 `degradedDeadline = +15_000` gets one inline comment explaining the 15 s budget (Docker kill + Lettuce inactive + listener-CAS).
+- P4 same NATS-KV reaper IT: `Thread.sleep(12_000)` replaced with `Thread.sleep(11_000) + poll-until-success (max 4 s, 100 ms interval)`. Faster typical case (~11 s), more resilient to JetStream housekeeping jitter.
+- R1 `ClusterMessageSender.topicMessage` DEGRADED-else log appends `broker state is {}` (additive — preserves `"node state is"` substring matching).
+- R2 `ClusterMessageSender.closeSession` javadoc documents the false-on-DEGRADED ambiguity (caller cannot distinguish "no such session" from "transport degraded"; mirrors RC12 L6 `sendMessage` semantics).
 
 ### Refuted by adversarial verification (no action)
 
