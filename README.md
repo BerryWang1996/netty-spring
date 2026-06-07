@@ -51,7 +51,7 @@ A Spring Boot integration for Netty, providing HTTP MVC and WebSocket capabiliti
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
-    <version>1.8.0</version>
+    <version>1.9.0</version>
 </dependency>
 ```
 
@@ -304,7 +304,7 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#11-configurati
 
 ### Current Status
 
-- **Latest stable: `1.8.0`** (on Maven Central). **`1.9.0` is in development (`1.9.0-RC1`)** — cluster reliability hardening: 5 deferred 1.8.0 items done + 2 new config knobs + 304 tests; reliable broadcast via Redis Streams is next before final 1.9.0 is cut. Single-node mode stays production-grade and identical to 1.7.x/1.8.0 — see [Release Notes 1.9.0 (in dev)](docs/release-notes-1.9.0.md) and [Cluster Design §Security](docs/cluster-design.md).
+- **Latest stable: `1.8.0`** (on Maven Central). **`1.9.0` is in development (RC1–RC16 shipped, GA cut pending)** — RC1 cluster reliability hardening (5 deferred items + 2 new knobs); RC2 reliable broadcast via Redis Streams (`reliableBroadcast`, at-least-once, opt-in); RC3 HMAC envelope authentication (`MessageAuthenticator` SPI); RC4 full Micrometer cluster metrics; RC5 multi-node E2E + Testcontainers CI + cross-node unicast hook-wiring fix; RC6 W3C TraceContext propagation; RC7 Redis Cluster client foundation; RC8 multi/sharded pub/sub multiplexing; RC9 NATS broker; RC10 all-NATS stack (JetStream-KV registry/heartbeat/reaper); RC11–RC12 pre-GA audit fixes + 1.9.1 backlog cleanup; RC13 NATS JetStream reliable broadcast (closes the all-NATS reliable gap); RC14–RC15 polish + test coverage; RC16 `OnAnyRedisSpiRequired` condition tightening. Single-node mode stays production-grade and identical to 1.7.x/1.8.0 — see [Release Notes 1.9.0](docs/release-notes-1.9.0.md) and [Cluster Design §Security](docs/cluster-design.md). GA cut pending.
 - `1.8.0` delivered WebSocket cluster support (Redis Pub/Sub + 5-layer SPI architecture + 291 tests) — all preserved in 1.9.0 and backward compatible.
 - Milestones P0 through P7 are all complete; performance (1.6.x), security/stability (1.6.2), observability (1.7.0), clustering (1.8.0), and cluster hardening (1.9.0) followed.
 - Next: `2.0.0` Spring Boot 3.x / Jakarta migration + enterprise security
@@ -391,7 +391,7 @@ Verified on `GraalVM JDK 17.0.11` + `Apache Maven 3.9.9`. CI workflow runs full 
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
-    <version>1.8.0</version>
+    <version>1.9.0</version>
 </dependency>
 ```
 

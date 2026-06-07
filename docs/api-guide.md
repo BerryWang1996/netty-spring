@@ -42,7 +42,7 @@ All starters share the `server.netty.*` configuration namespace and auto-configu
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
-    <version>1.8.0</version>
+    <version>1.9.0</version>
 </dependency>
 ```
 
@@ -536,7 +536,7 @@ Add the cluster starter alongside your existing starter:
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-websocket-cluster-spring-boot-starter</artifactId>
-    <version>1.8.0</version>
+    <version>1.9.0</version>
 </dependency>
 ```
 
@@ -566,7 +566,7 @@ public void onMessage(String text, MessageSession session) {
 
 For at-least-once cross-node broadcast, use `reliableBroadcast` (Redis Streams, added in 1.9.0-RC2) — see [§9.1 Reliable Broadcast](#91-reliable-broadcast-at-least-once) below.
 
-### 9.1 Reliable Broadcast (at-least-once)
+### 9.1 Reliable Broadcast (at-least-once) / 可靠广播（至少一次）
 
 *Since V1.9.0-RC2.* An opt-in, at-least-once cross-node broadcast backed by Redis Streams. Existing `broadcastText`/`broadcastJson` (Pub/Sub, at-most-once) are **unchanged**.
 
@@ -620,7 +620,7 @@ A node that was offline when messages were published has its consumer-group curs
 
 > *Since V1.9.0-RC13.* The `reliable.*` knobs above apply **transport-agnostically**. In all-Redis / mixed deployments (the default) they govern the Redis Streams implementation as described. In all-NATS deployments (`nats.registry=true`) they govern an equivalent NATS JetStream implementation — see `docs/release-notes-1.9.0.md` §⑱ for the JetStream-specific mapping (`stream-max-len` → JetStream `max_msgs`, `poll-block-ms` → fetch timeout, `poll-count` → fetch batch, `group-destroy-idle-ms` → idle-gate on `ConsumerInfo.delivered.lastActive`) and the **`max_payload` operator caveat** (envelope Base64 + HMAC overhead may exceed the NATS server's default 1 MB `max_payload`).
 
-### 9.2 HMAC Envelope Authentication
+### 9.2 HMAC Envelope Authentication / HMAC 信封认证
 
 *Since V1.9.0-RC3.* Transport-layer **HMAC-SHA256** authentication of cross-node envelopes via the `MessageAuthenticator` SPI. Applies to broadcast, unicast, CLOSE, and the reliable Streams path uniformly. **Gated off by default** — zero overhead until explicitly enabled.
 
@@ -674,7 +674,7 @@ HMAC provides anti-forgery protection. It does **not** provide replay protection
 | `auth.secret` | *(no default; required when enabled)* | Shared HMAC key (≥ 32 chars). Must be externalized via `${ENV_VAR}` — never plain-text in YAML. Redacted in logs. |
 | `auth.permissive` | `false` | `true` = sign outbound but accept unsigned inbound (rolling upgrade); `false` = strict (reject missing/invalid tag). |
 
-### 9.3 Redis Cluster Client (foundation)
+### 9.3 Redis Cluster Client (foundation) / Redis Cluster 客户端（基础）
 
 *Since V1.9.0-RC7.* First-class **Redis Cluster client** support, selected by a single config key. When set, the session registry and heartbeat are distributed across the cluster's hash slots and you get Redis Cluster's native HA failover. **Purely additive and opt-in** — leave `cluster-nodes` empty (the default) and the standalone/sentinel path via `redis.uri` is byte-identical to RC6.
 

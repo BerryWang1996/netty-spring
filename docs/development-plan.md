@@ -1,10 +1,10 @@
 # 开发计划与阶段状态
 
-更新时间：2026-06-03
+更新时间：2026-06-07
 
 ## 当前结论
 
-- **最新稳定版：`1.8.0`**（Maven Central）。**`1.9.0` 开发中（`1.9.0-RC6`）**：集群可靠性硬化 5 项全部落地 + 2 个新配置项（RC1），**RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in，`reliable.*` 5 个配置项）**，**RC3 新增 HMAC envelope 认证（`MessageAuthenticator` SPI，HMAC-SHA256，`auth.*` 3 个配置项）**，**RC4 新增完整 Micrometer 集群指标（`NettyClusterMeterBinder`，`netty.cluster.*` 时序，opt-in + 门控）**，**RC5 新增多节点 E2E + Testcontainers CI（集群测试在 CI 真实运行）并修复跨节点单播 hook-wiring 缺陷（影响 1.8.0~RC4，仅集群模式）**，**RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（`ClusterTraceContext` SPI，opt-in；Micrometer Observation 续接 → 2.0.0）**，**RC7 新增 Redis Cluster 客户端一等支持（客户端层：`cluster.redis.cluster-nodes` 选择器 + 4 个 `RedisClusterMode*` 实现，slot 安全；HA 故障转移 + 注册表/心跳跨 slot 分布；常规 cluster pub/sub，不削减广播扇出——sharded pub/sub → 2.0.0；opt-in，`cluster-nodes` 空时与 RC6 字节级一致）**；最终 1.9.0 待整周期完成。单机模式与 1.7.x/1.8.0 完全一致，详见 `docs/release-notes-1.9.0.md`。
+- **最新稳定版：`1.8.0`**（Maven Central）。**`1.9.0` 开发中（RC16 latest；1.9.x backlog cleanup complete；GA cuttable on user direction）**：集群可靠性硬化 5 项全部落地 + 2 个新配置项（RC1），**RC2 可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）**，**RC3 HMAC envelope 认证（`MessageAuthenticator` SPI，HMAC-SHA256）**，**RC4 完整 Micrometer 集群指标（`NettyClusterMeterBinder`）**，**RC5 多节点 E2E + Testcontainers CI + 跨节点单播 hook-wiring 修复（影响 1.8.0~RC4）**，**RC6 W3C TraceContext 跨节点 MDC 日志关联**，**RC7 Redis Cluster 客户端一等支持**，**RC8 多/分片 pub/sub 复用**，**RC9 NATS broker**，**RC10 all-NATS 栈（JetStream-KV registry/heartbeat/reaper）**，**RC11–RC12 pre-GA 审计修复 + 1.9.1 backlog 清理**，**RC13 NATS JetStream 可靠投递（封堵 all-NATS reliable 空缺）**，**RC14–RC15 精修 + 测试覆盖**，**RC16 `OnAnyRedisSpiRequired` 条件收紧**；GA 切版待用户指令。单机模式与 1.7.x/1.8.0 完全一致，详见 `docs/release-notes-1.9.0.md`。
 - 上一版本：`1.8.0`（WebSocket 集群支持：Redis Pub/Sub 跨节点 + 5 层 SPI + 291 测试。详见 `docs/release-notes-1.8.0.md`）。
 - `P0`–`P7` 全部里程碑已完成；项目历经"功能建设期 → 质量深化 → 产品化 → 性能优化 → 安全稳定性加固 → 可观测性增强 → 集群水平扩展 → 集群可靠性硬化"八个阶段。
 - 下一步：最终 1.9.0（RC6 已含可靠投递 + HMAC envelope 认证 + 完整 Micrometer 集群指标 + 多节点 E2E/Testcontainers CI + 跨节点单播修复 + W3C TraceContext MDC 关联，待全量测试确认）。之后：**`2.0.0`** Spring Boot 3.x 迁移基线，**`2.1.0`** 企业安全准入。集群扩展后续项（NATS 等）见下方 backlog。
