@@ -1,6 +1,6 @@
 # Release Notes — v1.9.0 (开发中 / in development)
 
-> 状态：**开发中（1.9.0-RC15，2026-06-07）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）；RC10 新增**全 NATS 栈**（`nats.registry=true` → NATS JetStream-KV registry/心跳/reaper，可完全不依赖 Redis；需 JetStream 服务器；ADR-001 更新为 NATS-only opt-in）；RC11 预发布安全审计硬化（15 项修复：SPI 契约、Redis 键安全、缓存有界、生命周期防御、自动装配护栏、文档一致性）；RC12 收尾 1.9.1 backlog 8 项 LOW/NIT polish（L2–L8 + N1；L1 推迟需自定义 Spring `Condition`）；RC13 关闭 all-NATS 可靠投递缺口（`NatsJetStreamReliableBroker`，opt-in；`reliable.enable=true && nats.registry=true` 激活，其他档位字节级不变）；RC14 polish bundle（P1/P5/P6/Q5/Q6/Q7 — 6 项；纯 polish，除 Q5 pathological URI 外无行为变更）；RC15 测试覆盖加固（Q1/Q2/Q3 NATS reliable IT + P2/P3/P4 NATS-KV IT polish + R1/R2 日志/javadoc，8 项纯测试 / 日志 / 文档）。最终 1.9.0 发布日期待整个周期完成后确定。
+> 状态：**开发中（1.9.0-RC16，2026-06-07）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）；RC10 新增**全 NATS 栈**（`nats.registry=true` → NATS JetStream-KV registry/心跳/reaper，可完全不依赖 Redis；需 JetStream 服务器；ADR-001 更新为 NATS-only opt-in）；RC11 预发布安全审计硬化（15 项修复：SPI 契约、Redis 键安全、缓存有界、生命周期防御、自动装配护栏、文档一致性）；RC12 收尾 1.9.1 backlog 8 项 LOW/NIT polish（L2–L8 + N1；L1 推迟需自定义 Spring `Condition`）；RC13 关闭 all-NATS 可靠投递缺口（`NatsJetStreamReliableBroker`，opt-in；`reliable.enable=true && nats.registry=true` 激活，其他档位字节级不变）；RC14 polish bundle（P1/P5/P6/Q5/Q6/Q7 — 6 项；纯 polish，除 Q5 pathological URI 外无行为变更）；RC15 测试覆盖加固（Q1/Q2/Q3 NATS reliable IT + P2/P3/P4 NATS-KV IT polish + R1/R2 日志/javadoc，8 项纯测试 / 日志 / 文档）；RC16 backlog 清零（L1 `OnAnyRedisSpiRequired` + S1 streamCache reconnect-invalidate）—— **1.9.x backlog 至此清空，1.9.0 GA 可在 RC16 之上直接 cut**。最终 1.9.0 发布日期待整个周期完成后确定。
 
 ## 版本定位
 
@@ -482,7 +482,24 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 #### RC15 实现笔记（implementation notes）
 
 - **Q1+Q3 Testcontainers 固定端口**：默认 random host-port 在 `start()` 后会变化导致 jnats 重连失败。通过 `ServerSocket(0)` 预选端口 + `withCreateContainerCmdModifier` 锁定 host→4222 映射，使重启后 URL 不变。
-- **Q3 重连后 streamCache 局限**：当前 `NatsJetStreamReliableBroker.streamCache` 不在重连后重新校验，所以 DEGRADED 期间通过同一 broker 的 subscriber 收不到 post-reconnect 消息。**生产场景下不是问题**（FILE storage 持久化使流跨 NATS 重启幸存；缓存依然有效）；测试场景下 Q3 通过在新 URI 上 spawn 新 broker 对来验证 transport 层恢复，避开此限制。Backlog 添加 **S1**（broker reconnect 后 invalidate stream cache）作为后续 hardening。
+- **Q3 重连后 streamCache 局限**：当前 `NatsJetStreamReliableBroker.streamCache` 不在重连后重新校验，所以 DEGRADED 期间通过同一 broker 的 subscriber 收不到 post-reconnect 消息。**生产场景下不是问题**（FILE storage 持久化使流跨 NATS 重启幸存；缓存依然有效）；测试场景下 Q3 通过在新 URI 上 spawn 新 broker 对来验证 transport 层恢复，避开此限制。Backlog 添加 **S1**（broker reconnect 后 invalidate stream cache）作为后续 hardening。**[由 RC16 §㉑ 落地。]**
+
+---
+
+### ㉑ 1.9.x backlog 清零 / 1.9.x backlog cleanup
+
+*Since V1.9.0-RC16.* 2 项 backlog 收尾，**1.9.x backlog 至此清空**（**无 SPI 变更、无线格式变更、无新配置键，加性 only**）：
+
+- **L1 — `OnAnyRedisSpiRequired` Spring `Condition`**：用户重写**全部** 4 个 Redis-backed SPI bean（`SessionRegistry` / `ClusterBroker` / `ClusterNodeHeartbeat` / `ClusterReaper`）时，不再创建空闲 `RedisClient` + 连接。**仅影响该 niche 场景**——任何部分覆盖（即便只有 1 个 SPI bean 留默认 Redis 实现）都会**继续**创建 `RedisClient`，与 RC15 字节级一致。`@Conditional(OnAnyRedisSpiRequired.class)` 与既有 `@ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)` + `@ConditionalOnMissingBean` AND 起作用，仅 narrow（never widen）bean 创建条件。位于 `cluster.support` 包，`ConfigurationPhase.REGISTER_BEAN` 确保看到 user `@Bean` 定义。
+- **S1 — `NatsJetStreamReliableBroker.streamCache` 在重连时失效**：既有 `ConnectionListener.onReconnect`（RC13 §3）在 CAS DEGRADED→ACTIVE 之前调用 `streamCache.clear()`（防御式：即便状态已 ACTIVE 也清缓存）。next publish 走 `ensureStream(...)` 重新校验（已 idempotent + mismatch-detecting，RC13 §5.1）。每 URI 每次重连多一次 `getStreamInfo` round-trip（重连罕见 + URI 数量小，可忽略）。**Production 场景**（FILE storage + 标准 NATS restart）此前也无问题，本修复消除 RC15 IT 期间发现的测试场景对 ephemeral 数据丢失的隐式假设。
+
+#### 向后兼容
+
+加性变更。L1 只影响 niche 场景（无 `RedisClient` → 不再创建空闲连接，节约资源）；S1 重连后多一次 `getStreamInfo`（量级小，rare event）。0 SPI / 配置 / wire 影响。
+
+#### 1.9.x backlog 状态
+
+RC16 之后 1.9.x backlog **清空**——只剩 RC11/RC14 期间标记为 Refuted 的项（不予修复）。**1.9.0 GA 可在 RC16 之上直接 cut**（用户驱动；本仓库流程不自动 cut GA）。
 
 ---
 
@@ -558,7 +575,7 @@ server:
 
 ## 测试覆盖
 
-- **440 个测试，11 个模块，全部通过**（`mvn test`，Redis + Docker/Testcontainers live；CI 用 Testcontainers 自带 Redis）。
+- **444 个测试，11 个模块，全部通过**（`mvn test`，Redis + Docker/Testcontainers live；CI 用 Testcontainers 自带 Redis）。
 - 1.9.0 新增测试：
   - `ClusterNodeManagerReliabilityTest` — 线程隔离调度器验证、宽限期抑制逻辑、双调度器并发压测
   - `ClusterRegistryWriterTest` — token-bucket 直通路径、超速合并、零丢失断言、并发注册风暴模拟

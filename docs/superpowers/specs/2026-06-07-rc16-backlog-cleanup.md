@@ -31,8 +31,8 @@ provided a `@Bean` for it):
 
 - `com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.SessionRegistry`
 - `com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker`
-- `com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterNodeHeartbeat`
-- `com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterReaper`
+- `com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeHeartbeat`
+- `com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterReaper`
 
 Implementation pattern:
 

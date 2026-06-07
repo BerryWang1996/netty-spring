@@ -1,36 +1,20 @@
-# Pre-GA Audit + RC12 / RC13 / RC14 / RC15 Review Backlog (deferred to 1.9.1+)
+# Pre-GA Audit + RC12 / RC13 / RC14 / RC15 / RC16 Review Backlog (deferred to 1.9.1+)
 
 > **1.9.0 GA 前做过一轮多代理审计**（33 项原始发现 → 24 项经对抗式验证确认）。
 > **3 个 HIGH + 9 个 MEDIUM + 3 个文档不一致已在 GA 前的 RC11 修复**（见 release-notes-1.9.0.md §⑯）。
 > **RC12 又落地了 8 个 LOW/NIT polish 项**（L2–L8 + N1；见 release-notes-1.9.0.md §⑰）。
 > **RC14 又落地了 6 个 RC12/RC13 review nice-to-haves**（P1/P5/P6/Q5/Q6/Q7；见 release-notes-1.9.0.md §⑲；Q4 经复核为 reviewer false positive 不修复）。
-> **RC15 又落地了 8 项测试覆盖加固**（Q1/Q2/Q3 + P2/P3/P4 + R1/R2；见 release-notes-1.9.0.md §⑳；RC15 实现发现的 S1 留待后续）。
-> 下面是 **仍未处理** 的项，集中推迟到 **1.9.1**（或更晚）。
-> 每项都给出位置、问题、推迟理由、建议修法，便于后续直接落地。
+> **RC15 又落地了 8 项测试覆盖加固**（Q1/Q2/Q3 + P2/P3/P4 + R1/R2；见 release-notes-1.9.0.md §⑳；RC15 实现发现 S1 转入 RC16）。
+> **RC16 又落地了 L1 + S1**（见 release-notes-1.9.0.md §㉑）—— **1.9.x backlog 至此清空**。1.9.0 GA 可在 RC16 之上直接 cut。
+>
+> 下面没有仍未处理的项；本文件保留作为 1.9.x 周期的完整 backlog 历史档案。1.9.1+ 新发现可追加到这里。
 
-This document tracks the LOW/NIT/polish findings still deferred after RC11 + RC12 + RC14. None affects single-node mode
-(the production-grade default) or the GA's correctness/security posture. Items are listed by source (audit id or
-review round).
+This document is the **complete 1.9.x backlog historical archive**. As of RC16, **no open items remain**. Future
+1.9.1+ findings can be appended below.
 
 ---
 
-## L1 — Eager standalone Redis client/connection even when all Redis SPI beans are user-overridden
-
-- **Where:** `NettyWebSocketClusterConfigure.nettyClusterRedisClient` / `nettyClusterRedisConnection`.
-- **Issue:** Both beans are gated only on the transport SpEL (`STANDALONE_REDIS_REGISTRY` + `@ConditionalOnMissingBean`
-  on the client/connection themselves), not on whether any Redis-backed SPI bean is actually created. A user who
-  overrides *every* Redis SPI bean (registry/heartbeat/reaper/broker) still gets a Redis client that `connect()`s
-  eagerly.
-- **Why deferred (again, by RC12 skeptic verdict):** The audit's proposed "pragmatic fix" (gate on
-  `@ConditionalOnMissingBean(SessionRegistry.class)` alone) was rejected as inadequate — partial-override scenarios
-  (e.g. custom `ClusterNodeHeartbeat` + default `RedisSessionRegistry`) would still need the Redis client. A correct
-  fix needs a custom Spring `Condition` class that checks if **any** of the 4 Redis-backed SPI interfaces is missing
-  while STANDALONE_REDIS_REGISTRY is true. Non-trivial design — owns its own brainstorming cycle.
-- **Why niche:** Requires a fully-custom-SPI deployment that still leaves `cluster-nodes` / `nats.*` unset; only cost
-  is one idle Redis connection.
-- **Fix sketch (revised):** New `OnAnyRedisSpiRequired` Condition class that checks at least one of
-  `SessionRegistry` / `ClusterBroker` / `ClusterNodeHeartbeat` / `ClusterReaper` is missing while
-  `STANDALONE_REDIS_REGISTRY` evaluates true; attach to `nettyClusterRedisClient` + `nettyClusterRedisConnection`.
+> ~~**L1** — fixed in RC16 (see "Fixed in RC16" reference below).~~
 
 ---
 
@@ -81,12 +65,7 @@ review round).
 
 ## RC15 implementation discoveries (added 2026-06-07)
 
-### S1 — `NatsJetStreamReliableBroker.streamCache` is not invalidated on transport reconnect
-
-- **Where:** `NatsJetStreamReliableBroker.streamCache` (per-URI `ConcurrentHashMap<String, Object>` set inside `ensureStream`).
-- **Issue:** When the NATS server is restarted with ephemeral storage (or its streams are externally deleted), the broker's cache still indicates "stream exists for this URI" — subsequent publish attempts assume the stream exists and may fail server-side. In production with `FILE` storage and a properly-restarted NATS server, streams persist so the cache is correct; the failure mode is only in tests / ephemeral / data-loss scenarios. Surfaced during the Q3 (RC15) IT, where the implementer worked around it by spawning a fresh broker pair on a new URI for the post-reconnect path.
-- **Why deferred:** Production scenarios (FILE storage + standard NATS restart) are unaffected; the test-only workaround is documented in release-notes-1.9.0.md §⑳ implementation notes. Fix needs the same RC11/RC12-style adversarial design pass: invalidate the cache on `ConnectionListener.RECONNECTED`? Re-validate via `getStreamInfo` lazily on first post-reconnect publish? Trade off against `ensureStream` complexity.
-- **Fix sketch:** Add a `ConnectionListener` callback that clears `streamCache` on `RECONNECTED`, OR validate cache entries lazily by retrying `addStream` on JetStream `STREAM_NOT_FOUND` error during publish (and add a unit test stubbing the not-found path).
+> ~~**S1** — fixed in RC16 (see "Fixed in RC16" reference below).~~
 
 ---
 
@@ -117,6 +96,10 @@ review round).
 - P4 same NATS-KV reaper IT: `Thread.sleep(12_000)` replaced with `Thread.sleep(11_000) + poll-until-success (max 4 s, 100 ms interval)`. Faster typical case (~11 s), more resilient to JetStream housekeeping jitter.
 - R1 `ClusterMessageSender.topicMessage` DEGRADED-else log appends `broker state is {}` (additive — preserves `"node state is"` substring matching).
 - R2 `ClusterMessageSender.closeSession` javadoc documents the false-on-DEGRADED ambiguity (caller cannot distinguish "no such session" from "transport degraded"; mirrors RC12 L6 `sendMessage` semantics).
+
+**Fixed in RC16 (1.9.x backlog cleanup, 2 items — backlog now empty):**
+- L1 new `OnAnyRedisSpiRequired` Spring `Condition` (in `cluster.support` package, `ConfigurationPhase.REGISTER_BEAN`) attached via `@Conditional` to `nettyClusterRedisClient` + `nettyClusterRedisConnection`. Skips `RedisClient` creation when user provides `@Bean` for all 4 Redis-backed SPI interfaces (`SessionRegistry` + `ClusterBroker` + `ClusterNodeHeartbeat` + `ClusterReaper`). Partial-override scenarios (1-3 SPI overridden) still create the Redis client — additive narrowing only, no widening, no risk of bean missing when expected.
+- S1 `NatsJetStreamReliableBroker.ConnectionListener` now calls `streamCache.clear()` on `Events.RECONNECTED` / `Events.CONNECTED` (defensive — even if state already ACTIVE). Next publish re-invokes `ensureStream(...)` (idempotent + mismatch-detecting per RC13 §5.1). One extra `getStreamInfo` round-trip per URI per reconnect — negligible.
 
 ### Refuted by adversarial verification (no action)
 
