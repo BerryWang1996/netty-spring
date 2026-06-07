@@ -264,7 +264,9 @@ class ClusterNodeManagerReliabilityTest {
         ClusterNodeManager mgr = new ClusterNodeManager(
                 myNodeId, 60000, 60000, 50, 0, hb, new InMemorySessionRegistry());
         mgr.start();
-        assertTrue(reconStarted.await(2, TimeUnit.SECONDS),
+        // P6 (RC14): 5s latch (100-cycle margin at 50ms reconciliation) for slow-CI safety;
+        // 2s (40 cycles) was tight enough to occasionally flake on saturated CI runners.
+        assertTrue(reconStarted.await(5, TimeUnit.SECONDS),
                 "reconciliation must start before we shut down");
         mgr.shutdown();
 
