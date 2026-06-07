@@ -16,6 +16,9 @@ import static org.junit.jupiter.api.Assertions.*;
  * Integration ORACLE for the NATS JetStream-KV impls over a real {@code nats:2.10 -js} (Testcontainers).
  * Proves the registry register/lookup/deregister round-trip, the timestamp-liveness heartbeat, and the
  * create-if-absent single-winner reaper claim actually work against a live JetStream KV store.
+ * <p>
+ * Long-running tests (&ge;10 s) are tagged {@code @Tag("slow")} so CI profiles can optionally
+ * skip them via {@code -DexcludedGroups=slow}.
  */
 class NatsKvIntegrationTest {
 
@@ -82,6 +85,7 @@ class NatsKvIntegrationTest {
         assertFalse(w2, "second locked out");
     }
 
+    @Tag("slow")
     @Test
     void reaper_claimExpires_thenReclaimSucceeds() throws Exception {
         NatsKvReaper r1 = new NatsKvReaper(conn.keyValue("netty-reaping"));
@@ -91,11 +95,15 @@ class NatsKvIntegrationTest {
                 r1.tryClaim("expiry-target", "node-1", 5000),
                 "first claim must succeed");
 
-        // bucket maxAge = 10s; wait past it (plus a small margin for JetStream housekeeping)
-        Thread.sleep(12_000);
-
-        assertTrue(
-                r2.tryClaim("expiry-target", "node-2", 5000),
-                "after maxAge expiry, re-claim by a different reaper must succeed");
+        // P4: replaced blind 12s sleep with poll-until-success (bounded 15s) — safer against
+        // JetStream housekeeping jitter on slow CI. Bucket maxAge is 10s, so wait at least 11s before polling.
+        Thread.sleep(11_000);
+        long deadline = System.currentTimeMillis() + 4_000;
+        boolean won = false;
+        while (!won && System.currentTimeMillis() < deadline) {
+            won = r2.tryClaim("expiry-target", "node-2", 5000);
+            if (!won) Thread.sleep(100);
+        }
+        assertTrue(won, "after maxAge expiry, re-claim by a different reaper must succeed");
     }
 }
