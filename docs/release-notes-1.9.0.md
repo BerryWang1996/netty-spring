@@ -1,6 +1,6 @@
 # Release Notes — v1.9.0 (开发中 / in development)
 
-> 状态：**开发中（1.9.0-RC19，2026-06-07）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）；RC10 新增**全 NATS 栈**（`nats.registry=true` → NATS JetStream-KV registry/心跳/reaper，可完全不依赖 Redis；需 JetStream 服务器；ADR-001 更新为 NATS-only opt-in）；RC11 预发布安全审计硬化（15 项修复：SPI 契约、Redis 键安全、缓存有界、生命周期防御、自动装配护栏、文档一致性）；RC12 收尾 1.9.1 backlog 8 项 LOW/NIT polish（L2–L8 + N1；L1 推迟需自定义 Spring `Condition`）；RC13 关闭 all-NATS 可靠投递缺口（`NatsJetStreamReliableBroker`，opt-in；`reliable.enable=true && nats.registry=true` 激活，其他档位字节级不变）；RC14 polish bundle（P1/P5/P6/Q5/Q6/Q7 — 6 项；纯 polish，除 Q5 pathological URI 外无行为变更）；RC15 测试覆盖加固（Q1/Q2/Q3 NATS reliable IT + P2/P3/P4 NATS-KV IT polish + R1/R2 日志/javadoc，8 项纯测试 / 日志 / 文档）；RC16 backlog 清零（L1 `OnAnyRedisSpiRequired` + S1 streamCache reconnect-invalidate）—— **1.9.x backlog 至此清空**；RC17 GA-readiness 终审（10 维度独立审计 + 3 项 must-fix 修复：metadata 缺失 `trace-propagation.enable`/`redis.cluster-nodes` 项 + 39 个集群测试文件补 Apache 2.0 头 + 文档版本陈旧引用刷新）—— **审计结论 GA_READY，1.9.0 GA 可在 RC17 之上直接 cut**（详见 `docs/audits/2026-06-07-ga-readiness-final.md`）；RC18 RC17 audit nice-to-haves 落地（T1+T2 snapshot-then-iterate + 注释精确化 + T3 §⑪ redis.* 配置表 + T4 §-标号 Unicode 一致性确认；0 行为变更）；RC19 2.0.0 prep docs（3 篇前瞻设计稿：sharded pub/sub 可行性 + Boot 3.x 兼容矩阵 + 1.9.0→2.0.0 迁移指南 DRAFT；**1.9.0 自身 0 行为 / SPI / wire / config 变更，GA-readiness 不受影响**）。最终 1.9.0 发布日期待整个周期完成后确定。
+> 状态：**开发中（1.9.0-RC20，2026-06-07）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）；RC10 新增**全 NATS 栈**（`nats.registry=true` → NATS JetStream-KV registry/心跳/reaper，可完全不依赖 Redis；需 JetStream 服务器；ADR-001 更新为 NATS-only opt-in）；RC11 预发布安全审计硬化（15 项修复：SPI 契约、Redis 键安全、缓存有界、生命周期防御、自动装配护栏、文档一致性）；RC12 收尾 1.9.1 backlog 8 项 LOW/NIT polish（L2–L8 + N1；L1 推迟需自定义 Spring `Condition`）；RC13 关闭 all-NATS 可靠投递缺口（`NatsJetStreamReliableBroker`，opt-in；`reliable.enable=true && nats.registry=true` 激活，其他档位字节级不变）；RC14 polish bundle（P1/P5/P6/Q5/Q6/Q7 — 6 项；纯 polish，除 Q5 pathological URI 外无行为变更）；RC15 测试覆盖加固（Q1/Q2/Q3 NATS reliable IT + P2/P3/P4 NATS-KV IT polish + R1/R2 日志/javadoc，8 项纯测试 / 日志 / 文档）；RC16 backlog 清零（L1 `OnAnyRedisSpiRequired` + S1 streamCache reconnect-invalidate）—— **1.9.x backlog 至此清空**；RC17 GA-readiness 终审（10 维度独立审计 + 3 项 must-fix 修复：metadata 缺失 `trace-propagation.enable`/`redis.cluster-nodes` 项 + 39 个集群测试文件补 Apache 2.0 头 + 文档版本陈旧引用刷新）—— **审计结论 GA_READY，1.9.0 GA 可在 RC17 之上直接 cut**（详见 `docs/audits/2026-06-07-ga-readiness-final.md`）；RC18 RC17 audit nice-to-haves 落地（T1+T2 snapshot-then-iterate + 注释精确化 + T3 §⑪ redis.* 配置表 + T4 §-标号 Unicode 一致性确认；0 行为变更）；RC19 2.0.0 prep docs（3 篇前瞻设计稿：sharded pub/sub 可行性 + Boot 3.x 兼容矩阵 + 1.9.0→2.0.0 迁移指南 DRAFT；**1.9.0 自身 0 行为 / SPI / wire / config 变更，GA-readiness 不受影响**）；RC20 1.9.x cycle retrospective（19 RC、168 commit、+25,217/−288 LOC、444 测试、11 模块的诚实总结 — `docs/1.9.x-cycle-retrospective.md`；**1.9.x 周期收尾艺术品；后续动作用户驱动**）。最终 1.9.0 发布日期待整个周期完成后确定。
 
 ## 版本定位
 
@@ -569,6 +569,28 @@ RC16 之后 1.9.x backlog **清空**——只剩 RC11/RC14 期间标记为 Refut
 #### 向后兼容
 
 文档全部位于 `docs/2.0.0/`，1.9.0 代码不读这些文件。**0 SPI / wire / config / 行为影响。**
+
+---
+
+### ㉔ 1.9.x cycle retrospective / 1.9.x 周期总结
+
+*Since V1.9.0-RC20.* **`docs/1.9.x-cycle-retrospective.md`** — 19 RC / 168 commit / +25,217 / −288 LOC / 444 测试 / 11 模块的诚实回顾：交付内容、成功模式（多 RC milestone discipline、对抗式 audit、backlog discipline、forward-looking docs 分离）、不成功之处（polish-RC inflation、Q4 false positive、维度重叠、**1.8.0+ 跨节点 JSON 广播 bug 静默存活 6 个月直到 RC8 docker demo 暴露**）、2.0.0 cycle 经验、audit-driven QA 模式作为 2.0.0 模板。
+
+#### 周期收尾声明
+
+**RC20 是 1.9.x cycle 的自然终止标记。**1.9.x backlog 清空、GA-readiness 认证完成、2.0.0 前瞻文档备齐、周期回顾归档。**下一步动作完全由用户驱动：**
+
+| 选项 | 含义 |
+|---|---|
+| Cut 1.9.0 GA | flip RC20 → `1.9.0`，发布 Maven Central（用户驱动；本仓库流程不自动 cut GA） |
+| Start 2.0.0 cycle | 创建 `2.0.0-SNAPSHOT` 分支，按 `docs/2.0.0/boot3-compatibility-matrix.md` 的预测形态启动 Boot 3.x cycle |
+| 其他 | 暂停、休息、或新方向 |
+
+**不应继续 RC21+ 而不带新用户指令** —— 否则 marginal value 趋零。
+
+#### 向后兼容
+
+文档专属。**0 SPI / wire / config / 行为影响。**1.9.0 代码不变。
 
 ---
 
