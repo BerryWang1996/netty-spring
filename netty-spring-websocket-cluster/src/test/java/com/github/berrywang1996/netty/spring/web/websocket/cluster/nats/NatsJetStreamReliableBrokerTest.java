@@ -413,6 +413,41 @@ class NatsJetStreamReliableBrokerTest {
         assertEquals(BrokerState.SHUTDOWN, b.state());
     }
 
+    /** S1 (RC16): RECONNECTED must clear the per-URI ensureStream cache so the next publish
+     *  re-validates the stream's existence — defends against NATS losing data while we were down. */
+    @Test
+    void connectionListener_clearsStreamCacheOnReconnect() throws Exception {
+        String b64uri = b64("/ws/s1");
+        String streamName = "netty-cluster-reliable-" + b64uri;
+        StreamInfo si = streamInfoWith(streamCfg(StorageType.File, DiscardPolicy.Old,
+                RetentionPolicy.Limits, 10000L, 1, streamName));
+        when(jsm.getStreamInfo(streamName)).thenReturn(si);
+        when(js.publishAsync(anyString(), any(byte[].class)))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        NatsJetStreamReliableBroker b = newBroker("node-A");
+
+        // Seed the per-URI streamCache by completing a successful publish.
+        b.reliablePublish("/ws/s1", envelope("node-A", "/ws/s1", "seed"));
+        verify(jsm, times(1)).getStreamInfo(streamName);
+
+        // A second publish without reconnect must NOT re-invoke getStreamInfo (cache is warm) —
+        // sanity check that proves the first call was actually cached.
+        b.reliablePublish("/ws/s1", envelope("node-A", "/ws/s1", "still-cached"));
+        verify(jsm, times(1)).getStreamInfo(streamName);
+
+        // Fire RECONNECTED through the captured listener.
+        ConnectionListener l = b.connectionListenerForTest();
+        assertNotNull(l);
+        l.connectionEvent(conn, ConnectionListener.Events.RECONNECTED);
+
+        // Next publish must re-invoke getStreamInfo (cache cleared by the reconnect handler).
+        b.reliablePublish("/ws/s1", envelope("node-A", "/ws/s1", "post-reconnect"));
+        verify(jsm, times(2)).getStreamInfo(streamName);
+
+        b.shutdown();
+    }
+
     // ===== T6 — destroyConsumerGroupsForNode with idle gate =====
 
     private static ConsumerInfo consumerInfo(long numPending, ZonedDateTime lastActive) {

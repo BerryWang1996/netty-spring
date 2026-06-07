@@ -162,8 +162,15 @@ public class NatsJetStreamReliableBroker implements ReliableBroker {
                     break;
                 case RECONNECTED:
                 case CONNECTED:
+                    // S1 (RC16): invalidate the per-URI ensureStream cache so the next publish
+                    // re-validates the stream's existence — defends against the case where NATS
+                    // lost data (e.g. ephemeral storage / data dir wipe) while we were disconnected.
+                    // streamCache is a ConcurrentHashMap; clear() is atomic w.r.t. concurrent
+                    // computeIfAbsent (see spec §7 risk #5). Done BEFORE the CAS so the cache is
+                    // still invalidated even if state was already ACTIVE (defensive).
+                    streamCache.clear();
                     if (state.compareAndSet(BrokerState.DEGRADED, BrokerState.ACTIVE)) {
-                        log.info("NatsJetStreamReliableBroker transport {} — state ACTIVE", ev);
+                        log.info("NatsJetStreamReliableBroker transport {} — state ACTIVE; streamCache cleared", ev);
                     }
                     break;
                 default:
