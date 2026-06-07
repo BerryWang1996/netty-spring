@@ -162,12 +162,15 @@ public class NatsJetStreamReliableBroker implements ReliableBroker {
                     break;
                 case RECONNECTED:
                 case CONNECTED:
-                    // S1 (RC16): invalidate the per-URI ensureStream cache so the next publish
-                    // re-validates the stream's existence — defends against the case where NATS
-                    // lost data (e.g. ephemeral storage / data dir wipe) while we were disconnected.
-                    // streamCache is a ConcurrentHashMap; clear() is atomic w.r.t. concurrent
-                    // computeIfAbsent (see spec §7 risk #5). Done BEFORE the CAS so the cache is
-                    // still invalidated even if state was already ACTIVE (defensive).
+                    // S1 (RC16): invalidate the per-URI ensureStream cache on transport reconnect
+                    // so the next publish re-validates the stream's existence — defends against
+                    // the case where NATS lost data (e.g. ephemeral storage / data dir wipe) while
+                    // we were disconnected. Clears visible cache entries; a concurrent
+                    // computeIfAbsent may re-populate with a stale STREAM_MARKER, but the next
+                    // publish on that URI calls ensureStream which re-validates via getStreamInfo
+                    // (and re-creates if missing); the next reconnect clears again. Defensive —
+                    // tolerates the race without correctness impact. Done BEFORE the CAS so the
+                    // cache is still invalidated even if state was already ACTIVE.
                     streamCache.clear();
                     if (state.compareAndSet(BrokerState.DEGRADED, BrokerState.ACTIVE)) {
                         log.info("NatsJetStreamReliableBroker transport {} — state ACTIVE; streamCache cleared", ev);
@@ -340,8 +343,11 @@ public class NatsJetStreamReliableBroker implements ReliableBroker {
         // it is owned by the auto-config bean (nettyClusterNatsJetStreamConnection) with its own
         // destroyMethod. Unacked messages remain in the stream PEL and replay on next start via
         // the durable consumer cursor (mirrors the Redis Streams reliable shutdown contract).
-        for (Map.Entry<String, SubscriptionHandle> e : subscriptions.entrySet()) {
-            SubscriptionHandle h = e.getValue();
+        // Snapshot first to avoid iterating-while-removing (concurrent-safe under
+        // ConcurrentHashMap semantics but non-idiomatic — the per-URI unsubscribe callback can
+        // call subscriptions.remove(uri) during normal flow).
+        List<SubscriptionHandle> handles = new java.util.ArrayList<>(subscriptions.values());
+        for (SubscriptionHandle h : handles) {
             h.stop.set(true);
             try { h.sub.unsubscribe(); } catch (Exception ignored) {}
             try { h.thread.join(2000); }
