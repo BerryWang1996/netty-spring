@@ -229,6 +229,8 @@ class ReliableBroadcastIntegrationTest {
                     // → broker CASes ACTIVE→DEGRADED through the listener wired in L8.
                     killTarget.getDockerClient().killContainerCmd(killTarget.getContainerId()).exec();
 
+                    // P3: 15s = Docker killContainerCmd latency (~1s) + Lettuce channel-inactive detection
+                    // (~1-3s default) + listener-CAS application + Testcontainers slack. Tuned empirically; raise if flakey on slow CI.
                     long degradedDeadline = System.currentTimeMillis() + 15000;
                     while (broker.state() != BrokerState.DEGRADED
                             && System.currentTimeMillis() < degradedDeadline) {

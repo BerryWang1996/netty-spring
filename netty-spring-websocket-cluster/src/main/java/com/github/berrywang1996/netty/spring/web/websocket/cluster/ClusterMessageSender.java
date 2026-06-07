@@ -360,9 +360,9 @@ public class ClusterMessageSender implements MessageSender {
             // but the cross-node copy is dropped (at-most-once, degrade-to-local). Count it
             // so the loss is visible/quantifiable rather than silent.
             clusterStats.broadcastsSkippedDegraded.incrementAndGet();
-            log.debug("Cluster broadcast cross-node copy skipped for URI {} — node state is {} "
+            log.debug("Cluster broadcast cross-node copy skipped for URI {} — node state is {}, broker state is {} "
                     + "(local delivery succeeded; remote nodes will not receive this message)",
-                    uri, nodeManager.getState());
+                    uri, nodeManager.getState(), broker.state());
         }
     }
 
@@ -448,6 +448,17 @@ public class ClusterMessageSender implements MessageSender {
 
     // ==================== Close session (local or cluster) ====================
 
+    /**
+     * Closes a WebSocket session by id. Tries local first; if not local and the cluster transport is ACTIVE,
+     * looks up the owning node and dispatches a CLOSE control message.
+     *
+     * @return {@code true} if the close was definitely actioned (locally or via cross-node CLOSE);
+     *         {@code false} otherwise. <strong>A {@code false} return is overloaded:</strong> it means
+     *         EITHER no such session exists locally AND no remote owner was found, OR the cluster
+     *         transport is degraded (Redis-loss grace period, broker DEGRADED) and the cross-node
+     *         lookup was short-circuited. Callers cannot distinguish these cases — mirrors the L6
+     *         {@link #sendMessage} semantics from 1.9.0-RC12.
+     */
     @Override
     public boolean closeSession(String uri, String sessionId, int statusCode, String reasonText)
             throws MessageUriNotDefinedException {
