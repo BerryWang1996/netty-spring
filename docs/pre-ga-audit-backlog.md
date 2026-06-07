@@ -1,14 +1,15 @@
-# Pre-GA Audit + RC12 Review Backlog (deferred to 1.9.1+)
+# Pre-GA Audit + RC12 / RC13 / RC14 Review Backlog (deferred to 1.9.1+)
 
 > **1.9.0 GA 前做过一轮多代理审计**（33 项原始发现 → 24 项经对抗式验证确认）。
 > **3 个 HIGH + 9 个 MEDIUM + 3 个文档不一致已在 GA 前的 RC11 修复**（见 release-notes-1.9.0.md §⑯）。
 > **RC12 又落地了 8 个 LOW/NIT polish 项**（L2–L8 + N1；见 release-notes-1.9.0.md §⑰）。
+> **RC14 又落地了 6 个 RC12/RC13 review nice-to-haves**（P1/P5/P6/Q5/Q6/Q7；见 release-notes-1.9.0.md §⑲；Q4 经复核为 reviewer false positive 不修复）。
 > 下面是 **仍未处理** 的项，集中推迟到 **1.9.1**（或更晚）。
 > 每项都给出位置、问题、推迟理由、建议修法，便于后续直接落地。
 
-This document tracks the LOW/NIT/polish findings still deferred after RC11 + RC12. None affects single-node mode
+This document tracks the LOW/NIT/polish findings still deferred after RC11 + RC12 + RC14. None affects single-node mode
 (the production-grade default) or the GA's correctness/security posture. Items are listed by source (audit id or
-RC12 review).
+review round).
 
 ---
 
@@ -34,15 +35,7 @@ RC12 review).
 
 ## RC12 review nice-to-haves (added 2026-06-06)
 
-### P1 — `closeSession()` / `topicMessage()` also gate on `broker.state() == ACTIVE`
-
-- **Where:** `ClusterMessageSender.closeSession()` (~line 458) and `topicMessage()` (similar).
-- **Issue:** Inconsistent with L6: during the redis-loss grace window, these paths still perform a bounded registry
-  lookup the broker can't act on (wasted ≤ `command-timeout-ms` per call).
-- **Why deferred:** Not a correctness issue — the lookup is bounded and the resulting publish/close fails cleanly;
-  L6 already covered the unicast hot path. Consistency polish.
-- **Fix sketch:** Mirror the L6 gate in `closeSession()` and `topicMessage()`; reuse the unit-test pattern from
-  `sendMessageShortCircuitsRemoteWhenBrokerDegraded`.
+> ~~**P1** — fixed in RC14 (see "Fixed in RC14" reference below).~~
 
 ### P2 — `@Tag("slow")` annotation for long-running ITs
 
@@ -65,18 +58,9 @@ RC12 review).
   exceed the margin.
 - **Fix sketch:** If flakes are observed, bump to 15 s + raise `ttl()` to 12 s OR retry-and-assert pattern.
 
-### P5 — Comment/import style polish
+> ~~**P5** — fixed in RC14 (see "Fixed in RC14" reference below).~~
 
-- **Where:** `NatsKvSessionRegistry.java:157-160` (verbose explanatory comment), `RedisBrokerInboundSizingTest`
-  vs `RedisPubSubBroker` (one uses `import StandardCharsets`, the other inlines `java.nio.charset.StandardCharsets`).
-- **Issue:** Trivial style inconsistencies.
-- **Fix sketch:** Drive-by clean-up on next touch.
-
-### P6 — `ClusterNodeManagerReliabilityTest.shutdownAwaitsSchedulerTerminationBeforeDeregister` timing
-
-- **Where:** 2 s latch / 50 ms reconciliation interval (40-cycle margin).
-- **Issue:** On extremely slow CI environments the latch could time out.
-- **Fix sketch:** If flaking, bump the latch timeout to 5 s and/or shorten reconciliation interval.
+> ~~**P6** — fixed in RC14 (see "Fixed in RC14" reference below).~~
 
 ---
 
@@ -99,29 +83,16 @@ RC12 review).
 - **Where:** Spec §5.1 says DEGRADED still attempts publish; only unit-level coverage today.
 - **Fix sketch:** Add an IT that disconnects → confirms `reliablePublish` does not throw + JetStream eventually receives once reconnected.
 
-### Q4 — `DedupRing` capacity boundary
+> ~~**Q4** — refuted by RC14 brainstorm complementary review (reviewer false positive).~~ `DedupRing`'s
+> `LinkedHashMap(cap*2, 0.75f, true)` uses `cap*2` as **table-capacity** (rehash-avoidance hint), not as
+> an element threshold; `removeEldestEntry` returns `size() > cap` and evicts on every `put`, so the
+> element count is strictly bounded by `cap`. Not shipped — comment already states the semantics correctly.
 
-- **Where:** `NatsJetStreamReliableBroker.DedupRing.removeEldestEntry()` ~line 535.
-- **Issue:** `LinkedHashMap` with LF 0.75 + capacity doubling = ring grows to ~1.5× cap before eviction (semantically benign but the "fixed-capacity LRU" comment over-promises).
-- **Fix sketch:** Either tighten the comment to "soft-capped (LRU eviction triggers at size > cap)" or use `LinkedHashMap(cap, 1.0f, true)` with a tighter rehash-aware eviction strategy.
+> ~~**Q5** — fixed in RC14 (see "Fixed in RC14" reference below).~~
 
-### Q5 — Explicit stream-name length guard
+> ~~**Q6** — fixed in RC14 (see "Fixed in RC14" reference below).~~
 
-- **Where:** `NatsJetStreamReliableBroker.ensureStream()` ~line 358.
-- **Issue:** NATS rejects stream names > 256 bytes; an extremely long URI would fail at `jsm.getStreamInfo` with a less-friendly diagnostic.
-- **Fix sketch:** Add a pre-check `if (streamName.length() > 256) throw new ClusterBrokerException("URI too long: ...")` for a clearer message.
-
-### Q6 — Make connection-bean reuse explicit in spec §3
-
-- **Where:** Spec `docs/superpowers/specs/2026-06-06-nats-jetstream-reliable-rc13.md` §3.
-- **Issue:** Spec says "reuses the same Connection" but doesn't name the bean qualifier (`nettyClusterNatsKvConnection`).
-- **Fix sketch:** Edit the spec to name the qualifier (doc only; no code impact).
-
-### Q7 — Reconcile `g_` vs `g.` durable consumer prefix drift
-
-- **Where:** Spec §4 table says `g.<b64url(nodeId)>`; code uses `g_<b64url(nodeId)>` because jnats client-validator rejects `.` in durable names.
-- **Issue:** Documented in code comment + release-notes §⑱; the spec table itself wasn't retroactively updated.
-- **Fix sketch:** Edit spec §4 table to match the code; the existing release-notes §⑱ paragraph is already correct.
+> ~~**Q7** — fixed in RC14 (see "Fixed in RC14" reference below).~~
 
 ---
 
@@ -135,6 +106,16 @@ RC12 review).
 **Fixed in RC12 (1.9.1 backlog polish, 8 items):**
 - L2 NATS KV `register()` two-write order; L3 Redis broker UTF-8 byte sizing (3 brokers); L4 dead-node cleanup chained on `reconScheduler` with LEFT guard + retry-on-fail; L5 NATS reaper IT TTL + expiry/re-claim assertion; L6 `sendMessage` gates on `broker.state() == ACTIVE`; L7 `ClusterNodeManager.shutdown` awaits scheduler termination before deregister; L8 `RedisStreamsReliableBroker` wires `RedisConnectionStateListener` for DEGRADED/ACTIVE; N1 empty-URI guard in `removeAllForNode`.
 
+**Fixed in RC14 (RC12/RC13 review polish bundle, 6 items):**
+- P1 `closeSession()` / `topicMessage()` also gate on `broker.state() == ACTIVE` (consistency with RC12 L6 `sendMessage()` — avoids one bounded registry lookup / one doomed publish in the redis-loss grace window).
+- P5 NATS-KV `removeAllForNode` RC11 L2 comment condensed (4 lines → 2); `RedisPubSubBroker` / `RedisClusterModePubSubBroker` / `RedisStreamsReliableBroker` switched inline `java.nio.charset.StandardCharsets.UTF_8` to imported form (matches test code style).
+- P6 `ClusterNodeManagerReliabilityTest.shutdownAwaitsSchedulerTerminationBeforeDeregister` reconciliation-await latch bumped 2 s → 5 s (40-cycle → 100-cycle margin at 50 ms interval).
+- Q5 `NatsJetStreamReliableBroker.ensureStream()` pre-checks `streamName.length() > 255` and throws `ClusterBrokerException("Stream name too long: ...")` before any jsm round-trip (clearer than the jnats-side diagnostic).
+- Q6 RC13 spec §3 names the `@Qualifier("nettyClusterNatsKvConnection")` bean explicitly (doc only).
+- Q7 RC13 spec §4 table + §5 consume / dead-node cleanup pseudocode + §7 test description + self-review aligned to `g_<b64url(nodeId)>` (code uses `_` because the jnats client-side validator rejects `.` in durable names).
+
 ### Refuted by adversarial verification (no action)
 
-9 claims were refuted by the two-lens skeptic pass, including: reliable stream-trim MAXLEN "data loss" (documented at-most-once-beyond-retention); NoOp authenticator accepting unsigned (by-design when auth disabled); scheduler-field visibility; coalescing check-then-act reorder; first-subscription-starts-at-`$`.
+9 claims were refuted by the two-lens skeptic pass during RC11, including: reliable stream-trim MAXLEN "data loss" (documented at-most-once-beyond-retention); NoOp authenticator accepting unsigned (by-design when auth disabled); scheduler-field visibility; coalescing check-then-act reorder; first-subscription-starts-at-`$`.
+
+**Q4 added to this list by RC14 brainstorm:** `DedupRing` "capacity boundary" — reviewer conflated `LinkedHashMap`'s table-capacity hint (`cap*2`) with the element-count cap. The eviction predicate `size() > cap` runs on every `put`, so element count is strictly bounded by `cap`. Existing comment correctly says "fixed-capacity"; no change needed.
