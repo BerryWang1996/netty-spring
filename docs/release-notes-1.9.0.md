@@ -1,6 +1,6 @@
 # Release Notes — v1.9.0 (开发中 / in development)
 
-> 状态：**开发中（1.9.0-RC17，2026-06-07）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）；RC10 新增**全 NATS 栈**（`nats.registry=true` → NATS JetStream-KV registry/心跳/reaper，可完全不依赖 Redis；需 JetStream 服务器；ADR-001 更新为 NATS-only opt-in）；RC11 预发布安全审计硬化（15 项修复：SPI 契约、Redis 键安全、缓存有界、生命周期防御、自动装配护栏、文档一致性）；RC12 收尾 1.9.1 backlog 8 项 LOW/NIT polish（L2–L8 + N1；L1 推迟需自定义 Spring `Condition`）；RC13 关闭 all-NATS 可靠投递缺口（`NatsJetStreamReliableBroker`，opt-in；`reliable.enable=true && nats.registry=true` 激活，其他档位字节级不变）；RC14 polish bundle（P1/P5/P6/Q5/Q6/Q7 — 6 项；纯 polish，除 Q5 pathological URI 外无行为变更）；RC15 测试覆盖加固（Q1/Q2/Q3 NATS reliable IT + P2/P3/P4 NATS-KV IT polish + R1/R2 日志/javadoc，8 项纯测试 / 日志 / 文档）；RC16 backlog 清零（L1 `OnAnyRedisSpiRequired` + S1 streamCache reconnect-invalidate）—— **1.9.x backlog 至此清空**；RC17 GA-readiness 终审（10 维度独立审计 + 3 项 must-fix 修复：metadata 缺失 `trace-propagation.enable`/`redis.cluster-nodes` 项 + 39 个集群测试文件补 Apache 2.0 头 + 文档版本陈旧引用刷新）—— **审计结论 GA_READY，1.9.0 GA 可在 RC17 之上直接 cut**（详见 `docs/audits/2026-06-07-ga-readiness-final.md`）。最终 1.9.0 发布日期待整个周期完成后确定。
+> 状态：**开发中（1.9.0-RC18，2026-06-07）** — 本文档随 1.9.0 周期累积。RC1 含 5 项可靠性硬化；RC2 新增可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）；RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；RC4 新增完整 Micrometer 集群指标（`netty.cluster.*` meter-binder）；RC5 新增多节点 E2E + Testcontainers CI，并**修复跨节点单播 hook-wiring 缺陷**（影响 1.8.0~RC4，仅集群模式）；RC6 新增 W3C TraceContext 跨节点 MDC 日志关联（opt-in；Micrometer Observation 续接 → 2.0.0）；RC7 新增第一等 Redis Cluster 客户端支持（`cluster-nodes` 选择 Redis Cluster 传输；常规集群 pub/sub，不削减广播扇出；sharded pub/sub → 2.0.0）；RC8 新增多节点 Docker 演示（含**跨节点 JSON 广播修复**，影响 1.8.0+ 集群用户）与多 pub/sub 连接（opt-in 入站解码扩展，默认 1）；RC9 新增 NATS broker（ADR-001 规模化档位；`NatsClusterBroker` 由 `nats.servers` 选择，**仅传输层**、registry 仍在 Redis）；RC10 新增**全 NATS 栈**（`nats.registry=true` → NATS JetStream-KV registry/心跳/reaper，可完全不依赖 Redis；需 JetStream 服务器；ADR-001 更新为 NATS-only opt-in）；RC11 预发布安全审计硬化（15 项修复：SPI 契约、Redis 键安全、缓存有界、生命周期防御、自动装配护栏、文档一致性）；RC12 收尾 1.9.1 backlog 8 项 LOW/NIT polish（L2–L8 + N1；L1 推迟需自定义 Spring `Condition`）；RC13 关闭 all-NATS 可靠投递缺口（`NatsJetStreamReliableBroker`，opt-in；`reliable.enable=true && nats.registry=true` 激活，其他档位字节级不变）；RC14 polish bundle（P1/P5/P6/Q5/Q6/Q7 — 6 项；纯 polish，除 Q5 pathological URI 外无行为变更）；RC15 测试覆盖加固（Q1/Q2/Q3 NATS reliable IT + P2/P3/P4 NATS-KV IT polish + R1/R2 日志/javadoc，8 项纯测试 / 日志 / 文档）；RC16 backlog 清零（L1 `OnAnyRedisSpiRequired` + S1 streamCache reconnect-invalidate）—— **1.9.x backlog 至此清空**；RC17 GA-readiness 终审（10 维度独立审计 + 3 项 must-fix 修复：metadata 缺失 `trace-propagation.enable`/`redis.cluster-nodes` 项 + 39 个集群测试文件补 Apache 2.0 头 + 文档版本陈旧引用刷新）—— **审计结论 GA_READY，1.9.0 GA 可在 RC17 之上直接 cut**（详见 `docs/audits/2026-06-07-ga-readiness-final.md`）；RC18 RC17 audit nice-to-haves 落地（T1+T2 snapshot-then-iterate + 注释精确化 + T3 §⑪ redis.* 配置表 + T4 §-标号 Unicode 一致性确认；0 行为变更）。最终 1.9.0 发布日期待整个周期完成后确定。
 
 ## 版本定位
 
@@ -242,6 +242,13 @@ v1.9.0 是 **集群可靠性硬化** milestone。聚焦于将 1.8.0 发版评审
 - **`cluster-nodes` 无法表达 TLS / 密码**：它是纯 `host:port` 列表。需要连接受保护的 cluster（鉴权 / TLS）时，**自备 `RedisClusterClient` bean**（`@ConditionalOnMissingBean`，框架自动让位）。
 - **可靠投递（Redis Streams）与 `cluster-nodes` 在 RC7 中互斥**：`reliable.enable=true` 与 `cluster-nodes` 同时设置时**不装配 `ReliableBroker`**（reliable-on-cluster 是后续项）。standalone 拓扑与 cluster-nodes 也互斥。
 - **连接选项**：cluster 客户端配置为 `validateClusterNodeMembership(false)` + 关闭周期性拓扑刷新——让它在容器 / NAT 端口映射后仍可用（常见生产形态）；多节点拓扑刷新调优是后续项。
+
+#### 配置项（`server.netty.websocket.cluster.redis.*`）
+
+| 配置项 | 默认 | 说明 |
+|---|---|---|
+| `uri` | `redis://localhost:6379` | 单点或 sentinel；按 scheme 选择拓扑（`redis://`、`rediss://`、`redis-sentinel://`）。 |
+| `cluster-nodes` | （空） | 非空 → 切到 RedisClusterClient 传输（RC7 客户端）；与 `reliable.enable=true` 在 RC7 中互斥。 |
 
 #### 向后兼容
 
