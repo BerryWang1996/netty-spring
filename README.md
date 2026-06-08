@@ -304,7 +304,7 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#11-configurati
 
 ### Current Status
 
-- **Latest stable: `1.8.0`** (on Maven Central). **`1.9.0` is in development (RC1–RC16 shipped, GA cut pending)** — RC1 cluster reliability hardening (5 deferred items + 2 new knobs); RC2 reliable broadcast via Redis Streams (`reliableBroadcast`, at-least-once, opt-in); RC3 HMAC envelope authentication (`MessageAuthenticator` SPI); RC4 full Micrometer cluster metrics; RC5 multi-node E2E + Testcontainers CI + cross-node unicast hook-wiring fix; RC6 W3C TraceContext propagation; RC7 Redis Cluster client foundation; RC8 multi/sharded pub/sub multiplexing; RC9 NATS broker; RC10 all-NATS stack (JetStream-KV registry/heartbeat/reaper); RC11–RC12 pre-GA audit fixes + 1.9.1 backlog cleanup; RC13 NATS JetStream reliable broadcast (closes the all-NATS reliable gap); RC14–RC15 polish + test coverage; RC16 `OnAnyRedisSpiRequired` condition tightening. Single-node mode stays production-grade and identical to 1.7.x/1.8.0 — see [Release Notes 1.9.0](docs/release-notes-1.9.0.md) and [Cluster Design §Security](docs/cluster-design.md). GA cut pending.
+- **Latest stable: `1.9.0` GA (released 2026-06-07, on Maven Central).** Previous stable: `1.8.0`. The 1.9.0 GA cycle delivered: cluster reliability hardening (5 deferred items + 2 new knobs), reliable broadcast (Redis Streams + NATS JetStream — at-least-once, opt-in), HMAC envelope authentication (`MessageAuthenticator` SPI), full Micrometer cluster metrics, W3C TraceContext propagation, Redis Cluster client, multi/sharded pub/sub multiplexing, NATS broker + all-NATS stack (JetStream-KV registry/heartbeat/reaper), multi-node E2E + Testcontainers CI, and a GA-readiness audit. **444 tests / 11 modules green.** Single-node mode stays production-grade and identical to 1.7.x/1.8.0 — see [Release Notes 1.9.0](docs/release-notes-1.9.0.md) and [Cluster Design §Security](docs/cluster-design.md).
 - `1.8.0` delivered WebSocket cluster support (Redis Pub/Sub + 5-layer SPI architecture + 291 tests) — all preserved in 1.9.0 and backward compatible.
 - Milestones P0 through P7 are all complete; performance (1.6.x), security/stability (1.6.2), observability (1.7.0), clustering (1.8.0), and cluster hardening (1.9.0) followed.
 - Next: `2.0.0` Spring Boot 3.x / Jakarta migration + enterprise security
@@ -314,7 +314,7 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#11-configurati
 - [API Usage Guide](docs/api-guide.md) — Complete integration guide with code examples
 - [Netty Configuration](docs/netty-configuration.md) — HTTP / TLS / management endpoint reference
 - [WebSocket Configuration](docs/websocket-configuration.md) — WebSocket runtime, crypto, observability
-- [Release Notes - 1.9.0](docs/release-notes-1.9.0.md) — Current recommended version (cluster reliability hardening)
+- [Release Notes - 1.9.0](docs/release-notes-1.9.0.md) — Current stable (1.9.0 GA — cluster reliability + reliable delivery + HMAC + Micrometer + W3C TraceContext + Redis Cluster + NATS)
 - [Release Notes - 1.8.0](docs/release-notes-1.8.0.md) — WebSocket cluster support
 - [Release Notes - 1.7.1](docs/release-notes-1.7.1.md)
 - [Release Notes - 1.7.0](docs/release-notes-1.7.0.md)
@@ -643,7 +643,7 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 
 ### 当前阶段
 
-- **最新稳定版：`1.8.0`**（已发布 Maven Central）。**`1.9.0` 开发中（`1.9.0-RC1`）**——集群可靠性硬化：5 项 1.8.0 推迟项全部落地 + 2 个新配置项 + 304 个测试全绿；可靠投递（Redis Streams）为本周期下一项，之后再发最终 1.9.0。单机模式生产级、与 1.7.x/1.8.0 完全一致——见 [1.9.0 发布说明（开发中）](docs/release-notes-1.9.0.md) 与 [集群方案设计 §安全模型](docs/cluster-design.md)。
+- **最新稳定版：`1.9.0` GA**（2026-06-07 发布，已上 Maven Central）。上一稳定版：`1.8.0`。1.9.0 GA 周期交付：集群可靠性硬化（5 项 1.8.0 推迟项 + 2 个新配置项）、可靠投递（Redis Streams + NATS JetStream，至少一次，按需启用）、HMAC 信封鉴权（`MessageAuthenticator` SPI）、完整 Micrometer 集群指标、W3C TraceContext 跨节点透传、Redis Cluster 客户端、多/分片 Pub/Sub 多路复用、NATS 传输 + 全 NATS 技术栈（JetStream-KV 注册表/心跳/leader）、多节点 E2E + Testcontainers CI、以及 GA 就绪审计。**444 个测试 / 11 个模块全绿。** 单机模式生产级、与 1.7.x/1.8.0 完全一致——见 [1.9.0 发布说明](docs/release-notes-1.9.0.md) 与 [集群方案设计 §安全模型](docs/cluster-design.md)。
 - `1.8.0` 交付 WebSocket 集群支持（Redis Pub/Sub 跨节点广播/单播 + 5 层 SPI 可插拔架构 + 291 个测试全绿）——在 `1.9.0` 中完整保留，全部向后兼容。
 - P0 至 P7 全部里程碑已完成；其后依次推进性能（1.6.x）、安全稳定性（1.6.2）、可观测性（1.7.0）、集群水平扩展（1.8.0）、集群可靠性硬化（1.9.0）。
 - 下一步：`2.0.0` Spring Boot 3.x / Jakarta 迁移 + 企业安全版本
@@ -653,7 +653,7 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 - [API 使用指南](docs/api-guide.md) — 完整接入指南，含代码示例
 - [Netty 配置说明](docs/netty-configuration.md) — HTTP / TLS / 管理端点参考
 - [WebSocket 配置说明](docs/websocket-configuration.md) — WebSocket 运行时、加密、可观测性
-- [1.9.0 发布说明](docs/release-notes-1.9.0.md) — 当前推荐版本（集群可靠性硬化）
+- [1.9.0 发布说明](docs/release-notes-1.9.0.md) — 当前稳定版（1.9.0 GA — 集群可靠性 + 可靠投递 + HMAC + Micrometer + W3C TraceContext + Redis Cluster + NATS）
 - [1.8.0 发布说明](docs/release-notes-1.8.0.md) — WebSocket 集群支持
 - [1.7.1 发布说明](docs/release-notes-1.7.1.md)
 - [1.7.0 发布说明](docs/release-notes-1.7.0.md)
