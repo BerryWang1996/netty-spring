@@ -159,33 +159,48 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 
 #### Performance Benchmarks
 
-Tested with Redis 7.4.9, JDK 17, Docker Desktop, zero-dependency `SimpleTextEnvelopeCodec`:
+**Methodology** — measured 2026-06-08 on Intel i9-14900HX (24c/32t), 64 GB RAM, Windows 11; JDK 17 GraalVM 17.0.11+7, Maven 3.9.16; Docker Desktop 29.5.2 running Redis 7-alpine + NATS 2.10 with JetStream, both on loopback. Zero-dependency `SimpleTextEnvelopeCodec`. 500-message warmup discarded before measurement; main runs of 5,000 (fan-out paths) and 2,000 (cross-node + reliable) messages. Reproduce with `mvn -pl netty-spring-websocket-cluster test -Dtest=PerformanceBenchmark` (9 ordered tests).
 
-| Scenario | Throughput | Latency | Notes |
-| --- | --- | --- | --- |
-| Local broadcast (no Redis) | **1,808,057 msg/s** | **0.6 µs** | Baseline — pure in-memory |
-| Raw Redis Pub/Sub | **16,281 msg/s** | **61 µs** | Lettuce PUBLISH→SUBSCRIBE E2E |
-| Two-node cross-node broadcast | **~14,000 msg/s** | **77 µs** | Node A → Redis → Node B |
+| # | Scenario | Throughput | Avg latency | Notes |
+| --- | --- | --- | --- | --- |
+| 1 | Local broadcast baseline | **2,104,111 msg/s** | **0.5 µs** | `DefaultMessageSender`, no Redis, pure in-memory fan-out |
+| 2 | Cluster broadcast (Redis Pub/Sub) | **198,353 msg/s** | **5.0 µs** | `ClusterMessageSender` → local fan-out + async PUBLISH |
+| 3 | Raw Redis Pub/Sub | **32,651 msg/s** | **30.6 µs** | Lettuce PUBLISH → SUBSCRIBE E2E |
+| 4 | Two-node cross-node (Redis) | **33,389 msg/s** | **30.0 µs** | Node A → Redis → Node B |
+| 5 | Raw NATS Pub/Sub | **267,071 msg/s** | **3.7 µs** | jnats publish → message handler E2E |
+| 6 | Two-node cross-node (NATS broker + Redis registry) | **32,514 msg/s** | **30.8 µs** | RC9 mixed mode; bounded by `ClusterMessageSender` pipeline |
+| 7 | Reliable broadcast (Redis Streams) | **18,047 msg/s** | **55.4 µs** | RC2 `RedisStreamsReliableBroker`, XADD + XREADGROUP at-least-once |
+| 8 | Reliable broadcast (NATS JetStream) | **3,391 msg/s** | **294.9 µs** | RC13 `NatsJetStreamReliableBroker`, FILE storage + pull-fetch |
+| 9 | HMAC overhead (sign + verify, isolated CPU cost) | 3.59M → 0.37M msg/s | +2.4 µs | RC3 HMAC-SHA256; ~90% throughput hit when isolated, <5% under real I/O |
+
+**Reading the numbers honestly:**
+
+- **Loopback Docker** is the best-case latency floor (no network RTT, no replication, no TLS). Real cross-AZ Redis/NATS adds 0.5–2 ms; the absolute throughput drops accordingly.
+- **NATS broker's 8× raw-transport edge (267k vs 33k) doesn't translate into proportional cross-node gains** — the `ClusterMessageSender` pipeline (envelope build, codec, lookup, fan-out) caps both paths at ~30k msg/s here. NATS becomes the better choice when you're approaching Redis Pub/Sub's fan-out wall (see [Cluster Design §Capacity](docs/cluster-design.md)).
+- **Reliable brokers cost what you'd expect.** Redis Streams ~5× slower than fire-and-forget Pub/Sub; NATS JetStream slower again due to disk fsync + pull-based fetch loop (`poll-block-ms` default 2s). Reliable is for broadcasts that **must** survive a brief subscriber outage, not the hot path.
+- **HMAC's micro-benchmark 90% overhead** is sign+verify in isolation (zero I/O). Add 30 µs of real network and the 2.4 µs HMAC cost is < 8% of total round-trip — negligible in practice. Enable `auth.enable=true` whenever Redis is shared with untrusted publishers.
 
 #### When to Use Cluster vs Single-Node
 
-| Dimension | Single-Node (default) | Cluster (`cluster.enable=true`) |
-| --- | --- | --- |
-| Use case | ≤ 1 server, ≤ 25k connections | Multiple servers, horizontal scaling |
-| Broadcast latency | ~0.6 µs (in-memory) | ~77 µs (via Redis) |
-| Throughput ceiling | ≥ 1.8M msg/s | ~14k msg/s cross-node (Redis bound) |
-| Extra dependency | None | Redis 7+ |
-| Failure impact | Process dies = all disconnected | One node dies = only that node's users disconnect |
-| Config cost | Zero | One line + Redis address |
+| Dimension | Single-Node (default) | Cluster — Redis (`cluster.enable=true`) | Cluster — NATS (`nats.servers=...`) |
+| --- | --- | --- | --- |
+| Use case | ≤ 1 server, ≤ 25k connections | Multiple servers, horizontal scaling | Scaling tier (ADR-001) when Redis Pub/Sub hits its fan-out wall |
+| Broadcast latency (loopback) | ~0.5 µs (in-memory) | ~30 µs (via Redis Pub/Sub) | ~31 µs (via NATS) — same `ClusterMessageSender` pipeline cap |
+| Cross-node throughput | ≥ 2.1M msg/s local | ~33k msg/s (Redis bound) | ~33k msg/s same; raw NATS headroom 267k for future expansion |
+| Reliable broadcast | n/a | RC2 Redis Streams — 18k msg/s, at-least-once | RC13 JetStream — 3.4k msg/s, at-least-once + replay |
+| Extra dependency | None | Redis 7+ | NATS 2.10+ (+ JetStream for `nats.registry=true` and reliable) |
+| Failure impact | Process dies = all disconnected | One node dies = only its users disconnect | Same |
+| Config cost | Zero | One line + Redis URI | One line + NATS URI (registry still on Redis by default) |
 
 #### Capacity Planning
 
-| Target Connections | Nodes | Recommended Redis | Cluster Broadcast Ceiling |
+| Target Connections | Nodes | Recommended Transport | Cluster Broadcast Ceiling |
 | --- | --- | --- | --- |
-| ≤ 25k | 1 (single-node) | Not needed | ≥ 1.8M msg/s |
-| 25k – 75k | 2–3 | Standalone or Sentinel | ~14k msg/s |
-| 75k – 250k | 4–10 | Sentinel (recommended) | ~14k msg/s (single primary) |
-| > 250k | > 10 | Need SPI switch (NATS/mesh) | Beyond Redis Pub/Sub |
+| ≤ 25k | 1 (single-node) | Not needed | ≥ 2.1M msg/s (in-memory) |
+| 25k – 75k | 2–3 | Redis Standalone or Sentinel | ~33k msg/s |
+| 75k – 250k | 4–10 | Redis Sentinel (recommended) or NATS broker | ~33k msg/s (single primary / single NATS server) |
+| 250k – 1M | 10–20 | NATS broker (RC9 ADR-001 scaling tier) | NATS raw 267k msg/s headroom — still bottlenecked by sender pipeline ~33k msg/s today |
+| > 1M | > 20 | Sharded pub/sub (Boot 3.x / 2.0.0) | Beyond Lettuce 6.1 — see [Boot 3.x compatibility matrix](docs/2.0.0/boot3-compatibility-matrix.md) |
 
 #### Pluggable Serialization
 
@@ -501,32 +516,48 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 
 #### 性能基准
 
-Redis 7.4.9 / JDK 17 / Docker / 零依赖 SimpleTextEnvelopeCodec：
+**测试方法学**：2026-06-08 在 Intel i9-14900HX（24 核 / 32 线程）、64 GB RAM、Windows 11 上测得；JDK 17 GraalVM 17.0.11+7、Maven 3.9.16；Docker Desktop 29.5.2 跑 Redis 7-alpine + NATS 2.10（开启 JetStream），均走 loopback。零依赖 `SimpleTextEnvelopeCodec`。所有测试丢弃 500 条预热消息后再测；扇出路径用 5,000 条主样本、跨节点 / 可靠路径用 2,000 条主样本。复现：`mvn -pl netty-spring-websocket-cluster test -Dtest=PerformanceBenchmark`（9 个有序测试方法）。
 
-| 场景 | 吞吐量 | 延迟 | 说明 |
-| --- | --- | --- | --- |
-| 本地广播（无 Redis） | **1,808,057 msg/s** | **0.6 µs** | 基线——纯内存 |
-| Raw Redis Pub/Sub | **16,281 msg/s** | **61 µs** | Lettuce PUBLISH→SUBSCRIBE 端到端 |
-| 双节点跨节点广播 | **~14,000 msg/s** | **77 µs** | 节点 A → Redis → 节点 B |
+| # | 场景 | 吞吐量 | 平均延迟 | 说明 |
+| --- | --- | --- | --- | --- |
+| 1 | 本地广播基线 | **2,104,111 msg/s** | **0.5 µs** | `DefaultMessageSender`，无 Redis，纯内存扇出 |
+| 2 | 集群广播（Redis Pub/Sub） | **198,353 msg/s** | **5.0 µs** | `ClusterMessageSender` → 本地扇出 + 异步 PUBLISH |
+| 3 | Raw Redis Pub/Sub | **32,651 msg/s** | **30.6 µs** | Lettuce PUBLISH → SUBSCRIBE 端到端 |
+| 4 | 双节点跨节点（Redis） | **33,389 msg/s** | **30.0 µs** | 节点 A → Redis → 节点 B |
+| 5 | Raw NATS Pub/Sub | **267,071 msg/s** | **3.7 µs** | jnats publish → message handler 端到端 |
+| 6 | 双节点跨节点（NATS 传输 + Redis 注册表） | **32,514 msg/s** | **30.8 µs** | RC9 混合模式；受 `ClusterMessageSender` pipeline 限制 |
+| 7 | 可靠广播（Redis Streams） | **18,047 msg/s** | **55.4 µs** | RC2 `RedisStreamsReliableBroker`，XADD + XREADGROUP 至少一次 |
+| 8 | 可靠广播（NATS JetStream） | **3,391 msg/s** | **294.9 µs** | RC13 `NatsJetStreamReliableBroker`，FILE 存储 + 拉取循环 |
+| 9 | HMAC 签名+验签开销（孤立 CPU） | 3.59M → 0.37M msg/s | +2.4 µs | RC3 HMAC-SHA256；孤立 micro-bench ~90% 吞吐损失，真实 I/O 下 < 5% |
+
+**诚实解读：**
+
+- **Loopback Docker** 是延迟下限场景（无网络 RTT、无副本、无 TLS）。真实跨可用区 Redis/NATS 会增加 0.5-2 ms RTT，吞吐相应下降。
+- **NATS 传输层 8× raw 吞吐优势（267k vs 33k）不会按比例转化为跨节点 gains** —— `ClusterMessageSender` 的 pipeline 开销（信封构建、codec、查询、扇出）在此机器上把两边都封顶在 ~30k msg/s。NATS 真正发力在你接近 Redis Pub/Sub 的扇出墙后（详见 [集群方案设计 §容量规划](docs/cluster-design.md)）。
+- **可靠 broker 的代价符合直觉。** Redis Streams 比 fire-and-forget Pub/Sub 慢约 5×；NATS JetStream 更慢（磁盘 fsync + pull-based fetch，`poll-block-ms` 默认 2 秒）。可靠路径是给「**必须**容忍订阅方短时下线」的广播用的，**不是热路径**。
+- **HMAC 90% 的 micro-bench 开销** 是签名+验签在零 I/O 下的孤立 CPU 成本。加上真实网络 30 µs RTT，2.4 µs 的 HMAC 占总往返不到 8%——可忽略。Redis 与不可信发布方共享时，**坚持开** `auth.enable=true`。
 
 #### 选型建议
 
-| 维度 | 单机（默认） | 集群（`cluster.enable=true`） |
-| --- | --- | --- |
-| 适用场景 | ≤ 1 台服务器、≤ 25k 连接 | 多台服务器水平扩展 |
-| 广播延迟 | ~0.6 µs（纯内存） | ~77 µs（经 Redis） |
-| 吞吐上限 | ≥ 180 万 msg/s | ~14k msg/s 跨节点（Redis 瓶颈） |
-| 额外依赖 | 无 | Redis 7+ |
-| 故障影响 | 进程死 = 全断 | 一个节点死 = 仅该节点用户断 |
+| 维度 | 单机（默认） | 集群——Redis (`cluster.enable=true`) | 集群——NATS (`nats.servers=...`) |
+| --- | --- | --- | --- |
+| 适用场景 | ≤ 1 台服务器、≤ 25k 连接 | 多台服务器水平扩展 | 规模化档位（ADR-001），Redis Pub/Sub 扇出墙之后 |
+| 广播延迟（loopback） | ~0.5 µs（纯内存） | ~30 µs（经 Redis Pub/Sub） | ~31 µs（经 NATS）——同 `ClusterMessageSender` pipeline 上限 |
+| 跨节点吞吐 | 本地 ≥ 210 万 msg/s | ~33k msg/s（Redis 瓶颈） | ~33k msg/s 同；raw NATS 头空间 267k 留作未来扩展 |
+| 可靠广播 | 不适用 | RC2 Redis Streams — 18k msg/s，至少一次 | RC13 JetStream — 3.4k msg/s，至少一次 + 回放 |
+| 额外依赖 | 无 | Redis 7+ | NATS 2.10+（+ JetStream 用于 `nats.registry=true` 与可靠广播）|
+| 故障影响 | 进程死 = 全断 | 一个节点死 = 仅该节点用户断 | 同 |
+| 配置成本 | 零 | 一行 + Redis URI | 一行 + NATS URI（registry 默认仍在 Redis）|
 
 #### 容量规划
 
-| 目标连接 | 节点数 | 推荐 Redis | 集群广播上限 |
+| 目标连接 | 节点数 | 推荐传输 | 集群广播上限 |
 | --- | --- | --- | --- |
-| ≤ 25k | 1（单机） | 不需要 | ≥ 180 万/s |
-| 25k – 75k | 2–3 | Standalone / Sentinel | ~14k/s |
-| 75k – 250k | 4–10 | Sentinel（推荐） | ~14k/s（单主限制） |
-| > 250k | > 10 | 需 SPI 切换（NATS/mesh） | 超出 Redis Pub/Sub 范围 |
+| ≤ 25k | 1（单机） | 不需要 | ≥ 210 万 msg/s（纯内存） |
+| 25k – 75k | 2–3 | Redis Standalone / Sentinel | ~33k msg/s |
+| 75k – 250k | 4–10 | Redis Sentinel（推荐）或 NATS 传输 | ~33k msg/s（单主 / 单 NATS） |
+| 250k – 100 万 | 10–20 | NATS 传输（RC9 ADR-001 规模化档位） | NATS raw 头空间 267k；当前受 sender pipeline 上限 ~33k msg/s |
+| > 100 万 | > 20 | Sharded pub/sub（Boot 3.x / 2.0.0） | 超出 Lettuce 6.1 — 详见 [Boot 3.x 兼容矩阵](docs/2.0.0/boot3-compatibility-matrix.md) |
 
 #### 可插拔序列化
 

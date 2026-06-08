@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Suppresses DEBUG-level lettuce/netty noise during PerformanceBenchmark so the
+     box-drawn results in System.out don't get interleaved with TCP-frame DEBUG lines.
+     Behavioral tests still see WARN+ which is what they assert against. -->
+<configuration>
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{0} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="io.lettuce" level="WARN"/>
+    <logger name="io.netty" level="WARN"/>
+    <logger name="reactor" level="WARN"/>
+    <logger name="io.nats" level="WARN"/>
+
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+    </root>
+</configuration>
