@@ -202,6 +202,145 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 | 250k – 1M | 10–20 | NATS broker (RC9 ADR-001 scaling tier) | NATS raw 267k msg/s headroom — still bottlenecked by sender pipeline ~33k msg/s today |
 | > 1M | > 20 | Sharded pub/sub (Boot 3.x / 2.0.0) | Beyond Lettuce 6.1 — see [Boot 3.x compatibility matrix](docs/2.0.0/boot3-compatibility-matrix.md) |
 
+#### Selection Guide — Pick the Right Configuration
+
+Six independent decisions. Default to **NO** at every step unless the listed condition is true — every "yes" adds operational complexity.
+
+##### Decision 1 — Cluster mode? (`cluster.enable`)
+
+- **Single-node (`cluster.enable=false`, default)** if all of: ≤ 1 server; ≤ 25k concurrent WebSocket connections; downtime of the single node is acceptable; you don't operate Redis.
+- **Cluster (`cluster.enable=true`)** if any of: > 1 server; > 25k connections expected; you need rolling deployments without dropping all sessions; you already operate Redis 7+.
+
+> Single-node is byte-identical to 1.7.x/1.8.0 — zero broker overhead. Don't enable cluster "for safety" without the use case.
+
+##### Decision 2 — Which transport? (Redis vs NATS)
+
+| Question | Pick Redis Pub/Sub (default) | Pick NATS broker (RC9) | Pick all-NATS stack (RC10) |
+|---|---|---|---|
+| Already operating Redis | ✅ | (continue Redis for registry) | — |
+| Expected broadcast rate | ≤ 30k cross-node msg/s | Approaching the Redis Pub/Sub fan-out wall (see cluster-design §Capacity) | Same as middle column + want a single middleware |
+| Operate two middlewares (Redis + NATS) is OK | ✅ | ✅ | ❌ |
+| Have a JetStream-enabled NATS server | not required | not required | **required** (`nats-server -js`) |
+| Config |  `cluster.redis.uri=...` | `cluster.nats.servers=nats://...` | + `cluster.nats.registry=true` |
+| Reliable broadcast supported | Yes (Redis Streams, RC2) | Yes (Redis Streams for the registry tier) | Yes (NATS JetStream, RC13) |
+
+The NATS broker (RC9) replaces ONLY the cross-node broadcast/unicast path. Registry + heartbeat stay on Redis unless you also flip `nats.registry=true` (RC10).
+
+##### Decision 3 — Redis topology? (standalone vs Sentinel vs Cluster)
+
+- **Standalone** (`cluster.redis.uri=redis://...`) — dev, demo, single-master prod ≤ 10 nodes.
+- **Sentinel** (`cluster.redis.uri=redis-sentinel://...?sentinelMasterId=mymaster`) — production HA with automatic failover; ≤ 10 cluster nodes; managed Redis offerings (AWS ElastiCache, Aliyun Tair) support this out of the box.
+- **Redis Cluster** (`cluster.redis.cluster-nodes=host1:6379,host2:6379,...`, RC7) — shards SessionRegistry + heartbeat across multiple Redis primaries; needed when registry write rate or memory exceeds a single primary. **RC7 caveat**: cluster pub/sub is still regular (no fan-out reduction — that's sharded pub/sub in 2.0.0).
+
+##### Decision 4 — Reliable broadcast? (`reliable.enable`)
+
+Enable **only if** broadcasts have to survive a brief subscriber outage (≤ stream retention window).
+
+- **Off (default)** — `topicMessage()` uses at-most-once Pub/Sub. A node disconnected when the broadcast fires misses it.
+- **On (`reliable.enable=true`)** — `reliableBroadcast()` API uses at-least-once via Redis Streams (or NATS JetStream when `nats.registry=true`). Each subscribing node has a durable cursor; on reconnect it replays the backlog (within `stream-max-len`, default 10,000 entries per URI).
+
+Trade-off: ~5× lower throughput, ~6× higher latency vs Pub/Sub (see benchmark §7 vs §3). Use `reliableBroadcast()` selectively — keep the chatty fire-and-forget channels on `topicMessage()`.
+
+##### Decision 5 — HMAC envelope auth? (`auth.enable`)
+
+Enable if **anyone** can `PUBLISH` to your Redis (shared Redis, multi-tenant, weak network isolation). Disable only if Redis is dedicated, network-isolated, and the publisher set is provably trusted.
+
+- **Off (default)** — any party with Redis PUBLISH rights can forge `originNodeId`, inject broadcasts, or force-close any session.
+- **On (`auth.enable=true` + `auth.secret=${CLUSTER_AUTH_SECRET}`)** — every envelope is HMAC-SHA256 signed. Rolling rollout: `permissive=true` first (accept unsigned), then flip to strict.
+
+Cost: ~2.4 µs of CPU per envelope (see benchmark §9). At real network latencies (30+ µs), HMAC adds < 8% to round-trip — negligible. **Default-on for anything that crosses an untrusted boundary.**
+
+##### Decision 6 — W3C TraceContext? (`trace-propagation.enable`, RC6)
+
+Enable if you already use distributed tracing (Sleuth, OpenTelemetry, Brave). MDC `traceId` will continue across cross-node broadcasts in logs.
+
+- **Off (default)** — log correlation breaks at the broker hop.
+- **On** — `traceparent` is added to the envelope; receiver restores MDC scope around delivery. Zero-config additive — no tracer integration needed for the MDC default. Sleuth/OTel users can plug a custom `ClusterTraceContext` bean for live-span continuation.
+
+##### Decision 7 — Application-layer crypto? (`crypto.enable`, broader than cluster)
+
+WebSocket frames AES-GCM encrypted application-side (in addition to TLS, not instead of). Use only for end-to-end confidentiality requirements where TLS termination at the load balancer is not enough.
+
+- **Off (default)** — TLS is normally sufficient.
+- **On** — protect specific URIs with `crypto.include-uris=/ws/secret`. Note: **does NOT extend across the cluster broker** — Redis sees plaintext envelopes. Combine with `auth.enable=true` for in-transit integrity.
+
+#### Common Deployment Recipes
+
+##### Recipe A — Small product, single host (≤ 25k connections)
+
+```properties
+server.netty.port=8080
+server.netty.websocket.max-connections=25000
+server.netty.websocket.heartbeat-interval-seconds=30
+server.netty.websocket.heartbeat-timeout-seconds=90
+# That's it. No cluster, no Redis. ~2.1M msg/s in-memory.
+```
+
+##### Recipe B — Standard cluster product (2-5 nodes, dedicated Redis)
+
+```properties
+server.netty.websocket.cluster.enable=true
+server.netty.websocket.cluster.redis.uri=rediss://:${REDIS_PASSWORD}@redis.internal:6379
+
+# HMAC if Redis isn't 100% trusted
+server.netty.websocket.cluster.auth.enable=true
+server.netty.websocket.cluster.auth.secret=${CLUSTER_AUTH_SECRET}
+
+# Trace correlation if you have tracing
+server.netty.websocket.cluster.trace-propagation.enable=true
+```
+
+##### Recipe C — High-reliability product (broadcasts must survive subscriber blip)
+
+```properties
+server.netty.websocket.cluster.enable=true
+server.netty.websocket.cluster.redis.uri=rediss://:${REDIS_PASSWORD}@redis.internal:6379
+server.netty.websocket.cluster.auth.enable=true
+server.netty.websocket.cluster.auth.secret=${CLUSTER_AUTH_SECRET}
+
+# Reliable broadcast for critical channels
+server.netty.websocket.cluster.reliable.enable=true
+server.netty.websocket.cluster.reliable.stream-max-len=50000   # ~50k msgs retention per URI
+```
+
+Use `clusterMessageSender.reliableBroadcast(uri, msg)` for critical channels; keep `topicMessage()` for chatty fire-and-forget.
+
+##### Recipe D — High-scale (approaching Redis Pub/Sub fan-out wall, 5-15 nodes)
+
+```properties
+server.netty.websocket.cluster.enable=true
+# NATS broker replaces Redis Pub/Sub for cross-node fan-out
+server.netty.websocket.cluster.nats.servers=nats://nats-1.internal:4222,nats://nats-2.internal:4222
+# Registry/heartbeat stay on Redis
+server.netty.websocket.cluster.redis.uri=rediss://:${REDIS_PASSWORD}@redis.internal:6379
+server.netty.websocket.cluster.auth.enable=true
+server.netty.websocket.cluster.auth.secret=${CLUSTER_AUTH_SECRET}
+```
+
+##### Recipe E — All-NATS stack (no Redis at all)
+
+```properties
+server.netty.websocket.cluster.enable=true
+server.netty.websocket.cluster.nats.servers=nats://nats-1.internal:4222,nats://nats-2.internal:4222
+server.netty.websocket.cluster.nats.registry=true                       # NATS JetStream-KV registry/heartbeat/reaper
+server.netty.websocket.cluster.reliable.enable=true                     # JetStream-backed reliable
+server.netty.websocket.cluster.auth.enable=true
+server.netty.websocket.cluster.auth.secret=${CLUSTER_AUTH_SECRET}
+```
+
+Requires a JetStream-enabled NATS server (`nats-server -js`). Operationally simpler (one middleware) but reliable throughput is lower than the Redis Streams equivalent (see benchmark §7 vs §8).
+
+##### Recipe F — Redis Cluster (very high registry write rate / sharded registry)
+
+```properties
+server.netty.websocket.cluster.enable=true
+# Use cluster-nodes instead of uri — auto-selects RedisClusterMode* SPI implementations (RC7)
+server.netty.websocket.cluster.redis.cluster-nodes=redis-1.internal:6379,redis-2.internal:6379,redis-3.internal:6379
+server.netty.websocket.cluster.auth.enable=true
+server.netty.websocket.cluster.auth.secret=${CLUSTER_AUTH_SECRET}
+# Note: regular cluster pub/sub does NOT reduce fan-out. Sharded pub/sub is 2.0.0.
+```
+
 #### Pluggable Serialization
 
 All serialization is SPI-based — **zero Jackson dependency** in the cluster module. Override any layer with a Spring `@Bean`:
@@ -558,6 +697,145 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 | 75k – 250k | 4–10 | Redis Sentinel（推荐）或 NATS 传输 | ~33k msg/s（单主 / 单 NATS） |
 | 250k – 100 万 | 10–20 | NATS 传输（RC9 ADR-001 规模化档位） | NATS raw 头空间 267k；当前受 sender pipeline 上限 ~33k msg/s |
 | > 100 万 | > 20 | Sharded pub/sub（Boot 3.x / 2.0.0） | 超出 Lettuce 6.1 — 详见 [Boot 3.x 兼容矩阵](docs/2.0.0/boot3-compatibility-matrix.md) |
+
+#### 选型指南——什么情况下选什么
+
+六个独立决策。除非明确满足条件，否则每步都默认 **NO**——每一个"是"都意味着增加运维复杂度。
+
+##### 决策 1——要不要开集群？（`cluster.enable`）
+
+- **单机（`cluster.enable=false`，默认）**：如果同时满足——只用 ≤ 1 台服务器；并发 WebSocket ≤ 25k；单节点停机可接受；不想运维 Redis。
+- **集群（`cluster.enable=true`）**：如果满足任一——> 1 台服务器；预期 > 25k 连接；需要滚动发布不能全断；已经在运维 Redis 7+。
+
+> 单机模式与 1.7.x/1.8.0 字节级一致，broker 开销为零。**没有具体用例不要"为了安全"开集群。**
+
+##### 决策 2——传输层选 Redis 还是 NATS？
+
+| 问题 | 选 Redis Pub/Sub（默认） | 选 NATS broker（RC9） | 选全 NATS 栈（RC10） |
+|---|---|---|---|
+| 已有 Redis 运维 | ✅ | （registry 继续用 Redis） | — |
+| 预期广播速率 | ≤ 30k msg/s 跨节点 | 接近 Redis Pub/Sub 扇出墙（详见 cluster-design §容量规划） | 同左 + 想只维护一个中间件 |
+| 接受同时运维两个中间件（Redis + NATS） | ✅ | ✅ | ❌ |
+| 已有 JetStream NATS 服务器 | 不需要 | 不需要 | **必需**（`nats-server -js`） |
+| 配置 | `cluster.redis.uri=...` | `cluster.nats.servers=nats://...` | + `cluster.nats.registry=true` |
+| 支持可靠广播 | 支持（Redis Streams，RC2） | 支持（用 Redis Streams 的 registry 层） | 支持（NATS JetStream，RC13） |
+
+NATS broker（RC9）**只**替换跨节点广播/单播路径；registry + 心跳仍在 Redis，除非额外开 `nats.registry=true`（RC10）。
+
+##### 决策 3——Redis 拓扑（Standalone / Sentinel / Cluster）？
+
+- **Standalone**（`cluster.redis.uri=redis://...`）——开发、demo、单主生产 ≤ 10 节点。
+- **Sentinel**（`cluster.redis.uri=redis-sentinel://...?sentinelMasterId=mymaster`）——生产 HA 自动故障转移；≤ 10 集群节点；托管 Redis（AWS ElastiCache、阿里云 Tair）原生支持。
+- **Redis Cluster**（`cluster.redis.cluster-nodes=host1:6379,host2:6379,...`，RC7）——SessionRegistry + 心跳分片跨多个 Redis primary；registry 写入速率或内存超出单 primary 上限时启用。**RC7 注意事项**：cluster pub/sub 仍是常规模式（不削减广播扇出——sharded pub/sub 在 2.0.0）。
+
+##### 决策 4——可靠广播？（`reliable.enable`）
+
+**只有**当广播必须容忍订阅方短时下线（在 stream 保留窗口内）才开。
+
+- **关（默认）**——`topicMessage()` 走 at-most-once Pub/Sub。广播触发瞬间下线的节点丢消息。
+- **开（`reliable.enable=true`）**——`reliableBroadcast()` API 走 Redis Streams at-least-once（`nats.registry=true` 时走 NATS JetStream）。每个订阅节点有一个 durable cursor；重连时回放积压（在 `stream-max-len` 范围内，默认每 URI 10,000 条）。
+
+代价：吞吐 ~5× 慢、延迟 ~6× 高（见跑分 §7 vs §3）。**选择性使用** `reliableBroadcast()`——非关键的 fire-and-forget 通道继续用 `topicMessage()`。
+
+##### 决策 5——HMAC 信封鉴权？（`auth.enable`）
+
+如果**任何人**都能向 Redis `PUBLISH` 就开（共享 Redis、多租户、网络隔离弱）。仅当 Redis 独占、网络隔离且发布方可证明可信时关闭。
+
+- **关（默认）**——任何拥有 Redis PUBLISH 权限的人都能伪造 `originNodeId`、注入广播、强制关闭任意会话。
+- **开（`auth.enable=true` + `auth.secret=${CLUSTER_AUTH_SECRET}`）**——每个信封都被 HMAC-SHA256 签名。灰度策略：先开 `permissive=true`（允许无签名入站），全量后再切严格。
+
+代价：每个信封约 2.4 µs CPU（见跑分 §9）。真实网络延迟（30+ µs）下，HMAC 占往返 < 8%——可忽略。**任何跨越不可信边界的部署都默认开。**
+
+##### 决策 6——W3C TraceContext？（`trace-propagation.enable`，RC6）
+
+如果已经在用分布式 trace（Sleuth、OpenTelemetry、Brave），开它——日志里跨节点广播的 MDC `traceId` 会延续。
+
+- **关（默认）**——日志关联在 broker 跳点断掉。
+- **开**——信封里增加 `traceparent`；接收端在投递前后包一个 MDC scope。默认 MDC 模式零配置加性，不需要接 tracer。Sleuth/OTel 用户可注入自定义 `ClusterTraceContext` bean 接活跃 span。
+
+##### 决策 7——应用层加密？（`crypto.enable`，比集群更广义）
+
+WebSocket 帧用 AES-GCM 在应用层加密（**在 TLS 之外，不是替代 TLS**）。只有端到端机密性确实要求"LB 终止 TLS 不够"时才用。
+
+- **关（默认）**——TLS 通常足够。
+- **开**——`crypto.include-uris=/ws/secret` 保护特定 URI。**注意**：**不会跨集群 broker 延伸**——Redis 上看到的是明文信封。配合 `auth.enable=true` 用以保证传输完整性。
+
+#### 常见部署配方
+
+##### 配方 A——小型产品、单机（≤ 25k 连接）
+
+```properties
+server.netty.port=8080
+server.netty.websocket.max-connections=25000
+server.netty.websocket.heartbeat-interval-seconds=30
+server.netty.websocket.heartbeat-timeout-seconds=90
+# 就这样。无集群、无 Redis。本地内存约 210 万 msg/s。
+```
+
+##### 配方 B——标准集群产品（2-5 节点、专用 Redis）
+
+```properties
+server.netty.websocket.cluster.enable=true
+server.netty.websocket.cluster.redis.uri=rediss://:${REDIS_PASSWORD}@redis.internal:6379
+
+# Redis 不是 100% 可信时开 HMAC
+server.netty.websocket.cluster.auth.enable=true
+server.netty.websocket.cluster.auth.secret=${CLUSTER_AUTH_SECRET}
+
+# 已有 tracing 就开 trace 关联
+server.netty.websocket.cluster.trace-propagation.enable=true
+```
+
+##### 配方 C——高可靠产品（广播必须熬过订阅方短时下线）
+
+```properties
+server.netty.websocket.cluster.enable=true
+server.netty.websocket.cluster.redis.uri=rediss://:${REDIS_PASSWORD}@redis.internal:6379
+server.netty.websocket.cluster.auth.enable=true
+server.netty.websocket.cluster.auth.secret=${CLUSTER_AUTH_SECRET}
+
+# 关键通道开可靠广播
+server.netty.websocket.cluster.reliable.enable=true
+server.netty.websocket.cluster.reliable.stream-max-len=50000   # 每个 URI 约 5 万条保留窗口
+```
+
+关键通道用 `clusterMessageSender.reliableBroadcast(uri, msg)`；非关键 fire-and-forget 仍用 `topicMessage()`。
+
+##### 配方 D——高规模（接近 Redis Pub/Sub 扇出墙、5-15 节点）
+
+```properties
+server.netty.websocket.cluster.enable=true
+# NATS broker 替换 Redis Pub/Sub 做跨节点扇出
+server.netty.websocket.cluster.nats.servers=nats://nats-1.internal:4222,nats://nats-2.internal:4222
+# Registry/心跳保留在 Redis
+server.netty.websocket.cluster.redis.uri=rediss://:${REDIS_PASSWORD}@redis.internal:6379
+server.netty.websocket.cluster.auth.enable=true
+server.netty.websocket.cluster.auth.secret=${CLUSTER_AUTH_SECRET}
+```
+
+##### 配方 E——全 NATS 栈（完全不用 Redis）
+
+```properties
+server.netty.websocket.cluster.enable=true
+server.netty.websocket.cluster.nats.servers=nats://nats-1.internal:4222,nats://nats-2.internal:4222
+server.netty.websocket.cluster.nats.registry=true                       # NATS JetStream-KV 注册表/心跳/reaper
+server.netty.websocket.cluster.reliable.enable=true                     # JetStream 支撑的可靠广播
+server.netty.websocket.cluster.auth.enable=true
+server.netty.websocket.cluster.auth.secret=${CLUSTER_AUTH_SECRET}
+```
+
+需要 JetStream-enabled NATS 服务器（`nats-server -js`）。运维更简单（只一个中间件），但可靠吞吐比 Redis Streams 低（见跑分 §7 vs §8）。
+
+##### 配方 F——Redis Cluster（registry 写入速率极高 / 分片 registry）
+
+```properties
+server.netty.websocket.cluster.enable=true
+# 用 cluster-nodes 替代 uri——自动选用 RedisClusterMode* SPI 实现（RC7）
+server.netty.websocket.cluster.redis.cluster-nodes=redis-1.internal:6379,redis-2.internal:6379,redis-3.internal:6379
+server.netty.websocket.cluster.auth.enable=true
+server.netty.websocket.cluster.auth.secret=${CLUSTER_AUTH_SECRET}
+# 注意：常规 cluster pub/sub 不削减扇出。Sharded pub/sub 在 2.0.0。
+```
 
 #### 可插拔序列化
 
