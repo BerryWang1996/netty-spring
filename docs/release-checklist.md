@@ -1,6 +1,6 @@
 # 版本发布检查清单
 
-更新时间：2026-05-31
+更新时间：2026-06-08
 
 ## 适用范围
 
@@ -15,7 +15,7 @@
 
 ## 通用发布前检查
 
-1. **版本号与文档**：根 `pom.xml` 切到目标版本（覆盖全部模块），更新 README "当前推荐版本"、`docs/development-plan.md` 当前发版判断、`docs/release-notes-<version>.md`。
+1. **版本号与文档**：根 `pom.xml` 切到目标版本（覆盖全部 11 模块）。**逐行走「文档同步矩阵」（见文末）—— 这是防遗忘的单一权威清单；不要凭记忆更新。** 历史上 `development-plan.md` 漏更过 GA 状态，矩阵就是为了杜绝这类 lockstep-miss。
 2. **全量测试**：执行 `mvn test`，全部模块 SUCCESS（`1.8.0` 起为 11 个模块）。
 3. **SBOM**：`mvn -Psbom -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom`；CI 发布需确认 `Maven Test` + `Generate SBOM` job 成功。
 4. **Starter & Demo 回归**：四个 Starter（`netty-web` / `netty-webmvc` / `netty-websocket` / `demo-netty-web`）的集成测试必须通过；demo 启动 smoke 通过。
@@ -60,66 +60,38 @@
 2. 更新 [开发计划](development-plan.md) 当前状态与下一阶段目标。
 3. 如果本次补了新的稳定性 / 可观测性 / 审计边界，回写本清单"通用发布前检查"对应小节，避免后续回归再次依赖口头约定。
 
-## 最新版本口径
+## 权威记录在哪里（避免重复 = 避免漂移）
 
-### `1.7.0`（当前推荐版本，已发布 tag `v1.7.0`）
+**每个版本的逐项完成确认不在本清单重复** —— 它们的权威记录是 `docs/release-notes-<version>.md`。本清单只保留**可复用的流程** + 下面的**文档同步矩阵**。历史教训：本清单曾维护一份「最新版本口径」per-release 日志，结果它停在 `1.9.0-RC1` 再没更新（GA、RC2–RC20 全漏），自己变成了 stale 源。已删除，改为指针。
 
-定位：可观测性增强 + 遗留缺陷深度修复 + WebSocket 分片消息支持，按"四刀"推进。
+- 当前最新稳定版 / 在研版本：见 `docs/development-plan.md` 顶部「当前结论」（**该处是版本状态的单一权威源**；其余文档应指向它，不重述完整 feature 列表）。
+- 每个已发布版本的改动/测试/升级/兼容性细节：见对应 `docs/release-notes-<version>.md`。
+- 完整周期回顾：见 `docs/1.9.x-cycle-retrospective.md`。
 
-完成确认项：
+## 📋 文档同步矩阵（防遗忘 —— 每次发布逐行走）
 
-- 全量 reactor `mvn test` 通过（9 个模块）。
-- **第一刀**：v1.6.2 审计报告中 6 个遗留缺陷全部修复并有回归测试。
-- **第二刀**：Micrometer 指标扩展（连接时长 / 消息大小 / 广播 fanout / handler 延迟分布、分 URI 活跃 session、handler 线程池与 Netty allocator 内存 Gauge），push 模型指标通过 `WebSocketMetricsCallback` 桥接到每个已绑定 `MeterRegistry`。
-- **第三刀**：SLF4J MDC 结构化日志（`netty.requestId` / `sessionId` / `uri` / `remoteAddr`）与 Actuator `NettyServerHealthIndicator`（`/actuator/health`）。
-- **第四刀**：`server.netty.websocket.max-frame-aggregation-buffer-size` 控制的 `WebSocketFrameAggregator` 分片消息聚合，默认 0（禁用）保持向后兼容。
-- `micrometer-core` 与 `spring-boot-actuator` 均为 optional 依赖，缺失时自动退化。
-- 发布前完成 4 轮代码审计 + 1 轮对抗式验证，修复多 `MeterRegistry` 指标路由、连接时长 Timer 预创建、聚合器插入兜底、`getPort()` 空安全等问题；全部改动向后兼容。
-- 已补 `docs/release-notes-1.7.0.md`，并同步 README、`docs/api-guide.md`、`docs/netty-configuration.md`、`docs/websocket-configuration.md` 与开发计划至 `1.7.0` 状态。
+> 版本号 / 状态 / 测试数 这类字符串散落在多个文档,**必须 lockstep 更新,漏一个就 stale**。下表是完整的承载位置清单。发布时**逐行核对**,不要凭记忆。
 
-### `1.7.1`（已发布 tag `v1.7.1`）
+| # | 文件 | 位置 | 承载内容 | 何时更新 |
+|---|---|---|---|---|
+| 1 | 11 个 `pom.xml` | `<version>` | 版本号本身 | 每次发布/RC（`sed` 全量改） |
+| 2 | `README.md` | EN "Current Status"（搜 `Latest stable`）+ 中文「当前阶段」（搜 `最新稳定版`） | 最新稳定版 + 测试数 + feature 摘要 | 每次 GA |
+| 3 | `README.md` | Maven 坐标 EN + 中文 + cluster starter（搜 `<version>`） | 依赖示例版本 | 每次 GA |
+| 4 | `README.md` | Central versions 列表（搜 `1.4.0`、`1.6.2`...） | 已发布版本清单 | 每次 GA |
+| 5 | `README.md` | 性能基准表 | 测试/跑分数字 | 仅 benchmark 刷新时 |
+| 6 | `docs/development-plan.md` | 「当前结论」首段 + 「历史版本一览」表 | **单一权威状态源** + 历史 | 每次发布/RC |
+| 7 | `docs/api-guide.md` | Maven 依赖示例（搜 `<version>`）+ §9/§11 配置参考 | 依赖版本 + 新配置项 | GA + 新配置项时 |
+| 8 | `docs/cluster-design.md` | scope 表（✅/⏳ 标记） | feature 实现状态 | 集群 feature 落地时 |
+| 9 | `docs/release-notes-<version>.md` | 标题状态行 + 全文 | 该版本权威记录（新建文件） | 每次发布/RC |
+| 10 | `.claude/CLAUDE.md` | Current version 行 | 项目上下文 | 每次 GA |
+| 11 | `docs/release-checklist.md`（本文件） | 顶部「更新时间」 | checklist 自身时效 | 每次走完 checklist |
 
-定位：在 `1.7.0` 之上的审计驱动 patch，全部修复向后兼容。
+**自检命令**（发布前跑,确认没有遗漏的旧版本号）：
+```bash
+# 找出仍指向上一个版本的文档（把 OLD 换成上一稳定版，如 1.9.0）
+grep -rn "OLD" README.md docs/*.md .claude/CLAUDE.md | grep -v release-notes-
+# 找出 pom 残留的上一个版本/RC
+grep -rn "1\.10\.0-RC" --include=pom.xml .   # 应只剩目标版本
+```
 
-完成确认项：
-
-- 全量 `mvn test` 通过（9 个模块），新增 6 个回归测试。
-- **HIGH 安全**：CORS `origins="*"` + `allowCredentials=true` 不再回写客户端 Origin；不再发出 `Allow-Credentials` 头；记录 WARN 日志。
-- **MEDIUM 正确性**：`DefaultMessageSender` 检测到陈旧 channel 时改走 `closeSessionOnTransportError(CHANNEL_INACTIVE)`，保证 `@MessageMapping(ON_CLOSE)` 正常触发。
-- **LOW 硬化**：CompressorHandler 类型解析支持逗号与任意空白分隔、Content-Type 比较大小写不敏感；AES-GCM 解密路径显式拒绝非 96-bit IV。
-- **依赖 CVE 覆盖**：root POM 显式 pin `logback-classic` / `logback-core` 到 1.2.13（CVE-2023-6378）。
-- 路线图修订：`docs/cluster-design.md` 与 `docs/development-plan.md` 应用 6 项架构评审修订（Redis SPOF 降级默认、API 诚实化、TraceContext 必做、`2.0`/`2.1` 拆分、企业安全 12 项清单、治理原则可执行化）。
-- 已补 `docs/release-notes-1.7.1.md`，并同步 README、`docs/api-guide.md`、`docs/dependency-governance.md` 至 1.7.1 状态。
-
-### `1.8.0`（已发布 tag `v1.8.0`）
-
-定位：WebSocket 集群支持（Redis Pub/Sub + 5 层 SPI），向后兼容，默认单机模式行为与 `1.7.x` 完全一致。
-
-完成确认项：
-
-- 全量 `mvn test` 通过（**291 个测试 / 11 个模块**）；6 个 SPI 隔离 + 9 个配置/行为 + 9 个 Redis 集成（含入站大小上限安全测试）+ 3 个 auto-config 装配测试（ApplicationContextRunner）。`PerformanceBenchmark`（4 方法）是手动 harness，不计入套件。
-- **2 个新模块**：`netty-spring-websocket-cluster`、`netty-websocket-cluster-spring-boot-starter`。
-- **5 层可插拔 SPI**：`ClusterBroker` / `SessionRegistry` / `EnvelopeCodec` / `MessagePayloadCodec` / `ClusterNodeHeartbeat`，全部 `@ConditionalOnMissingBean` 可覆盖；集群模块**零 Jackson 依赖**（序列化用户自选）。
-- **配置诚实化**：`ClusterProperties` 只暴露有实际效果的配置项；设计文档中尚未实现的特性（多 pub/sub 连接、sharded pub/sub、可靠 streams、写 pipeline、限速、宽限期、Redis Cluster 客户端）**不暴露开关**，明确标注推迟到 `1.9.x`。
-- 真实 Redis 7.4.9（Docker）实测：本地广播 ~180 万 msg/s，跨节点 ~14k msg/s @ 77µs。
-- 已补 `docs/release-notes-1.8.0.md`，并同步 README（集群快速接入 + 性能基准 + 选型/容量表）、`docs/api-guide.md`、`docs/cluster-design.md`（实现范围 vs 设计目标）、`docs/development-plan.md`。
-
-### `1.9.0-RC1`（开发中，tag `v1.9.0-RC1`；最终 1.9.0 待整个周期完成后发布）
-
-定位：集群可靠性硬化，5 项 1.8.0 推迟项全部落地（RC1 里程碑）；单机模式与 1.7.x/1.8.0 完全一致；集群 SPI 签名不变。后续 RC 将补充可靠投递（Redis Streams）等。
-
-完成确认项：
-
-- 全量 `mvn test` 通过（**304 个测试 / 11 个模块**；Redis 7.4.9 live）；含 `ClusterNodeManagerReliabilityTest`、`ClusterRegistryWriterTest`、+3 个 `RedisIntegrationTest`。
-- **① Redis 失联宽限期**：`redis-loss-grace-period-ms`（默认 5000）落地；broker `state()` 立刻翻转；`0` 恢复 1.8.0 即时降级。这是唯一有意默认行为变更。
-- **② 心跳/对账线程隔离 + 批量 EXISTS**：两个独立调度器（`cluster-hb` / `cluster-recon`）；`findExpiredNodes` 改管道批量 EXISTS。无新配置项。
-- **③ 原子 Lua deregister**：`HGET→DEL→SREM` 单 `EVAL`；standalone/sentinel 支持。无新配置项。
-- **④ 对账选主去重**：`ClusterReaper` SPI + `RedisClusterReaper`（`SET NX` 认领）；`@ConditionalOnMissingBean`。无新配置项。
-- **⑤ Registry 写合并限速**：`session-registry-write-rate`（默认 1000 ops/s）落地；`CoalescingRegistryWriter` token-bucket；register 永不丢弃。
-- **2 个新配置项**：`redis-loss-grace-period-ms` 和 `session-registry-write-rate`。
-- **向后兼容**：SPI 签名全部不变；`ClusterReaper` 是纯新增；无代码改动可升级（仅需注意宽限期默认值变更）。
-- 已补 `docs/release-notes-1.9.0.md`，并同步 `docs/cluster-design.md`（5 项移入 ✅）、`docs/api-guide.md`（§9/§11 新增配置项）、`docs/development-plan.md`、`README.md`、`.claude/CLAUDE.md`。
-
-### `1.9.x+`（规划中）
-
-集群扩展项（仍推迟）：NATS broker（ADR-001）、多 pub/sub 连接并行解码、sharded pub/sub（广播扇出削减，需 Lettuce 6.2+ → 2.0.0）、W3C TraceContext 的 Micrometer Observation 续接（Boot 3.x → 2.0.0）、可运行的多节点 Docker 示例（Compose + LB + 浏览器）。详见 `development-plan.md`。（已落地并移出本列表：可靠投递 `reliableBroadcast` → RC2；HMAC envelope 认证 → RC3；完整 Micrometer 集群指标 → RC4；多节点 E2E + Testcontainers CI + 跨节点单播 hook-wiring 修复 → RC5；W3C TraceContext 跨节点 MDC 关联 → RC6；Redis Cluster 客户端一等支持（客户端层，`cluster-nodes` 选择器 + `RedisClusterMode*`；常规 cluster pub/sub，不削减扇出——sharded pub/sub 仍推迟） → RC7。）
+> 维护原则:**新增一处承载版本/状态字符串的文档,必须同步把它加进本矩阵**——否则它就是下一个 stale 源。
