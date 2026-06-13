@@ -1,13 +1,16 @@
 # 开发计划与阶段状态
 
-更新时间：2026-06-07
+更新时间：2026-06-08
 
 ## 当前结论
 
-- **最新稳定版：`1.8.0`**（Maven Central）。**`1.9.0` 开发中（RC16 latest；1.9.x backlog cleanup complete；GA cuttable on user direction）**：集群可靠性硬化 5 项全部落地 + 2 个新配置项（RC1），**RC2 可靠投递（Redis Streams `reliableBroadcast`，at-least-once，opt-in）**，**RC3 HMAC envelope 认证（`MessageAuthenticator` SPI，HMAC-SHA256）**，**RC4 完整 Micrometer 集群指标（`NettyClusterMeterBinder`）**，**RC5 多节点 E2E + Testcontainers CI + 跨节点单播 hook-wiring 修复（影响 1.8.0~RC4）**，**RC6 W3C TraceContext 跨节点 MDC 日志关联**，**RC7 Redis Cluster 客户端一等支持**，**RC8 多/分片 pub/sub 复用**，**RC9 NATS broker**，**RC10 all-NATS 栈（JetStream-KV registry/heartbeat/reaper）**，**RC11–RC12 pre-GA 审计修复 + 1.9.1 backlog 清理**，**RC13 NATS JetStream 可靠投递（封堵 all-NATS reliable 空缺）**，**RC14–RC15 精修 + 测试覆盖**，**RC16 `OnAnyRedisSpiRequired` 条件收紧**；GA 切版待用户指令。单机模式与 1.7.x/1.8.0 完全一致，详见 `docs/release-notes-1.9.0.md`。
+- **最新稳定版：`1.9.0` GA**（2026-06-07 发布，已上 Maven Central，10 制品 GPG 签名）。20-RC milestone 周期（RC1–RC20）交付：集群可靠性硬化（RC1）+ 可靠投递 Redis Streams（RC2）+ HMAC envelope 认证（RC3）+ 完整 Micrometer 集群指标（RC4）+ 多节点 E2E/Testcontainers CI + 跨节点单播修复（RC5）+ W3C TraceContext（RC6）+ Redis Cluster 客户端（RC7）+ 多 pub/sub 连接 + Docker demo（RC8）+ NATS broker（RC9）+ all-NATS 栈（RC10）+ pre-GA 审计硬化（RC11）+ 1.9.1 backlog polish（RC12）+ NATS JetStream 可靠投递（RC13）+ 精修/测试覆盖（RC14–RC15）+ backlog 清零（RC16）+ GA-readiness 终审（RC17）+ audit nice-to-haves（RC18）+ 2.0.0 prep docs（RC19）+ 周期回顾（RC20）。444 测试 / 11 模块。单机模式与 1.7.x/1.8.0 字节级一致。详见 `docs/release-notes-1.9.0.md` 与 `docs/1.9.x-cycle-retrospective.md`。
+- **`1.10.0` 开发中（「IM 平台基础」线，Boot 2.7 栈，2.0.0 Boot 3.x 仍独立）**：RC1 `ClusterRoomRegistry`（**per-room 节点定向路由** —— 见下方 ⚠️ 设计修正）+ RC2 消息历史/离线队列 + RC3 多设备 presence + RC4 node-to-node mesh。定位驱动：1.9.0 GA 后做了竞品深挖 + 定位研究（见 `docs/superpowers/notes/`），结论是 IM/实时通信原语 + 突破节点天花板是最高背书方向。
 - 上一版本：`1.8.0`（WebSocket 集群支持：Redis Pub/Sub 跨节点 + 5 层 SPI + 291 测试。详见 `docs/release-notes-1.8.0.md`）。
-- `P0`–`P7` 全部里程碑已完成；项目历经"功能建设期 → 质量深化 → 产品化 → 性能优化 → 安全稳定性加固 → 可观测性增强 → 集群水平扩展 → 集群可靠性硬化"八个阶段。
-- 下一步：最终 1.9.0（RC6 已含可靠投递 + HMAC envelope 认证 + 完整 Micrometer 集群指标 + 多节点 E2E/Testcontainers CI + 跨节点单播修复 + W3C TraceContext MDC 关联，待全量测试确认）。之后：**`2.0.0`** Spring Boot 3.x 迁移基线，**`2.1.0`** 企业安全准入。集群扩展后续项（NATS 等）见下方 backlog。
+- `P0`–`P7` 全部里程碑已完成；项目历经"功能建设期 → 质量深化 → 产品化 → 性能优化 → 安全稳定性加固 → 可观测性增强 → 集群水平扩展 → 集群可靠性硬化 → 1.9.0 GA → IM 平台基础"演进。
+- 下一步：完成 `1.10.0` IM 平台基础线（RC1→RC4）→ 商业推广 playbook → 之后 **`2.0.0`** Spring Boot 3.x 迁移基线（解 Boot 2.7 EOL + 解锁 sharded pub/sub + Observation API）、**`2.1.0`** 企业安全准入。
+
+> ⚠️ **1.10.0 RC1 设计修正（诚实记录）**：RC1 最初设计为「一致性哈希房间分片」（shard 环），声称把扇出天花板从 ~10 节点推到 ~100。**5-lens 对抗式设计审查量化推翻了这个声称**：随机 LB 放置下 shard 聚合多房间，每节点订阅 ~99.4% shard → 退化成全局广播、零扣减（与 `cluster-design.md` 早已记录的「常规 cluster pub/sub 不削减扇出」同源）。**已 pivot 到 per-room 节点定向**:registry 维护每房间的节点集,`roomMessage` 只打给真实有成员的 k 个节点(复用 1.9.0 unicast 通道),扣减 = N/k,**随机 LB 下也真实成立**(小房间大集群可达 10–20×)。**真正的节点天花板突破在 RC4 mesh / 2.0.0 sharded pub/sub,不是 RC1。** RC1 诚实定位为「room 原语 + locality-相关的真实扣减 + 未来 affinity 基础」。审查归档 `docs/superpowers/notes/2026-06-08-room-registry-design-review.json`。
 
 ## 当前发版判断
 
@@ -119,11 +122,37 @@
 - **sharded pub/sub（广播扇出削减，`SSUBSCRIBE`/`SPUBLISH`）**：需 Lettuce 6.2+（Boot 2.7.18 为 6.1.10），推迟到 **2.0.0**（Boot 3.x）。注：Redis Cluster **客户端**一等支持已在 **RC7** 落地（见上方当前结论），但 RC7 的常规 cluster pub/sub **不**削减广播扇出——扇出削减来自 sharded pub/sub。
 - **W3C TraceContext 的 Micrometer Observation / 活跃 span 续接**（`traceparent` + MDC 日志关联已在 RC6 落地；让真实 tracer 续接活跃 span 需 Boot 3.x，推迟到 2.0.0）。
 - **可运行的多节点 Docker 示例（Compose + LB + 浏览器）**（Testcontainers CI + 进程内双节点 E2E 已在 RC5 落地）。
-- 直接 node→node 单播（Slack 模式 mesh 第一步，把 Redis 移出单播热路径）。
 - 入站背压 / 速率限制（per-session token bucket + `netty.websocket.inbound.dropped` 指标）。
-- 房间 / 主题级集群 fan-out（`ClusterRoomRegistry` 含分片频道）。
-- Redis Streams 完整生命周期扩展：消费者重平衡、死信队列、离线消息 API（基础 at-least-once 已在 1.9.0 落地）。
 - 完整 OpenTelemetry instrumentation（在 TraceContext 传播落地之上扩展）。
+
+> 注：下列原 backlog 项已纳入 **1.10.0 IM 平台基础线**（见下方专节），不再属于"无主"backlog：房间/主题级 fan-out（→ RC1，但**改为 per-room 节点定向，非分片频道**——分片频道设计经审查推翻）、直接 node→node 单播 mesh（→ RC4）、离线消息 API（→ RC2）。
+
+## `1.10.0` IM 平台基础线（开发中）
+
+**版本定位**：1.9.0 GA 后的定位研究（竞品深挖 + 背书优先）结论是 IM/实时通信原语 + 节点天花板突破是最高价值方向。1.10.0 把 1.9.0 的"集群传输基础"延伸为"IM 平台基础"。**全程 Boot 2.7 栈**（2.0.0 Boot 3.x 仍独立，先做 IM 功能再做迁移）。顺序做完 RC1→RC4 再启动商业推广 playbook。
+
+| RC | 功能 | 角色 | 状态 |
+|---|---|---|---|
+| RC1 | `ClusterRoomRegistry` —— **per-room 节点定向路由** | 房间原语 + locality-相关真实扣减 + affinity 基础 | 开发中（spec 已批准）|
+| RC2 | 消息历史 + 离线队列（`OfflineQueueStore` SPI）| IM 必需 + 闭环故事 | 规划 |
+| RC3 | 多设备 presence（`PresenceRegistry`，online/away/offline 逐设备）| IM 必需 | 规划 |
+| RC4 | node-to-node mesh（gossip membership，把 Redis 移出热路径）| **真正的节点天花板突破** + 多月工程 | 规划 |
+
+### ⚠️ RC1 设计修正（诚实记录 —— 这是项目"诚实工程"文化的实例）
+
+RC1 **最初设计**为「一致性哈希房间分片」（shard 环，S=256），声称把活跃广播扇出墙从 ~10 节点推到 ~100 节点，并以"Discord/Slack 同款一致性哈希"作为最高背书信号。
+
+**5-lens 对抗式设计审查（11 agents）量化推翻了核心声称**：随机负载均衡放置下（用户连到随机节点），shard **聚合**多个房间——每个节点只要在某 shard 里有任意房间的成员就得订阅整个 shard，随机分布下几乎每个节点在每个 shard 都有成员 → 订阅 ~99.4% 的 shard → **退化为全局广播、零扣减**。这与 `cluster-design.md` 早已记录的「常规 cluster pub/sub 不削减扇出」同源（扇出墙 `M·(f·N−1)` 的 `f` 没变）。
+
+**已 pivot 到 per-room 节点定向**：registry 维护每房间的真实节点集（哪些节点有该房间成员），`roomMessage` 只打给这 k 个节点（**复用 1.9.0 已有的 per-node unicast 通道**，因此没有新订阅 churn、原审查的 lifecycle 竞态全部消失），扣减 = `N/k`。**随机 LB 下也真实成立**：5 成员房间在 100 节点集群只打 ~5 个节点 ≈ 20× 扣减。热房间（成员遍布全集群，k≈N）不扣减，且 publish 侧 k 次定向 vs 1 次全局——这是**真实条件**，已写入文档 + 指标（`netty.cluster.room.fanout.target_nodes`）+ 3 场景 benchmark（有利/对抗/热房间全发）。
+
+**关键路线含义**：**真正的节点天花板突破在 RC4 mesh（affinity 转发）和 2.0.0 sharded pub/sub，不是 RC1。** RC1 诚实定位为「room 原语 + locality-相关的真实扣减 + 未来 affinity 基础」，不带无条件"scales to 100 nodes"声称。
+
+审查归档：`docs/superpowers/notes/2026-06-08-room-registry-design-review.json`；spec：`docs/superpowers/specs/2026-06-08-room-registry-rc1.md`。
+
+### 1.10.0 之后
+
+完成 RC1→RC4 + 商业推广 → 之后才是 `2.0.0` Boot 3.x（届时 sharded pub/sub + Observation API 解锁，可与 RC4 mesh 形成完整的扇出削减矩阵）。
 
 ## `2.x` 路线说明（Spring Boot 3.x 与企业安全分离）
 
@@ -209,9 +238,9 @@
 | `1.7.0` | 可观测性增强 + 深度修复 + WebSocket 分片支持 | 历史版本 |
 | `1.7.1` | `1.7.0` 之上 4 项审计修复 + 依赖安全 | 上一版本 |
 | `1.8.0` | WebSocket 集群支持（Redis Pub/Sub + 5 层 SPI） | 上一版本 |
-| `1.9.0` | **集群可靠性硬化（RC1）+ 可靠投递 Redis Streams（RC2）+ HMAC envelope 认证（RC3）+ 完整 Micrometer 集群指标（RC4）+ 多节点 E2E/Testcontainers CI + 跨节点单播修复（RC5）+ W3C TraceContext MDC 关联（RC6）+ Redis Cluster 客户端一等支持（RC7，客户端层）** | **开发中（RC7）** |
-| `1.9.x+` | 集群扩展项（NATS broker、多节点 demo、sharded pub/sub 扇出削减 → 2.0.0） | 规划中 |
-| `2.0.0` | Spring Boot 3.x 迁移基线 | 远期 |
+| `1.9.0` | **集群可靠性硬化 + 可靠投递（Redis Streams + NATS JetStream）+ HMAC + Micrometer 集群指标 + 多节点 E2E/Testcontainers CI + W3C TraceContext + Redis Cluster 客户端 + 多 pub/sub + NATS broker + all-NATS 栈 + GA-readiness 终审**（20-RC 周期 RC1–RC20）| **GA 已发布（2026-06-07，Maven Central）** |
+| `1.10.0` | **IM 平台基础线**：RC1 ClusterRoomRegistry（per-room 节点定向路由）+ RC2 消息历史/离线队列 + RC3 多设备 presence + RC4 node-to-node mesh（真正的节点天花板突破在此） | **开发中（RC1）** |
+| `2.0.0` | Spring Boot 3.x 迁移基线（解 Boot 2.7 EOL + 解锁 sharded pub/sub + Observation API）| 远期（1.10.0 之后） |
 | `2.1.0` | 企业安全准入 | 远期（在 2.0.0 之后） |
 
 各版本详细变更见对应 `docs/release-notes-*.md`。
