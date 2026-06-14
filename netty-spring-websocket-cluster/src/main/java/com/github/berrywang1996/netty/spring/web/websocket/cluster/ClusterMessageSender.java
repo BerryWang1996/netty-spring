@@ -62,7 +62,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * @see SessionRegistry
  */
 @Slf4j
-public class ClusterMessageSender implements MessageSender {
+public class ClusterMessageSender implements MessageSender, RoomOperations {
 
     private final MessageSender localSender;
     private final ClusterBroker broker;
@@ -113,6 +113,14 @@ public class ClusterMessageSender implements MessageSender {
     /** Active reliable subscriptions keyed by URI. */
     private final ConcurrentHashMap<String, ClusterSubscription>
             reliableSubscriptions = new ConcurrentHashMap<>();
+
+    /** Room registry; null when room.enable=false (no room path, byte-identical to 1.9.0). */
+    private volatile ClusterRoomRegistry roomRegistry;
+    /** TTL (ms) for the per-room node-set send-path cache (mirrors {@link #nodeCacheTtlMs}). */
+    private volatile long roomNodeSetCacheTtlMs = 5000;
+    /** Send-path cache: (uri|room) → cached node-set. TTL governs reuse; invalidated wholesale on NODE_LEFT
+     *  (any room could have hosted the departed node). Bounded by distinct (uri,room) seen on the send path. */
+    private final ConcurrentHashMap<String, CachedNodeSet> roomNodeSetCache = new ConcurrentHashMap<>();
 
     public ClusterMessageSender(MessageSender localSender,
                                 ClusterBroker broker,
@@ -204,6 +212,25 @@ public class ClusterMessageSender implements MessageSender {
     /** Inject the W3C trace context (cross-node traceparent propagation). Null disables it. */
     public void setTraceContext(ClusterTraceContext traceContext) {
         this.traceContext = traceContext;
+    }
+
+    /** Injects the room registry (enables {@link RoomOperations}). Null = room routing disabled
+     *  ({@code room.enable=false} — byte-identical to 1.9.0, no room path). */
+    public void setRoomRegistry(ClusterRoomRegistry roomRegistry) {
+        this.roomRegistry = roomRegistry;
+    }
+
+    /** Sets the per-room node-set send-path cache TTL (ms). Bound from
+     *  {@code server.netty.websocket.cluster.room.node-set-cache-ttl-ms}. */
+    public void setRoomNodeSetCacheTtlMs(long roomNodeSetCacheTtlMs) {
+        if (roomNodeSetCacheTtlMs >= 0) {
+            this.roomNodeSetCacheTtlMs = roomNodeSetCacheTtlMs;
+        }
+    }
+
+    /** Whether room routing is active (a {@link ClusterRoomRegistry} is wired). */
+    public boolean isRoomEnabled() {
+        return roomRegistry != null;
     }
 
     /** Current traceparent for an outgoing envelope, or null when propagation is off. */
@@ -515,6 +542,9 @@ public class ClusterMessageSender implements MessageSender {
             unicastSubscription.unsubscribe();
         }
 
+        // The room registry is an independent Spring bean (destroyMethod="shutdown"); only drop our cache.
+        roomNodeSetCache.clear();
+
         log.info("ClusterMessageSender shut down for node {}", nodeManager.getNodeId());
     }
 
@@ -542,6 +572,14 @@ public class ClusterMessageSender implements MessageSender {
         String sessionId = envelope.getTargetSessionId();
         String uri = envelope.getUri();
         try (ClusterTraceContext.Scope ts = traceScope(envelope)) {
+            // Dispatch based on envelope kind: room broadcast, data message, or control command.
+            // ROOM_BROADCAST rides the same per-node unicast channel (no separate subscription) — the
+            // sender targeted this node because it hosts ≥1 member of the room.
+            if (envelope.getKind() == ClusterEnvelope.MessageKind.ROOM_BROADCAST) {
+                onRoomMessage(envelope);
+                return;
+            }
+
             // Dispatch based on envelope kind: data message vs control command
             if (envelope.getKind() == ClusterEnvelope.MessageKind.CLOSE) {
                 // Remote close command — parse "statusCode|reasonText" and close locally
@@ -567,6 +605,165 @@ public class ClusterMessageSender implements MessageSender {
                 log.warn("Failed to deliver cluster unicast for session {}", sessionId, e);
             }
         }
+    }
+
+    // ==================== Room-scoped routing (1.10.0) ====================
+
+    @Override
+    public void joinRoom(String uri, String room, String sessionId) {
+        ClusterRoomRegistry rr = requireRoomRegistry();
+        rr.join(uri, room, sessionId, nodeManager.getNodeId());
+    }
+
+    @Override
+    public void leaveRoom(String uri, String room, String sessionId) {
+        ClusterRoomRegistry rr = requireRoomRegistry();
+        rr.leave(uri, room, sessionId, nodeManager.getNodeId());
+    }
+
+    /**
+     * Removes a local session from ALL its rooms (single distributed call). Called on local disconnect.
+     * No-op when room routing is disabled.
+     */
+    public void removeAllRoomsForSession(String uri, String sessionId) {
+        ClusterRoomRegistry rr = this.roomRegistry;
+        if (rr != null) {
+            rr.removeAllForSession(uri, sessionId, nodeManager.getNodeId());
+        }
+    }
+
+    @Override
+    public void roomMessage(String uri, String room, AbstractMessage message)
+            throws MessageUriNotDefinedException {
+        ClusterRoomRegistry rr = requireRoomRegistry();
+
+        // 1. Local fan-out FIRST (always, even when degraded) — same contract as topicMessage.
+        deliverToLocalRoomMembers(uri, room, message, rr.localMembers(uri, room));
+
+        // 2. Gate on node + broker ACTIVE (mirrors topicMessage's L6/P1 gate). When degraded, the
+        //    cross-node copy is dropped (at-most-once, degrade-to-local) — local fan-out already happened.
+        if (nodeManager.getState() != NodeState.ACTIVE || broker.state() != BrokerState.ACTIVE) {
+            clusterStats.broadcastsSkippedDegraded.incrementAndGet();
+            log.debug("Room broadcast cross-node copy skipped for URI {} room {} — node state {}, broker state {}",
+                    uri, room, nodeManager.getState(), broker.state());
+            return;
+        }
+
+        // 3. Resolve the room's node-set (cached, minus self) — the routing primitive.
+        Set<String> targets = nodesForRoomCached(uri, room);
+
+        // 4. Build the ROOM_BROADCAST envelope once (HMAC + traceparent applied per-broker on publish).
+        ClusterEnvelope envelope = buildRoomEnvelope(uri, room, message);
+        if (exceedsSizeLimit(envelope)) {
+            handlePublishFailure("room broadcast for URI " + uri + " room " + room
+                    + " exceeds messageMaxSizeBytes (" + envelope.getPayload().length
+                    + " > " + messageMaxSizeBytes + ")", null);
+            return;
+        }
+
+        // 5. Target only the nodes hosting members — reuse the per-node unicast channel (the same channel
+        //    subscribeUnicast listens on). Self is excluded (we already did local fan-out above).
+        String self = nodeManager.getNodeId();
+        int sent = 0;
+        for (String targetNodeId : targets) {
+            if (self.equals(targetNodeId)) {
+                continue; // origin self-suppression: local fan-out already covered this node
+            }
+            try {
+                broker.unicast(targetNodeId, envelope);
+                sent++;
+            } catch (ClusterBrokerException e) {
+                handlePublishFailure("room broadcast for URI " + uri + " room " + room
+                        + " to node " + targetNodeId, e);
+            }
+        }
+        clusterStats.roomBroadcastPublished.incrementAndGet();
+        clusterStats.recordRoomFanoutTargets(sent);
+    }
+
+    /** Receive side: a ROOM_BROADCAST arrived on this node's unicast channel. Suppress the origin echo,
+     *  then fan out to LOCAL members of the room only. A node that no longer hosts members (membership
+     *  churned in-flight) fans out to an empty set — counted as a stale-target waste meter. */
+    private void onRoomMessage(ClusterEnvelope envelope) {
+        if (nodeManager.getNodeId().equals(envelope.getOriginNodeId())) {
+            // Shouldn't normally happen (we exclude self when targeting), but guard against an echo.
+            clusterStats.selfDeliveryDropped.incrementAndGet();
+            return;
+        }
+        ClusterRoomRegistry rr = this.roomRegistry;
+        if (rr == null) {
+            // Room routing disabled locally but a ROOM_BROADCAST arrived — nothing to fan out to.
+            return;
+        }
+        clusterStats.roomBroadcastReceived.incrementAndGet();
+        String uri = envelope.getUri();
+        String room = envelope.getRoom();
+        Set<String> localSessionIds = rr.localMembers(uri, room);
+        if (localSessionIds.isEmpty()) {
+            // Membership churned in-flight: we were targeted but no longer host members. Honest waste meter.
+            clusterStats.roomFanoutStaleTarget.incrementAndGet();
+            return;
+        }
+        try {
+            AbstractMessage message = deserializePayload(envelope.getPayload());
+            deliverToLocalRoomMembers(uri, room, message, localSessionIds);
+        } catch (Exception e) {
+            log.warn("Failed to deliver room broadcast for URI {} room {}", uri, room, e);
+        }
+    }
+
+    /** Local-only fan-out of a room message to the given member sessionIds via the local sender. Closed
+     *  members are tolerated (they may have just disconnected). No-op on an empty set. */
+    private void deliverToLocalRoomMembers(String uri, String room, AbstractMessage message,
+                                           Set<String> sessionIds) {
+        if (sessionIds == null || sessionIds.isEmpty()) {
+            return;
+        }
+        try {
+            localSender.sendMessage(uri, message, sessionIds.toArray(new String[0]));
+        } catch (MessageSessionClosedException e) {
+            log.debug("Some room members on URI {} room {} were closed mid-delivery: {}",
+                    uri, room, e.getSessionIds());
+        }
+    }
+
+    /** Returns the room's node-set from the short-TTL send-path cache, refreshing on miss/expiry. */
+    private Set<String> nodesForRoomCached(String uri, String room) {
+        ClusterRoomRegistry rr = this.roomRegistry;
+        String key = uri + "|" + room;
+        CachedNodeSet cached = roomNodeSetCache.get(key);
+        if (cached != null && !cached.isExpired(roomNodeSetCacheTtlMs)) {
+            return cached.nodes;
+        }
+        try {
+            Set<String> nodes = rr.nodesForRoom(uri, room).toCompletableFuture()
+                    .get(nodeLookupTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            Set<String> snapshot = nodes == null ? java.util.Collections.emptySet()
+                    : new java.util.HashSet<>(nodes);
+            roomNodeSetCache.put(key, new CachedNodeSet(snapshot, System.currentTimeMillis()));
+            return snapshot;
+        } catch (Exception e) {
+            log.warn("nodesForRoom lookup failed for URI {} room {} — targeting no remote nodes this round",
+                    uri, room, e);
+            return java.util.Collections.emptySet();
+        }
+    }
+
+    private ClusterEnvelope buildRoomEnvelope(String uri, String room, AbstractMessage message) {
+        return new ClusterEnvelope(
+                nodeManager.getNodeId(), uri,
+                ClusterEnvelope.MessageKind.ROOM_BROADCAST,
+                serializePayload(message),
+                null, currentTraceparent(), System.currentTimeMillis(), room);
+    }
+
+    private ClusterRoomRegistry requireRoomRegistry() {
+        ClusterRoomRegistry rr = this.roomRegistry;
+        if (rr == null) {
+            throw new IllegalStateException("Room routing is disabled; set "
+                    + "server.netty.websocket.cluster.room.enable=true to use room operations");
+        }
+        return rr;
     }
 
     // ==================== Cluster runtime stats (R-6) ====================
@@ -707,6 +904,15 @@ public class ClusterMessageSender implements MessageSender {
             try { rb.destroyConsumerGroupsForNode(nodeId); }
             catch (Exception e) { log.debug("reliable group cleanup for dead node {} failed", nodeId, e); }
         }
+        // Room routing: clear the room node-set send cache wholesale (any room could have hosted the
+        // departed node — the cache is keyed by room, not node, so a targeted purge isn't possible) and
+        // scrub the dead node from every room's node-set + member sets (parallels SessionRegistry cleanup).
+        ClusterRoomRegistry rr = this.roomRegistry;
+        if (rr != null) {
+            roomNodeSetCache.clear();
+            try { rr.removeAllForNode(nodeId); }
+            catch (Exception e) { log.debug("room registry cleanup for dead node {} failed", nodeId, e); }
+        }
     }
 
     private String lookupNodeCached(String uri, String sessionId) {
@@ -776,6 +982,21 @@ public class ClusterMessageSender implements MessageSender {
 
         CachedNodeLookup(String nodeId, long cachedAtMs) {
             this.nodeId = nodeId;
+            this.cachedAtMs = cachedAtMs;
+        }
+
+        boolean isExpired(long ttlMs) {
+            return System.currentTimeMillis() - cachedAtMs > ttlMs;
+        }
+    }
+
+    /** Short-lived per-room node-set cache entry (the room send-path routing primitive). */
+    private static final class CachedNodeSet {
+        final Set<String> nodes;
+        final long cachedAtMs;
+
+        CachedNodeSet(Set<String> nodes, long cachedAtMs) {
+            this.nodes = nodes;
             this.cachedAtMs = cachedAtMs;
         }
 

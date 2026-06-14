@@ -62,6 +62,35 @@ public class ClusterRuntimeStats {
     /** Node lookup cache misses (fell through to registry). */
     final AtomicLong cacheMisses = new AtomicLong();
 
+    // ---- Room-scoped routing (1.10.0) ----
+
+    /** Room broadcasts published (per-room node-targeted sends). */
+    final AtomicLong roomBroadcastPublished = new AtomicLong();
+
+    /** Room broadcasts received from other nodes and locally delivered. */
+    final AtomicLong roomBroadcastReceived = new AtomicLong();
+
+    /** Room broadcasts received but with ZERO local members (membership churned in-flight = wasted
+     *  delivery). The honest waste meter. */
+    final AtomicLong roomFanoutStaleTarget = new AtomicLong();
+
+    /** Number of room broadcasts for which fan-out targets were recorded (denominator for the average). */
+    private final AtomicLong roomFanoutSampleCount = new AtomicLong();
+
+    /** Sum of target-node counts across all room broadcasts (numerator for the average). The reduction
+     *  meter: compare {@code roomFanoutTargetsTotal / sampleCount} to the cluster size. */
+    private final AtomicLong roomFanoutTargetsTotal = new AtomicLong();
+
+    /** Target nodes on the most recent room broadcast (a gauge-friendly latest sample). */
+    private final AtomicLong roomFanoutTargetsLast = new AtomicLong();
+
+    /** Records the number of nodes targeted by one room broadcast (the per-room fan-out reduction sample). */
+    public void recordRoomFanoutTargets(int targetNodes) {
+        roomFanoutSampleCount.incrementAndGet();
+        roomFanoutTargetsTotal.addAndGet(targetNodes);
+        roomFanoutTargetsLast.set(targetNodes);
+    }
+
     // ---- Public read API ----
 
     public long getBroadcastPublished() { return broadcastPublished.get(); }
@@ -74,6 +103,26 @@ public class ClusterRuntimeStats {
     public long getReliableReceived() { return reliableReceived.get(); }
     public long getCacheHits() { return cacheHits.get(); }
     public long getCacheMisses() { return cacheMisses.get(); }
+
+    // ---- Room-scoped routing (1.10.0) ----
+    public long getRoomBroadcastPublished() { return roomBroadcastPublished.get(); }
+    public long getRoomBroadcastReceived() { return roomBroadcastReceived.get(); }
+    public long getRoomFanoutStaleTarget() { return roomFanoutStaleTarget.get(); }
+
+    /** Total target-node count summed across all room broadcasts (numerator of the average fan-out). */
+    public long getRoomFanoutTargetsTotal() { return roomFanoutTargetsTotal.get(); }
+
+    /** Number of room broadcasts whose fan-out was recorded (denominator of the average fan-out). */
+    public long getRoomFanoutSampleCount() { return roomFanoutSampleCount.get(); }
+
+    /** Target nodes on the most recent room broadcast (latest fan-out sample). */
+    public long getRoomFanoutTargetsLast() { return roomFanoutTargetsLast.get(); }
+
+    /** Average number of nodes targeted per room broadcast (the reduction meter; 0 if no samples). */
+    public double getRoomFanoutTargetsAvg() {
+        long n = roomFanoutSampleCount.get();
+        return n == 0 ? 0.0 : (double) roomFanoutTargetsTotal.get() / n;
+    }
 
     /**
      * Cache hit ratio (0.0 – 1.0). Returns 0 if no lookups have been performed.
