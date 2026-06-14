@@ -516,6 +516,53 @@ public class NettyWebSocketClusterConfigure {
         return new com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisRoomRegistry(connection);
     }
 
+    // ---- Offline queue / user-addressed delivery (1.10.0-RC2); gated on offline.enable=true ----
+
+    /**
+     * Default {@link com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver}.
+     * <b>CONVENIENCE/TESTING ONLY</b> — it trusts a handshake query-param/header VERBATIM with no
+     * authentication. {@code @ConditionalOnMissingBean} so production supplies its own resolver that derives
+     * the userId from the AUTHENTICATED principal (see the SECURITY contract on UserIdResolver). Active only
+     * when {@code offline.enable=true}.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "server.netty.websocket.cluster.offline", name = "enable", havingValue = "true")
+    @ConditionalOnMissingBean(com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver.class)
+    public com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver userIdResolver(
+            ClusterProperties properties) {
+        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.room.HandshakeUserIdResolver(
+                properties.getOffline().getUserIdSource());
+    }
+
+    /** Gated user presence index (default RedisUserRegistry) on the standalone Redis path. */
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
+    @ConditionalOnProperty(prefix = "server.netty.websocket.cluster.offline", name = "enable", havingValue = "true")
+    @ConditionalOnMissingBean(com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserRegistry.class)
+    public com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserRegistry userRegistry(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
+            StatefulRedisConnection<String, String> connection) {
+        log.info("Offline/user-addressed delivery ENABLED (RedisUserRegistry — userId→sessions presence index)");
+        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisUserRegistry(connection);
+    }
+
+    /** Gated per-user offline queue (default RedisOfflineQueueStore) on the standalone Redis path. */
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
+    @ConditionalOnProperty(prefix = "server.netty.websocket.cluster.offline", name = "enable", havingValue = "true")
+    @ConditionalOnMissingBean(com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore.class)
+    public com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore offlineQueueStore(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
+            StatefulRedisConnection<String, String> connection,
+            EnvelopeCodec envelopeCodec, ClusterProperties properties, MessageAuthenticator messageAuthenticator) {
+        ClusterProperties.Offline o = properties.getOffline();
+        log.info("Offline queue ENABLED (RedisOfflineQueueStore — per-user stream; maxMsgs={}, ttlSec={}, drainLockMs={})",
+                o.getMaxMessagesPerUser(), o.getTtlSeconds(), o.getDrainLockMs());
+        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisOfflineQueueStore(
+                connection, envelopeCodec, messageAuthenticator, properties.getNodeId(),
+                o.getMaxMessagesPerUser(), o.getTtlSeconds(), o.getDrainLockMs());
+    }
+
     @Bean
     @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
     @ConditionalOnMissingBean(ClusterNodeHeartbeat.class)
@@ -667,7 +714,11 @@ public class NettyWebSocketClusterConfigure {
             @org.springframework.beans.factory.annotation.Autowired(required = false) ReliableBroker reliableBroker,
             @org.springframework.beans.factory.annotation.Autowired(required = false) ClusterTraceContext traceContext,
             @org.springframework.beans.factory.annotation.Autowired(required = false)
-            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterRoomRegistry roomRegistry) {
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterRoomRegistry roomRegistry,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserRegistry userRegistry,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore offlineQueueStore) {
         ClusterMessageSender sender = new ClusterMessageSender(
                 localSender, broker, sessionRegistry, nodeManager,
                 properties.getRegistryReadCacheTtlMs(), messagePayloadCodec);
@@ -689,10 +740,17 @@ public class NettyWebSocketClusterConfigure {
             sender.setRoomRegistry(roomRegistry);
             sender.setRoomNodeSetCacheTtlMs(properties.getRoom().getNodeSetCacheTtlMs());
         }
+        // Offline / user-addressed delivery (1.10.0-RC2): nullable — present only when offline.enable=true.
+        if (userRegistry != null) {
+            sender.setUserRegistry(userRegistry);
+        }
+        if (offlineQueueStore != null) {
+            sender.setOfflineQueueStore(offlineQueueStore);
+        }
         sender.start();
-        log.info("ClusterMessageSender started — cluster mode is ACTIVE (onRedisLoss={}, onPublishFailure={}, maxMsgBytes={}, reliable={}, rooms={})",
+        log.info("ClusterMessageSender started — cluster mode is ACTIVE (onRedisLoss={}, onPublishFailure={}, maxMsgBytes={}, reliable={}, rooms={}, offline={})",
                 properties.getOnRedisLoss(), properties.getOnPublishFailure(), properties.getMessageMaxSizeBytes(),
-                reliableBroker != null, roomRegistry != null);
+                reliableBroker != null, roomRegistry != null, sender.isOfflineEnabled());
         return sender;
     }
 
@@ -710,9 +768,21 @@ public class NettyWebSocketClusterConfigure {
     public ClusterSessionHook clusterSessionHook(
             CoalescingRegistryWriter clusterRegistryWriter,
             ClusterNodeManager nodeManager,
-            ClusterMessageSender clusterSender) {
-        log.info("Registering cluster session hook for distributed session lifecycle");
-        return new ClusterSessionHookImpl(clusterRegistryWriter, nodeManager, clusterSender);
+            ClusterMessageSender clusterSender,
+            ClusterProperties properties,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver userIdResolver,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserRegistry userRegistry,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore offlineQueueStore) {
+        // Offline path active only when offline.enable=true AND all three collaborators are present. When
+        // off (default), the hook passes emptyMap to register exactly as RC1 (byte-identical) — see RC2 §9.
+        boolean offlineEnabled = properties.getOffline().isEnable()
+                && userIdResolver != null && userRegistry != null && offlineQueueStore != null;
+        log.info("Registering cluster session hook for distributed session lifecycle (offline={})", offlineEnabled);
+        return new ClusterSessionHookImpl(clusterRegistryWriter, nodeManager, clusterSender,
+                offlineEnabled, userIdResolver, userRegistry, offlineQueueStore);
     }
 
     /**

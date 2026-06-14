@@ -471,6 +471,95 @@ class NettyWebSocketClusterConfigureTest {
                 });
     }
 
+    // ---- Offline queue / user-addressed delivery (1.10.0-RC2): the 3-path context test ----
+
+    /** Path 1 (OFF — default): offline.enable unset → no offline beans, the sender's offline path is OFF,
+     *  the hook is the RC1 emptyMap path (byte-identical). */
+    @Test
+    void offlineDisabledByDefault_noOfflineBeans_byteIdenticalHookPath() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-nooffline-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserRegistry.class);
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore.class);
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver.class);
+                    // The sender's offline path is OFF (emptyMap register path on the hook).
+                    assertThat(((ClusterMessageSender) context.getBean(MessageSender.class)).isOfflineEnabled())
+                            .as("offline must be off when offline.enable is unset").isFalse();
+                });
+    }
+
+    /** Path 2 (ON + anonymous): offline.enable=true with the DEFAULT HandshakeUserIdResolver → all three
+     *  offline beans wired (default Redis impls), sender offline path active. (A session with no userId
+     *  resolves to anonymous at runtime; here we assert the bean graph for the enabled path.) */
+    @Test
+    void offlineEnabled_defaultResolver_allBeansWiredIntoSender() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-offline-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.offline.enable=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserRegistry.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisUserRegistry.class);
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisOfflineQueueStore.class);
+                    // Default resolver = the testing-only HandshakeUserIdResolver.
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.room.HandshakeUserIdResolver.class);
+                    // Wired into the cluster sender (offline path active).
+                    assertThat(((ClusterMessageSender) context.getBean(MessageSender.class)).isOfflineEnabled())
+                            .as("offline beans must be wired into the cluster sender").isTrue();
+                });
+    }
+
+    /** Path 3 (ON + authenticated): a user-supplied {@code UserIdResolver} bean REPLACES the testing-only
+     *  default (@ConditionalOnMissingBean) — the production identity-validation path. */
+    @Test
+    void offlineEnabled_customResolver_replacesDefaultTestingResolver() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withUserConfiguration(CustomUserIdResolverConfig.class)
+                .withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-offline-auth-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.offline.enable=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    // The user's authenticated resolver wins over the default HandshakeUserIdResolver.
+                    assertThat(context).hasBean("authenticatedUserIdResolver");
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver.class))
+                            .isNotInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.room.HandshakeUserIdResolver.class);
+                    assertThat(((ClusterMessageSender) context.getBean(MessageSender.class)).isOfflineEnabled()).isTrue();
+                });
+    }
+
+    /** Helper @Configuration supplying a production-style (authenticated) UserIdResolver override. */
+    @Configuration
+    static class CustomUserIdResolverConfig {
+        @Bean(name = "authenticatedUserIdResolver")
+        com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver authenticatedUserIdResolver() {
+            // Stands in for a resolver that derives userId from a verified principal (e.g. JWT sub).
+            return session -> "verified-subject";
+        }
+    }
+
     // ---- L1 (RC16): OnAnyRedisSpiRequired gates Redis client/connection ----
     // The Condition matches when AT LEAST ONE of the 4 Redis-backed SPI beans
     // (SessionRegistry, ClusterBroker, ClusterNodeHeartbeat, ClusterReaper) is NOT

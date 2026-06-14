@@ -20,7 +20,9 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterN
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterReaper;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterRoomRegistry;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.SessionRegistry;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserRegistry;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.context.annotation.ConditionContext;
 import org.springframework.context.annotation.ConfigurationCondition;
@@ -78,7 +80,16 @@ public class OnAnyRedisSpiRequired implements ConfigurationCondition {
         // connection — so the client/connection beans must NOT be gated off.
         boolean roomEnabled = Boolean.parseBoolean(ctx.getEnvironment()
                 .getProperty("server.netty.websocket.cluster.room.enable", "false"));
-        return roomEnabled && !hasBean(bf, ClusterRoomRegistry.class);
+        if (roomEnabled && !hasBean(bf, ClusterRoomRegistry.class)) {
+            return true;
+        }
+        // Offline / user-addressed delivery (1.10.0-RC2): when offline.enable=true and the user has NOT
+        // supplied their own UserRegistry/OfflineQueueStore, the default Redis impls will be created and
+        // need the Redis connection — so the client/connection beans must stay.
+        boolean offlineEnabled = Boolean.parseBoolean(ctx.getEnvironment()
+                .getProperty("server.netty.websocket.cluster.offline.enable", "false"));
+        return offlineEnabled
+                && (!hasBean(bf, UserRegistry.class) || !hasBean(bf, OfflineQueueStore.class));
     }
 
     private static boolean hasBean(ConfigurableListableBeanFactory bf, Class<?> type) {
