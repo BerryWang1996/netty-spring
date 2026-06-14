@@ -550,6 +550,35 @@ class NettyWebSocketClusterConfigureTest {
                 });
     }
 
+    /** FIX 7 — ORPHAN-RESOLVER-NON-STANDALONE: on a non-standalone (Redis-Cluster) transport with
+     *  offline.enable=true, the userIdResolver must NOT be created — it carries the same
+     *  {@code STANDALONE_REDIS_REGISTRY} gate as its userRegistry/offlineQueueStore collaborators, so all three
+     *  gate together (offline is Redis-standalone-only in RC2; the loud testing-only warn never fires here). */
+    @Test
+    void offlineEnabled_onClusterTransport_noUserIdResolverBean() {
+        Assumptions.assumeTrue(ClusterTestRedisCluster.available(),
+                "no single-node Redis Cluster (no env cluster + no Docker)");
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.cluster-nodes=" + ClusterTestRedisCluster.nodes(),
+                        "server.netty.websocket.cluster.node-id=ctx-offline-cluster-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.offline.enable=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    // None of the three offline beans on the non-standalone path:
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver.class);
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserRegistry.class);
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore.class);
+                    // Offline silently no-ops on the cluster transport (sender's offline path off).
+                    assertThat(((ClusterMessageSender) context.getBean(MessageSender.class)).isOfflineEnabled())
+                            .as("offline must be off on the Redis-Cluster transport in RC2").isFalse();
+                });
+    }
+
     /** Helper @Configuration supplying a production-style (authenticated) UserIdResolver override. */
     @Configuration
     static class CustomUserIdResolverConfig {

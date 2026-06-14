@@ -523,9 +523,13 @@ public class NettyWebSocketClusterConfigure {
      * <b>CONVENIENCE/TESTING ONLY</b> — it trusts a handshake query-param/header VERBATIM with no
      * authentication. {@code @ConditionalOnMissingBean} so production supplies its own resolver that derives
      * the userId from the AUTHENTICATED principal (see the SECURITY contract on UserIdResolver). Active only
-     * when {@code offline.enable=true}.
+     * when {@code offline.enable=true} AND on the standalone Redis path — the {@code STANDALONE_REDIS_REGISTRY}
+     * gate (RC2 review FIX 7) keeps this resolver in lockstep with its userRegistry/offlineQueueStore
+     * collaborators (which carry the same gate), so on a Redis-Cluster/all-NATS transport none of the three is
+     * created (offline is Redis-standalone-only in RC2 — spec §9) and the testing-only warn never fires there.
      */
     @Bean
+    @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
     @ConditionalOnProperty(prefix = "server.netty.websocket.cluster.offline", name = "enable", havingValue = "true")
     @ConditionalOnMissingBean(com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver.class)
     public com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver userIdResolver(
