@@ -62,7 +62,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * @see SessionRegistry
  */
 @Slf4j
-public class ClusterMessageSender implements MessageSender, RoomOperations {
+public class ClusterMessageSender implements MessageSender, RoomOperations, UserOperations {
 
     private final MessageSender localSender;
     private final ClusterBroker broker;
@@ -122,6 +122,11 @@ public class ClusterMessageSender implements MessageSender, RoomOperations {
     /** Send-path cache: (uri|room) → cached node-set. TTL governs reuse; invalidated wholesale on NODE_LEFT
      *  (any room could have hosted the departed node). Bounded by distinct (uri,room) seen on the send path. */
     private final ConcurrentHashMap<String, CachedNodeSet> roomNodeSetCache = new ConcurrentHashMap<>();
+
+    /** userId→sessions presence index; null when offline.enable=false (no user-addressed path). 1.10.0-RC2. */
+    private volatile UserRegistry userRegistry;
+    /** Per-user durable offline queue; null when offline.enable=false. 1.10.0-RC2. */
+    private volatile OfflineQueueStore offlineStore;
 
     public ClusterMessageSender(MessageSender localSender,
                                 ClusterBroker broker,
@@ -233,6 +238,22 @@ public class ClusterMessageSender implements MessageSender, RoomOperations {
     /** Whether room routing is active (a {@link ClusterRoomRegistry} is wired). */
     public boolean isRoomEnabled() {
         return roomRegistry != null;
+    }
+
+    /** Injects the user presence index (enables {@link UserOperations}). Null = user-addressed path disabled
+     *  ({@code offline.enable=false}). 1.10.0-RC2. */
+    public void setUserRegistry(UserRegistry userRegistry) {
+        this.userRegistry = userRegistry;
+    }
+
+    /** Injects the offline queue store (the {@code sendToUser} backfill fallback). Null = disabled. 1.10.0-RC2. */
+    public void setOfflineQueueStore(OfflineQueueStore offlineStore) {
+        this.offlineStore = offlineStore;
+    }
+
+    /** Whether the user-addressed / offline path is active (a {@link UserRegistry} is wired). */
+    public boolean isOfflineEnabled() {
+        return userRegistry != null && offlineStore != null;
     }
 
     /** Current traceparent for an outgoing envelope, or null when propagation is off. */
@@ -544,7 +565,9 @@ public class ClusterMessageSender implements MessageSender, RoomOperations {
             unicastSubscription.unsubscribe();
         }
 
-        // The room registry is an independent Spring bean (destroyMethod="shutdown"); only drop our cache.
+        // The room registry, user registry and offline store are independent Spring beans
+        // (destroyMethod="shutdown") with their own lifecycle — shutting them down here would
+        // double-shut-down them. Only drop our own cache.
         roomNodeSetCache.clear();
 
         log.info("ClusterMessageSender shut down for node {}", nodeManager.getNodeId());
@@ -774,6 +797,97 @@ public class ClusterMessageSender implements MessageSender, RoomOperations {
                     + "server.netty.websocket.cluster.room.enable=true to use room operations");
         }
         return rr;
+    }
+
+    // ==================== User-addressed delivery + offline queue (1.10.0-RC2) ====================
+
+    @Override
+    public void sendToUser(String userId, AbstractMessage message) {
+        UserRegistry ur = this.userRegistry;
+        OfflineQueueStore store = this.offlineStore;
+        if (ur == null || store == null) {
+            throw new IllegalStateException("User-addressed delivery is disabled; set "
+                    + "server.netty.websocket.cluster.offline.enable=true to use sendToUser()");
+        }
+        if (userId == null) {
+            throw new IllegalArgumentException("userId must not be null");
+        }
+
+        // FRESH presence lookup — NOT cached (caching would let a just-disconnected user read "online" →
+        // fire-and-forget unicast to a dead session → no exception → no fallback → silent loss). The
+        // sendToUser path is comparatively cold, so the round-trip is affordable. (Spec §5/§6 + decision record.)
+        Set<SessionRef> sessions;
+        try {
+            sessions = ur.sessionsForUser(userId).toCompletableFuture()
+                    .get(nodeLookupTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            // Presence lookup failed/timed out — treat the user as offline and enqueue (never lose the message).
+            log.warn("sessionsForUser({}) failed — enqueuing to the offline queue", userId, e);
+            sessions = java.util.Collections.emptySet();
+        }
+
+        if (sessions == null || sessions.isEmpty()) {
+            // Offline cluster-wide → store for backfill on reconnect.
+            enqueueOffline(userId, message);
+            return;
+        }
+
+        // Online → unicast to each live session (reuse the RC1/1.9.0 per-node unicast path). A LOCAL
+        // MessageSessionClosedException at send time means that session just went away; track whether ANY
+        // delivery was attempted-without-local-close so we know if a send-time fallback enqueue is needed.
+        boolean anyDelivered = false;
+        for (SessionRef ref : sessions) {
+            try {
+                sendMessage(ref.getUri(), message, ref.getSessionId());
+                anyDelivered = true;
+            } catch (MessageSessionClosedException e) {
+                // Send-time local close on a bound session — counted distinctly from post-accept loss.
+                clusterStats.incUnicastFailures();
+                log.debug("sendToUser({}): session {} on URI {} closed at send time", userId, ref.getSessionId(), ref.getUri());
+            } catch (Exception e) {
+                clusterStats.incUnicastFailures();
+                log.warn("sendToUser({}): unicast to session {} on URI {} failed", userId, ref.getSessionId(), ref.getUri(), e);
+            }
+        }
+
+        if (anyDelivered) {
+            clusterStats.incSendToUserRealtime();
+        } else {
+            // NO session remained reachable (all bound sessions closed at send time) → send-time fallback enqueue.
+            enqueueOffline(userId, message);
+        }
+    }
+
+    /** Enqueues a message to the user's offline queue; on enqueue failure counts {@code fallbackEnqueueFailures}
+     *  and logs ERROR (never a silent drop). Increments the {@code queued} meter on success. */
+    private void enqueueOffline(String userId, AbstractMessage message) {
+        OfflineQueueStore store = this.offlineStore;
+        if (store == null) {
+            clusterStats.incFallbackEnqueueFailures();
+            log.error("sendToUser({}): offline store unavailable — message NOT queued (dropped)", userId);
+            return;
+        }
+        ClusterEnvelope envelope = buildUnicastEnvelope(null, null, message);
+        try {
+            store.enqueue(userId, envelope).toCompletableFuture()
+                    .get(nodeLookupTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            clusterStats.incOfflineEnqueued();
+            clusterStats.incSendToUserQueued();
+        } catch (Exception e) {
+            // Enqueue itself failed after all unicast paths — surface loudly; never silently drop.
+            clusterStats.incFallbackEnqueueFailures();
+            log.error("sendToUser({}): offline enqueue FAILED — message NOT delivered and NOT queued", userId, e);
+        }
+    }
+
+    @Override
+    public CompletionStage<Boolean> isUserOnline(String userId) {
+        UserRegistry ur = this.userRegistry;
+        if (ur == null) {
+            throw new IllegalStateException("User-addressed delivery is disabled; set "
+                    + "server.netty.websocket.cluster.offline.enable=true to use isUserOnline()");
+        }
+        return ur.isUserOnline(userId);
     }
 
     // ==================== Cluster runtime stats (R-6) ====================

@@ -100,6 +100,55 @@ public class ClusterRuntimeStats {
         roomLocalMemberships.updateAndGet(cur -> Math.max(0L, cur + delta));
     }
 
+    // ---- Offline queue / user-addressed delivery (1.10.0-RC2) ----
+
+    /** Messages enqueued to a user's offline queue (user was offline cluster-wide, or a send-time fallback). */
+    final AtomicLong offlineEnqueued = new AtomicLong();
+
+    /** Offline messages drained + delivered on reconnect (backfill). */
+    final AtomicLong offlineDrained = new AtomicLong();
+
+    /** Offline entries dropped by retention (MAXLEN/TTL trim) — the bounded-gap honesty meter. */
+    final AtomicLong offlineDroppedRetention = new AtomicLong();
+
+    /** {@code sendToUser} delivered in realtime (user online → unicast to at least one live session). */
+    final AtomicLong sendToUserRealtime = new AtomicLong();
+
+    /** {@code sendToUser} that fell through to the offline queue (user offline, or all sessions unreachable). */
+    final AtomicLong sendToUserQueued = new AtomicLong();
+
+    /** {@code sendToUser} unicast send-time failures (local MessageSessionClosedException on a bound session). */
+    final AtomicLong unicastFailures = new AtomicLong();
+
+    /** Fallback enqueue itself failed after all unicast paths — never a silent drop (logged ERROR). */
+    final AtomicLong fallbackEnqueueFailures = new AtomicLong();
+
+    /** Handshakes that resolved to a userId (authenticated/identified sessions). */
+    final AtomicLong resolvedIdentities = new AtomicLong();
+
+    /** Handshakes that resolved to null (anonymous — no offline queue / presence). */
+    final AtomicLong unresolvedSessions = new AtomicLong();
+
+    public void incOfflineEnqueued() { offlineEnqueued.incrementAndGet(); }
+    public void addOfflineDrained(long n) { offlineDrained.addAndGet(n); }
+    public void addOfflineDroppedRetention(long n) { offlineDroppedRetention.addAndGet(n); }
+    public void incSendToUserRealtime() { sendToUserRealtime.incrementAndGet(); }
+    public void incSendToUserQueued() { sendToUserQueued.incrementAndGet(); }
+    public void incUnicastFailures() { unicastFailures.incrementAndGet(); }
+    public void incFallbackEnqueueFailures() { fallbackEnqueueFailures.incrementAndGet(); }
+    public void incResolvedIdentities() { resolvedIdentities.incrementAndGet(); }
+    public void incUnresolvedSessions() { unresolvedSessions.incrementAndGet(); }
+
+    public long getOfflineEnqueued() { return offlineEnqueued.get(); }
+    public long getOfflineDrained() { return offlineDrained.get(); }
+    public long getOfflineDroppedRetention() { return offlineDroppedRetention.get(); }
+    public long getSendToUserRealtime() { return sendToUserRealtime.get(); }
+    public long getSendToUserQueued() { return sendToUserQueued.get(); }
+    public long getUnicastFailures() { return unicastFailures.get(); }
+    public long getFallbackEnqueueFailures() { return fallbackEnqueueFailures.get(); }
+    public long getResolvedIdentities() { return resolvedIdentities.get(); }
+    public long getUnresolvedSessions() { return unresolvedSessions.get(); }
+
     // ---- Public read API ----
 
     public long getBroadcastPublished() { return broadcastPublished.get(); }
