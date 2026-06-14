@@ -512,10 +512,10 @@ netty-spring/
 - **稳定身份来自握手**：`UserIdResolver` SPI 从握手提取 `userId`（默认 `HandshakeUserIdResolver` 读 `query`/`header`，**仅供测试**——生产须自备认证解析器，见 §安全模型身份注记）。`userId` 流入 register 元数据 + 新的 `UserRegistry`（`userId → sessions` 反向索引）。
 - **`UserRegistry` 是派生的路由/在线索引，不是 `SessionRegistry` 的耐久副本**：选独立 SPI 而非给 `SessionRegistry` 加方法，是为了让 1.9.0 的 `SessionRegistry` 签名及其 3 个实现不变（设计评审 Option B）。经 `removeAllForNode` 对账。RC3 多设备在线状态扩展同一 SPI。
 - **`sessionsForUser` 永不缓存**（离线检测正确性决策）：缓存在线状态会让刚断开的用户读到「在线」 → 对死会话发后即忘单播 → 无异常 → 无兜底 → **静默丢失**。反向查询每次命中 Redis（位于相对冷的 `sendToUser` 路径）。
-- **每用户离线流 + 每 userId drain 锁**：`netty:offline:{b64userId}` 是 HMAC 包裹信封的 Redis Stream（`MAXLEN ~ max-messages-per-user`，与可靠路径一致的写时包裹）。`drain()` 先 `SET netty:offline-lock:{b64userId} {node} NX PX drain-lock-ms`——未获锁（并发多设备重连）则返回空（持锁者投递），获锁则 `XRANGE - +` 读到流尾并 FIFO 返回（惰性丢弃超 TTL 条目）；`delete()` XDEL 已投递 id 再 DEL 锁。**该锁消除确定性多设备重复投递**（否则两设备都会在任一方删除前 `XRANGE` 整条流——必然重复），由 `MultiDeviceDrainLockTest` 回归门守护。
+- **每用户离线流 + 每 userId drain 锁**：`netty:offline:{b64userId}` 是 HMAC 包裹信封的 Redis Stream（`MAXLEN ~ max-messages-per-user`，与可靠路径一致的写时包裹；入队时还按 `ttl-seconds` 刷新流键 PTTL，使无人重连的弃用队列自动回收）。`drain()` 先 `SET netty:offline-lock:{b64userId} {node} NX PX drain-lock-ms`——未获锁（并发多设备重连）则返回空且**不动锁**（非本节点所有），获锁则 `XRANGE - + COUNT drain-batch-size` 读取最旧的一批（其余在下次连接 drain）并 FIFO 返回（超 TTL / 损坏条目在本次 drain 内一并 `XDEL` 回收，不再被反复读取）；若本批可投递结果为空则当场用 **compare-and-DEL** 释放锁，非空则保持持锁交由调用方投递后 `delete()`（XDEL 已投递 id + compare-and-DEL 释放锁）。锁释放是基于本节点 id 的 Lua compare-and-DEL，绝不会误删本节点锁过期后被其他设备重新获取的同名锁。**该锁消除确定性多设备重复投递**（否则两设备都会在任一方删除前 `XRANGE` 整条流——必然重复），由 `MultiDeviceDrainLockTest` 回归门守护。
 - **连接时回填（bind→drain 窗口）**：钩子在 `bindUser` 完成**后**再 drain，使 bind→drain 窗口内入队的消息仍在 drain 读到流尾的范围内（被回填，不丢不重）；窗口后到达的消息直接实时投递到已在线会话。
 - **仅发送时边界（诚实）**：`broker.unicast()` 发后即忘，离线队列只兜底**发送时**失败（零可达会话或本地 `MessageSessionClosedException`）；远程会话在受理后、收帧前关闭不入队（指标 `offline.unicast_failures`），精确一次超出范围，处理器靠幂等对账。
-- **有界保留 + 至少一次**：`max-messages-per-user`（默认 1000）/`ttl-seconds`（默认 7 天）之外裁剪（有界缺口，指标 `dropped_retention`）。drain 投递后删除；删除失败下次重投——处理器须幂等（携带 `X-Offline-Message-Id` 便于去重）。
+- **有界保留 + 至少一次**：`max-messages-per-user`（默认 1000）/`ttl-seconds`（默认 7 天）之外裁剪（有界缺口）。**TTL 丢弃路径**（超过 `ttl-seconds`、drain 时清理的条目）计入指标 `dropped_retention`；服务端 `MAXLEN ~` 裁剪由 Redis 在 `XADD` 时执行，不单独计量。drain 投递后删除；删除失败下次重投——处理器须幂等（携带 `X-Offline-Message-Id` 便于去重）。
 - **离线 = 集群范围内零会话**：多设备用户有任一在线会话即「在线」，投递到在线设备；按设备离线回填是 RC3。
 - **默认关闭**（`offline.enable=false`）：无离线 Bean、不解析 userId、钩子向 register 传 `emptyMap()`，与 RC1 逐字节一致。仅 Redis（NATS-KV 离线存储是后续 RC）。
 

@@ -98,8 +98,8 @@ class MultiDeviceDrainLockTest {
     void twoConcurrentReconnects_eachMessageDeliveredExactlyOnce() throws Exception {
         // Each "device" uses its own store instance (its own connection-shared executor + node id), exactly
         // as two nodes would. They share the same Redis, so the SET-NX lock is the real arbiter.
-        RedisOfflineQueueStore deviceA = new RedisOfflineQueueStore(connection, codec, "node-A", 1000, 604800, 5000);
-        RedisOfflineQueueStore deviceB = new RedisOfflineQueueStore(connection, codec, "node-B", 1000, 604800, 5000);
+        RedisOfflineQueueStore deviceA = new RedisOfflineQueueStore(connection, codec, "node-A", 1000, 604800, 5000, 100);
+        RedisOfflineQueueStore deviceB = new RedisOfflineQueueStore(connection, codec, "node-B", 1000, 604800, 5000, 100);
         try {
             // Queue MESSAGE_COUNT offline messages for alice.
             for (int i = 1; i <= MESSAGE_COUNT; i++) {

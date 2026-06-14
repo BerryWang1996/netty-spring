@@ -215,7 +215,7 @@ class OfflineDeliveryE2ETest {
             this.broker = new RedisPubSubBroker(client, new SimpleTextEnvelopeCodec());
             this.sessionRegistry = new RedisSessionRegistry(conn);
             this.userRegistry = new RedisUserRegistry(conn);
-            this.offlineStore = new RedisOfflineQueueStore(conn, codec, id, 1000, 604800, 5000);
+            this.offlineStore = new RedisOfflineQueueStore(conn, codec, id, 1000, 604800, 5000, 100);
             this.heartbeat = new RedisClusterNodeHeartbeat(conn);
             this.nodeManager = new ClusterNodeManager(id, 1000, 5000, 10000, 0, heartbeat, sessionRegistry);
             this.local.addUri(URI);

@@ -41,6 +41,17 @@ public class InMemoryOfflineQueueStore implements OfflineQueueStore {
     private final AtomicLong seq = new AtomicLong();
     /** Held drain locks (userId). A second concurrent drain of the same user returns empty. */
     private final Set<String> drainLocks = ConcurrentHashMap.newKeySet();
+    /** Max entries returned per drain (oldest-first FIFO) — parity with {@code RedisOfflineQueueStore}. */
+    private final int drainBatchSize;
+
+    /** Default batch size (100) — parity with {@code offline.drain-batch-size} default. */
+    public InMemoryOfflineQueueStore() {
+        this(100);
+    }
+
+    public InMemoryOfflineQueueStore(int drainBatchSize) {
+        this.drainBatchSize = Math.max(1, drainBatchSize);
+    }
 
     @Override
     public CompletionStage<Void> enqueue(String userId, ClusterEnvelope envelope) {
@@ -52,7 +63,8 @@ public class InMemoryOfflineQueueStore implements OfflineQueueStore {
 
     @Override
     public CompletionStage<List<StoredMessage>> drain(String userId) {
-        // Real exclusive lock: if another device already holds it, return empty (the holder delivers).
+        // Real exclusive lock: if another device already holds it, return empty (the holder delivers) and do
+        // NOT touch the lock (it is not ours) — parity with RedisOfflineQueueStore (FIX 1/2).
         if (!drainLocks.add(userId)) {
             return CompletableFuture.completedFuture(new ArrayList<>());
         }
@@ -62,9 +74,16 @@ public class InMemoryOfflineQueueStore implements OfflineQueueStore {
             snapshot = new ArrayList<>();
         } else {
             synchronized (q) {
-                snapshot = new ArrayList<>(q); // FIFO snapshot up to the current tail
+                // FIFO snapshot bounded to drainBatchSize (oldest-first) — parity with the bounded XRANGE (FIX 3).
+                int limit = Math.min(drainBatchSize, q.size());
+                snapshot = new ArrayList<>(q.subList(0, limit));
             }
         }
+        if (snapshot.isEmpty()) {
+            // Empty result: the caller will NOT call delete(), so release the lock here (FIX 2 parity).
+            drainLocks.remove(userId);
+        }
+        // Non-empty: KEEP the lock until delete() (multi-device dedup) — parity with Redis.
         return CompletableFuture.completedFuture(snapshot);
     }
 
