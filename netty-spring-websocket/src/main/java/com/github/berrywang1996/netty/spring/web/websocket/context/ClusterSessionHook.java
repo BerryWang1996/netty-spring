@@ -28,6 +28,15 @@ package com.github.berrywang1996.netty.spring.web.websocket.context;
  * module) to avoid circular dependencies: the resolver calls into the hook; the cluster
  * module provides the implementation.
  *
+ * <p><b>Handshake-request lifecycle guarantee (1.10.0-RC2):</b> in BOTH callbacks the
+ * session's handshake {@link MessageSession#getFirstRequest() FullHttpRequest} (and thus
+ * {@link MessageSession#getQueryParam}/{@link MessageSession#getHeader}) is guaranteed
+ * readable — {@code onSessionRegistered} fires after a successful handshake (the request is
+ * retained for the session's lifetime), and {@code onSessionRemoved} fires before the
+ * session's {@code release()} drops the retained request. This lets a cluster implementation
+ * resolve a stable {@code userId} from the handshake at BOTH connect and disconnect (e.g. to
+ * bind on connect and unbind on disconnect) without caching it elsewhere.
+ *
  * @author berrywang1996
  * @since V1.8.0
  */

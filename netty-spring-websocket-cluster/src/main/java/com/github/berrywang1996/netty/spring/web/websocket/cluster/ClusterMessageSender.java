@@ -890,6 +890,38 @@ public class ClusterMessageSender implements MessageSender, RoomOperations, User
         return ur.isUserOnline(userId);
     }
 
+    /** MDC key carrying the offline message's store id during its delivery on reconnect, so handler logs
+     *  (and an MDC-reading handler) can dedup on the infra id. Exposed as {@code X-Offline-Message-Id}. */
+    public static final String MDC_OFFLINE_MESSAGE_ID = "netty.offlineMessageId";
+
+    /**
+     * Delivers a drained offline message to a freshly-reconnected LOCAL session on backfill (called by the
+     * cluster session hook's drain-on-connect). The store id is bound to MDC ({@link #MDC_OFFLINE_MESSAGE_ID},
+     * the {@code X-Offline-Message-Id} metadata) for the duration of the dispatch so handlers/logs can dedup
+     * on the at-least-once infra id. Decodes the envelope payload via this sender's payload codec.
+     *
+     * @return {@code true} if delivered; {@code false} if the local session was already gone (skipped)
+     */
+    public boolean deliverOfflineMessage(String uri, String sessionId, StoredMessage stored) {
+        org.slf4j.MDC.put(MDC_OFFLINE_MESSAGE_ID, stored.getId());
+        try (ClusterTraceContext.Scope ts = traceScope(stored.getEnvelope())) {
+            AbstractMessage message = deserializePayload(stored.getEnvelope().getPayload());
+            localSender.sendMessage(uri, message, sessionId);
+            clusterStats.addOfflineDrained(1);
+            return true;
+        } catch (MessageSessionClosedException e) {
+            log.debug("Offline backfill: session {} on URI {} already gone — message {} not delivered",
+                    sessionId, uri, stored.getId());
+            return false;
+        } catch (Exception e) {
+            log.warn("Offline backfill: failed to deliver message {} to session {} on URI {}",
+                    stored.getId(), sessionId, uri, e);
+            return false;
+        } finally {
+            org.slf4j.MDC.remove(MDC_OFFLINE_MESSAGE_ID);
+        }
+    }
+
     // ==================== Cluster runtime stats (R-6) ====================
 
     /**
