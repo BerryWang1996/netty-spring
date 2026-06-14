@@ -108,10 +108,23 @@ A mixed-version cluster (a 1.9.0 node and a 1.10.0 node) is therefore safe. This
 
 ### Backward compatibility
 
-`room.enable=false` (default): no room beans, no room subscriptions, no `ROOM_BROADCAST` produced → behavior
-identical to 1.9.0. The codec carries a v2-capable path but emits v1-shaped wires when no room is present.
-`ClusterRoomRegistry` is purely additive — no existing SPI signature changes; `roomMessage` lives on the new
-`RoomOperations` sub-interface, not on `MessageSender`. Boot 2.7 + Lettuce 6.1 only.
+`room.enable=false` (default): no room beans, no room subscriptions, no `ROOM_BROADCAST` produced → runtime
+**behavior** identical to 1.9.0. Note the envelope **wire** is globally v2 since 1.10.0 (version 2, 9 fields
+incl. an empty `room` field) — so it is **not** byte-for-byte identical to 1.9.0's v1/8-field wire; a 1.9.0
+node safely **discards** a v2 wire on the version gate (the rolling-upgrade contract, proven by
+`EnvelopeRollingUpgradeTest`). `ClusterRoomRegistry` is purely additive — no existing SPI signature changes;
+`roomMessage` lives on the new `RoomOperations` sub-interface, not on `MessageSender`. Boot 2.7 + Lettuce 6.1
+only.
+
+### Tests + review
+
+**473 个测试 / 11 个模块全绿**（1.9.0 GA 的 444 + RC1 的 ~29：envelope rolling-upgrade、InMemory/Redis room
+registry、room sender、room IT、双节点 E2E reduction 断言、3-场景 fan-out benchmark、context 装配）。RC1 经
+4-lens 对抗式审查（spec-compliance / envelope-v2 / concurrency / regression）+ skeptic 复核,verdict
+`rc1ReadyToCut=true, 0 must-fix`;envelope v2 滚动升级安全双向证明;并发审查的 8 项发现均不损坏分布式 Redis
+状态(全部 Lua 为原子单 EVAL),为 local-index/清理健壮性/可观测性 gap,已存入 RC2 backlog
+(`docs/superpowers/notes/2026-06-08-rc1-review-backlog.md`)。审查中发现的「byte-identical」误导措辞已在本 RC
+修正(诚实工程)。
 
 ### Design correction recorded (shard ring → per-room node-set)
 
