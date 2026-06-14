@@ -1,0 +1,112 @@
+{
+  "summary": "Adversarial review of the 1.10.0-RC1 ClusterRoomRegistry implementation before cut",
+  "agentCount": 6,
+  "logs": [],
+  "result": {
+    "reviews": [
+      {
+        "lens": "Spec compliance: per-room node-set targeting (not shards), atomic Lua, unicast channel reuse, honest positioning",
+        "verdict": "APPROVE",
+        "findings": [],
+        "bottomLine": "RC1 implementation is fully spec-compliant. All critical design requirements met: per-room node-set routing (not shard ring), atomic Lua join/leave/removeAll (no looped SREMs), reuse of existing per-node unicast channel, Redis-Cluster hash tags for single-slot JOIN/LEAVE, envelope v2 co-bumped and rolling-upgrade-safe (EnvelopeRollingUpgradeTest gates), honest N/k reduction positioning stated verbatim in release-notes with design-correction record + archive link, all 3-scenario benchmark scenarios published (favorable/adversarial/hot-room), metrics exposed (fanout.target_nodes is the reduction meter), config gated on room.enable=true, auto-config bean wiring correct, dead-node hook integrated. Ready to cut RC1."
+      },
+      {
+        "lens": "Envelope v2 rolling-upgrade safety: version lock-stepping, v1 discard gate, wire format claims",
+        "verdict": "APPROVE_WITH_NITS",
+        "findings": [
+          {
+            "severity": "nit",
+            "issue": "Misleading documentation claim about 'byte-identical behavior to 1.9.0' when room.enable=false. The wire format is NOT byte-identical even when rooms are disabled: all envelopes are still version 2 with 9 fields (including empty room field), whereas 1.9.0 always emitted version 1 with 8 fields. The claim conflates 'no room functionality' (true) with 'byte-identical wire format' (false). A 1.9.0 node still discards these v2 wires on the version gate, which is correct for rolling-upgrade safety but contradicts the 'byte-identical' claim.",
+            "location": "ClusterProperties.java:308-310 and ClusterMessageSender.java:217-218"
+          },
+          {
+            "severity": "low",
+            "issue": "The EnvelopeRollingUpgradeTest's test case names and coverage comments could be more explicit about what 'byte-identical' specifically means (or does NOT mean). The test correctly validates the rolling-upgrade contract (v1 discards v2 on version gate), but doesn't explicitly test or document the distinction between 'no ROOM_BROADCAST envelopes produced' vs 'wire format remains v1-shaped', which is important for operator understanding.",
+            "location": "EnvelopeRollingUpgradeTest.java:28-40"
+          },
+          {
+            "severity": "low",
+            "issue": "Version/field-count co-bumping is correctly verified in the test (lines 47-52), but the test does NOT verify that ALL envelope kinds (BROADCAST, UNICAST, CLOSE) carry the version-2 wire format globally. The test only covers BROADCAST, UNICAST in specific scenarios. An integration test confirming that a 1.9.0 node safely discards a 1.10.0 BROADCAST with room=null would strengthen confidence.",
+            "location": "EnvelopeRollingUpgradeTest.java:54-102"
+          }
+        ],
+        "bottomLine": "Envelope v2 rolling-upgrade safety is correctly implemented. Version and field-count are properly co-bumped (CURRENT_VERSION 1->2, FIELD_COUNT 8->9). The load-bearing safety property holds: a v1 codec reading a v2 wire reads the version token (field 0) BEFORE the field-count split, so version>max gates the discard cleanly with no crash. However, documentation (ClusterProperties.java, ClusterMessageSender.java) makes a misleading claim that 'room.enable=false' produces byte-identical 1.9.0 wire format — this is incorrect; the wire format is globally v2 (version 2, 9 fields) regardless of room.enable. This misdescription doesn't affect correctness (1.9.0 nodes still safely discard v2 wires) but could confuse operators about wire-format invariants. Recommend clarifying the docs to state: 'When room.enable=false, no ROOM_BROADCAST envelopes are produced, but all envelopes are still v2 wire format; a 1.9.0 node safely discards them on the version gate.' The tests pass and the mechanism is sound."
+      },
+      {
+        "lens": "Concurrency/Correctness: Redis atomicity, local index synchronization, cache invalidation, node-set refcount, and shutdown ordering",
+        "verdict": "NEEDS_FIX",
+        "findings": [
+          {
+            "severity": "high",
+            "issue": "RACE: Local index updated AFTER Lua returns, but join() metrics incremented BEFORE CompletionStage completes. A metrics counter increments immediately in joinRoom (line 616 ClusterMessageSender.java), while localMembers update is deferred inside thenAccept callback. Concurrent join/leave on same room with metrics reads can see transient inconsistency (metrics say 3 members, local index shows 2). The counter must not increment until AFTER the local index thenAccept completes, or the metric read must acknowledge the async gap.",
+            "location": "RedisRoomRegistry.java:167-174 (join thenAccept), ClusterMessageSender.java:613-616 (joinRoom metrics)"
+          },
+          {
+            "severity": "high",
+            "issue": "RACE: removeAllForNode does not update local index at all. The distributed cleanup (SCAN + SREM from every room's node-set + DEL every member key) happens, but the local in-process index (localMembers + roomsBySession ConcurrentHashMaps) is never touched. If a dead node's sessions are cleaned up distributed-side while the origin node still reads localMembers(dead-node-uri, room), it returns stale sessions. The receiver then tries to fan-out messages to disconnected sessions. No atomicity guard; no coordination between removeAllForNode and the local index.",
+            "location": "RedisRoomRegistry.java:241-274 (removeAllForNode implementation)"
+          },
+          {
+            "severity": "high",
+            "issue": "CORRECTNESS: Node-set cache TTL + NODE_LEFT invalidation creates window for stale-node delivery. ClusterMessageSender.nodesForRoomCached caches the node-set for roomNodeSetCacheTtlMs (default 5s, configurable). On NODE_LEFT, the cache is wholesale-cleared (line 920 ClusterMessageSender.java), but between the NODE_LEFT event and the cache clear, or between a cache hit and the unicast to an expired node, the broadcaster could target a departed node. The spec acknowledges 'stale-target waste meter' (onRoomMessage line 712 ClusterMessageSender.java), but does NOT meter HOW OFTEN this happens or set the TTL such that the window is bounded/acceptable. No SLA on cache staleness.",
+            "location": "ClusterMessageSender.java:739-758 (nodesForRoomCached with TTL), 918-923 (invalidateCacheForNode), 708-714 (stale-target handling on receive)"
+          },
+          {
+            "severity": "high",
+            "issue": "ATOMICITY: removeAllForSession local-index update is a read-then-iterate-then-remove sequence with gaps. Lines 228-232 (RedisRoomRegistry.java): (1) read roomsBySession.remove(…), (2) iterate the returned rooms set, (3) call removeLocalMemberOnly for each. Between Redis confirming the EVAL and step (1), a concurrent join on one of those rooms could insert the session back into localMembers, then step (3) removes it. Net result: stale membership in localMembers for the removed session. The local-index removal should be wrapped in a single atomic block or integrated into the EVAL itself.",
+            "location": "RedisRoomRegistry.java:228-232 (removeAllForSession local-index cleanup)"
+          },
+          {
+            "severity": "medium",
+            "issue": "SHUTDOWN: RedisRoomRegistry.shutdown does not wait for pending removeAllForNode tasks. The executor.shutdown() call (line 278) initiates graceful shutdown, but if a removeAllForNode CompletableFuture is mid-flight (executing the SCAN + async.srem/del pipeline join on line 270), it may not complete before awaitTermination times out at 5s. The executor.shutdownNow() (line 281) forcibly stops the thread, potentially leaving the Redis cleanup half-done. The room cache state is cleared (lines 287-288), but Redis may have dangling member keys for partially-cleaned nodes.",
+            "location": "RedisRoomRegistry.java:277-290 (shutdown implementation)"
+          },
+          {
+            "severity": "medium",
+            "issue": "HASH-TAG SINGLE-SLOT CORRECTNESS: The per-room keys share tag {b64uri:b64room} (e.g., netty:room:{L3dzL2NoYXQ=:cjE=}:nodes and netty:room:{L3dzL2NoYXQ=:cjE=}:n:nodeA). This ensures the JOIN/LEAVE Lua runs on a single slot in Redis Cluster mode. However, the REMOVE_ALL_FOR_SESSION Lua reconstructs keys inside the script using the tag (lines 122-124 RedisRoomRegistry.java). If a room string contains characters that base64url encodes differently than expected (e.g., padding artifacts), the b64room computed Java-side might not match the b64room re-derived inside Lua, causing the tag to differ and the script to reference a different slot. The spec comment (lines 113-117) acknowledges this risk but stores b64room as the token, not the raw room, to keep the script stateless. Verify: does the stored b64room token exactly match the re-encoded token in the script under all character sets (UTF-8 edge cases, null bytes)?",
+            "location": "RedisRoomRegistry.java:113-132 (REMOVE_ALL_FOR_SESSION_LUA key reconstruction), 154-175 (join b64 computation)"
+          },
+          {
+            "severity": "medium",
+            "issue": "CONCURRENT JOIN/LEAVE NODE-SET REFCOUNT: The join/leave Lua correctly reads SCARD(per-node member set BEFORE/AFTER the operation) to decide whether to add/remove the node from the node-set. However, if two concurrent joins on different sessions arrive out-of-order (join1 before join2 reads the member set), and they both see SCARD=0 before their SADD, both will SADD the node to the node-set. This is idempotent (SADD is set, no duplicate) so the node-set is correct. BUT the Lua returns 'added' (1) for both joins. Line 167 (RedisRoomRegistry.java) and metrics (ClusterMessageSender line 616) count 'node-set-added' twice for the same node. This is a metrics/observability bug, not a correctness bug (node-set is correct), but it inflates 'new-node' counters and makes fan-out metrics misleading.",
+            "location": "RedisRoomRegistry.java:79-88 (JOIN_LUA), 165-175 (join call + local index update), ClusterMessageSender.java:688-689 (metrics recording)"
+          },
+          {
+            "severity": "low",
+            "issue": "LIVELINESS: removeAllForNode runs on the dedicated executor but is fire-and-forget from invalidateCacheForNode (line 921 ClusterMessageSender.java). No timeout, no retry on failure, no failure count incremented. If the removeAllForNode task hangs (Redis slow, SCAN slow, pipeline stalls), the executor thread blocks and the node cleanup is incomplete, silently. Dead-node member sets linger in Redis. Future room broadcasts target the dead node and fail at the receiver (stale-target meter). The try/catch (line 921) only logs at debug level; a permanent failure is invisible unless DEBUG logs are on.",
+            "location": "ClusterMessageSender.java:918-923 (removeAllForNode fire-and-forget), RedisRoomRegistry.java:241-274 (removeAllForNode no timeout)"
+          }
+        ],
+        "bottomLine": "The ClusterRoomRegistry RC1 implementation has three critical concurrency bugs that must be fixed before RC1 cut: (1) metrics increment before async local-index update, creating transient inconsistency; (2) removeAllForNode completely ignores the local index, leaving stale sessions visible on the dead node's origin; (3) removeAllForSession's local-index cleanup is not atomic with the Redis EVAL, allowing concurrent joins to re-insert removed sessions. Additionally, the node-set cache TTL creates a window for stale-node delivery (acceptable per spec but unmetered), and shutdown does not properly drain removeAllForNode tasks. Fix (1) by deferring metrics until local-index thenAccept completes. Fix (2) by either passing room/session info back from Redis or scanning local state to match. Fix (3) by atomically clearing the local index inside or synchronized-with the EVAL callback. Separately, validate hash-tag correctness for UTF-8 edge cases and add explicit failure logging to removeAllForNode."
+      },
+      {
+        "lens": "Regression / backward-compat: RC1 vs 1.9.0",
+        "verdict": "APPROVE",
+        "findings": [],
+        "bottomLine": "RC1 is backward-compatible with 1.9.0. The envelope codec rolling upgrade is version-aware and safe in both directions: v2 codec reads v1 wires with room=null (EnvelopeRollingUpgradeTest:89-102), v1 codec discards v2 wires cleanly via version gate at field 0 (lines 126-152) without crashing. room.enable=false gates all room beans/subscriptions—no ClusterRoomRegistry bean created (NettyWebSocketClusterConfigure:508-517, test:457-474)—producing byte-identical behavior to 1.9.0. MessageKind.ROOM_BROADCAST is dispatched via safe if/if/default patterns (ClusterMessageSender.onUnicastMessage:578,584), not switch statements, so no NPE from missing case. RoomOperations is a new sub-interface that does not change MessageSender contract; ClusterMessageSender implements both correctly. OnAnyRedisSpiRequired correctly extends room-registry gating (line 70-76) without breaking RC16 all-SPI-override or existing context tests. topicMessage/sendMessage/reliableBroadcast behavior unchanged. All changes opt-in and configuration-gated. Ready to cut RC1."
+      }
+    ],
+    "verifications": [
+      {
+        "lens": "Concurrency/Correctness Verification of 1.10.0-RC1 Room Registry",
+        "verdict": "partial",
+        "reasoning": "Analysis of actual 1.10.0-RC1 code confirms 7 of 8 findings. Finding 1 (metrics timing) is REFUTED—it's intentional fire-and-forget async design, not a race condition. Confirmed findings: (2) removeAllForNode never updates local index localMembers/roomsBySession—HIGH severity; (3) node-set cache TTL window has no SLA bounds—MEDIUM; (4) removeAllForSession has read-then-iterate TOCTOU between Lua confirm and local cleanup—HIGH; (5) shutdown timeout is fixed 5s, SCAN could exceed it—HIGH; (6) hash-tag b64room reconstruction has low practical risk due to token storage pattern—MEDIUM; (7) concurrent joins both return 'added=1' causing metric double-count while node-set stays correct—MEDIUM observability issue; (8) removeAllForNode fire-and-forget with no timeout/retry and debug-level logging only—HIGH. Root causes: distributed Lua atomicity is sound, but local in-process index updates are decoupled from distributed operations and lack coordination; async patterns fire-and-forget without monitoring; shutdown cleanup can be truncated by fixed 5s timeout. Files: RedisRoomRegistry.java lines 167-174 (join thenAccept), 228-232 (removeAllForSession), 241-274 (removeAllForNode), 277-290 (shutdown); ClusterMessageSender.java lines 613-617 (joinRoom metrics), 739-758 (cache TTL), 902-924 (invalidateCacheForNode fire-and-forget)."
+      }
+    ],
+    "synthesis": {
+      "rc1ReadyToCut": true,
+      "mustFix": [],
+      "niceToHave": [
+        "removeAllForNode (RedisRoomRegistry.java:241-274) never updates the local in-process index (localMembers/roomsBySession). Harmless in the normal dead-remote-node case (a remote dead node's sessions were never in a surviving node's local index), but leaves a stale-membership window if a still-running node is falsely declared dead. Bounded by the roomFanoutStaleTarget meter. Backlog for RC2.",
+        "removeAllForNode is fire-and-forget from invalidateCacheForNode (ClusterMessageSender.java:921) with no timeout/retry and only debug-level failure logging (RedisRoomRegistry.java:241-274 has no timeout). A hung SCAN/pipeline leaves dead-node member sets lingering in Redis invisibly. Add a bounded timeout + warn-level failure log + a failure counter.",
+        "Shutdown uses a fixed 5s awaitTermination (RedisRoomRegistry.java:277-290); a large SCAN+pipeline in removeAllForNode can exceed it and be force-killed mid-cleanup, leaving dangling Redis member keys. Make the drain budget configurable or drain pending tasks explicitly.",
+        "removeAllForSession local-index cleanup (RedisRoomRegistry.java:226-233) is read-then-iterate-then-remove, not atomic with the EVAL — a concurrent join for the same session could re-insert it. Theoretical (the session is mid-teardown on disconnect); tighten by clearing the local index in lockstep with the EVAL callback.",
+        "Concurrent joins on a newly-occupied node can both return added=1 from JOIN_LUA (RedisRoomRegistry.java:79-88), double-counting the node-set-added metric (ClusterMessageSender.java:688-689). Node-set stays correct (SADD idempotent); observability-only inflation.",
+        "Node-set send-path cache (ClusterMessageSender.java:739-758, default TTL) has no SLA/meter on how often a stale-target round occurs between NODE_LEFT and the wholesale cache clear (line 920). The stale-target waste is metered on the receive side but the cache-staleness frequency is not.",
+        "Clarify the misleading 'byte-identical to 1.9.0' comments (ClusterMessageSender.java:117 and :218, ClusterProperties.java:310). When room.enable=false the BEHAVIOR is identical (no ROOM_BROADCAST envelopes), but the wire is still globally v2 (version 2, 9 fields incl. empty room) — NOT byte-identical to 1.9.0's v1/8-field wire. A 1.9.0 node safely discards v2 wires on the version gate, so this is harmless; reword to avoid implying the wire is unchanged.",
+        "Verify hash-tag b64room round-trip for UTF-8 edge cases (RedisRoomRegistry.java:113-132): the Java-side b64(room) token stored in the roomsession set must exactly match the token re-used inside REMOVE_ALL_FOR_SESSION_LUA. Base64url-no-padding is deterministic so practical risk is low, but add an explicit test for multibyte/null-byte room names."
+      ],
+      "assessment": "The one load-bearing item — envelope v2 rolling-upgrade safety — is solid and proven in both directions: CURRENT_VERSION and FIELD_COUNT are co-bumped 1->2 and 8->9 in lockstep, the version token sits at field 0 and is read before any field-count-dependent logic, and EnvelopeRollingUpgradeTest exercises a byte-for-byte reproduction of the 1.9.0 v1 decoder confirming it discards a real v2 wire on the version gate without throwing (and v2 reads v1 with room=null). Backward-compat is clean and all new room functionality is opt-in behind room.enable=true. The NEEDS_FIX concurrency review raised 8 findings; the skeptic refuted #1 (metric timing is intentional fire-and-forget gauge transience, not a race) and confirmed the rest, but on inspection none corrupts the distributed Redis state — all Lua join/leave/removeAll operations are atomic single-EVALs — and the residual issues are local-index staleness, cleanup robustness, and observability gaps bounded by the existing roomFanoutStaleTarget waste meter and gated behind an opt-in feature. No confirmed high/blocker corrupts data or breaks the rolling upgrade, so RC1 is cuttable; the removeAllForNode local-index/timeout hardening and the byte-identical doc wording should land in RC2."
+    }
+  }
+}

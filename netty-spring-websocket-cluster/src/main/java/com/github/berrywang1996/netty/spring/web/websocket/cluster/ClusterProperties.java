@@ -306,9 +306,12 @@ public class ClusterProperties {
 
     /**
      * Room-scoped routing (per-room node-targeted delivery). Off by default — when {@code enable=false}
-     * there are no room beans, no room subscriptions, and no ROOM_BROADCAST envelopes are produced
-     * (byte-identical behavior to 1.9.0). When enabled, a {@code ClusterRoomRegistry} bean is wired and
-     * {@code roomMessage(uri, room, msg)} targets only the nodes hosting members of the room.
+     * there are no room beans, no room subscriptions, and no ROOM_BROADCAST envelopes are produced, so
+     * runtime <b>behavior</b> is identical to 1.9.0. (Note: the envelope <b>wire</b> is globally v2 since
+     * 1.10.0 — 9 fields incl. an empty room field — so it is not byte-for-byte identical to 1.9.0's v1/8-field
+     * wire; a 1.9.0 node safely discards a v2 wire on the version gate, see EnvelopeRollingUpgradeTest.)
+     * When enabled, a {@code ClusterRoomRegistry} bean is wired and {@code roomMessage(uri, room, msg)}
+     * targets only the nodes hosting members of the room.
      */
     public static class Room {
         /** Master gate. Default false. */

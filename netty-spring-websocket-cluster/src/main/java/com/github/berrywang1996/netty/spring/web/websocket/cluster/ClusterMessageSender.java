@@ -114,7 +114,8 @@ public class ClusterMessageSender implements MessageSender, RoomOperations {
     private final ConcurrentHashMap<String, ClusterSubscription>
             reliableSubscriptions = new ConcurrentHashMap<>();
 
-    /** Room registry; null when room.enable=false (no room path, byte-identical to 1.9.0). */
+    /** Room registry; null when room.enable=false (no room path; runtime behavior identical to 1.9.0,
+     *  though the envelope wire is globally v2 since 1.10.0 — 1.9.0 nodes discard v2 on the version gate). */
     private volatile ClusterRoomRegistry roomRegistry;
     /** TTL (ms) for the per-room node-set send-path cache (mirrors {@link #nodeCacheTtlMs}). */
     private volatile long roomNodeSetCacheTtlMs = 5000;
@@ -215,7 +216,8 @@ public class ClusterMessageSender implements MessageSender, RoomOperations {
     }
 
     /** Injects the room registry (enables {@link RoomOperations}). Null = room routing disabled
-     *  ({@code room.enable=false} — byte-identical to 1.9.0, no room path). */
+     *  ({@code room.enable=false} — no room path; runtime behavior identical to 1.9.0, though the
+     *  envelope wire is globally v2 since 1.10.0 and 1.9.0 nodes discard v2 on the version gate). */
     public void setRoomRegistry(ClusterRoomRegistry roomRegistry) {
         this.roomRegistry = roomRegistry;
     }
