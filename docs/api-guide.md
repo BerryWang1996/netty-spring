@@ -703,6 +703,52 @@ When `cluster-nodes` is empty/absent, the transport stays on `redis.uri` (standa
 
 ---
 
+### 9.4 Room-Scoped Routing (per-room node-targeted delivery) / 房间维度路由
+
+> **Since V1.10.0-RC1.** Opt-in (`cluster.room.enable=true`, default `false`). When disabled there are no
+> room beans and behavior is identical to 1.9.0.
+
+A **room** is a sub-dimension within a `@MessageMapping` URI: one `/ws/chat` endpoint, unlimited rooms, and a
+session may be in many rooms. `roomMessage(uri, room, msg)` reaches **only the nodes hosting members of that
+room** (the per-room node-set), reusing the existing per-node unicast channel — so fan-out drops to **N/k**
+(k = nodes with members).
+
+**Locality caveat (read this):** this is a real reduction for **bounded rooms** in large clusters, even under
+random load-balanced placement (a 5-member room lands on ≤5 nodes → large reduction). A **hot room** whose
+members span every node sees **no reduction**, and the publish side costs ~N targeted sends vs the 1 publish
+of a global `topicMessage` — for rooms expected to span most nodes, **use `topicMessage(uri, msg)` (global)
+instead.** Watch the `netty.cluster.room.fanout.target_nodes` gauge (avg nodes targeted/room) against your
+cluster size to *see* whether you are getting reduction. See `docs/cluster-design.md` and
+`docs/release-notes-1.10.0.md` for the measured 3-scenario benchmark and the shard→node-set design correction.
+
+```java
+// roomMessage lives on the RoomOperations sub-interface implemented by ClusterMessageSender
+// (the base MessageSender is untouched). Cast or inject ClusterMessageSender.
+RoomOperations rooms = (RoomOperations) clusterMessageSender;
+
+rooms.joinRoom("/ws/chat", "room-42", sessionId);   // on connect/subscribe
+rooms.leaveRoom("/ws/chat", "room-42", sessionId);  // on unsubscribe
+rooms.roomMessage("/ws/chat", "room-42", new TextMessage("hi room")); // per-room node-targeted send
+
+// on local disconnect, clear all of a session's rooms in one distributed call:
+clusterMessageSender.removeAllRoomsForSession("/ws/chat", sessionId);
+```
+
+When `room.enable=false`, the room methods throw `IllegalStateException` (explicit, not a silent drop).
+
+**Config** (`server.netty.websocket.cluster.room.*`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enable` | `false` | Master switch. `false` = no room beans, byte-identical behavior to 1.9.0. |
+| `node-set-cache-ttl-ms` | `5000` | Local cache TTL for the `nodesForRoom` node-set on the send hot path (mirrors `registry-read-cache-ttl-ms`; invalidated on `NODE_LEFT`). |
+
+**Metrics** (`netty.cluster.room.*`): `broadcast.published` / `broadcast.received` (counters),
+`fanout.target_nodes` (gauge — **the reduction meter**), `fanout.stale_target` (counter — received with zero
+local members), `members.local` (gauge).
+
+---
+
 ### Cluster-Wide Queries
 
 `ClusterMessageSender` adds async, network-backed queries (cast `MessageSender` to `ClusterMessageSender`, or inject it directly):
@@ -957,6 +1003,8 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 | `cluster.auth.enable` | `false` | *(since V1.9.0-RC3)* Enable HMAC-SHA256 envelope authentication. `false` = NoOp (strips `H1:` tag, no signing/verification). |
 | `cluster.auth.secret` | *(required when enabled)* | *(since V1.9.0-RC3)* Shared HMAC key (≥ 32 chars). Externalize via `${ENV_VAR}`. Redacted in logs. Never plain-text in YAML. |
 | `cluster.auth.permissive` | `false` | *(since V1.9.0-RC3)* `true` = sign outbound + accept unsigned inbound (rolling upgrade); `false` = strict (reject invalid/missing tag). |
+| `cluster.room.enable` | `false` | *(since V1.10.0-RC1)* Enable room-scoped per-room node-targeted routing. `false` = no room beans, byte-identical to 1.9.0. See [§9.4 Room-Scoped Routing](#94-room-scoped-routing-per-room-node-targeted-delivery--房间维度路由). |
+| `cluster.room.node-set-cache-ttl-ms` | `5000` | *(since V1.10.0-RC1)* Local cache TTL for the `nodesForRoom` node-set on the room send hot path (mirrors `registry-read-cache-ttl-ms`; invalidated on `NODE_LEFT`). |
 
 ---
 
