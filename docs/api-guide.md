@@ -793,8 +793,10 @@ drop). On connect, the cluster session hook resolves the userId, binds presence,
 on disconnect it unbinds.
 
 **Semantics (honest):** at-least-once to offline users within the retention window (`max-messages-per-user`
-default 1000, `ttl-seconds` default 7 days); beyond it the oldest are trimmed (bounded gap, metered
-`offline.dropped_retention`). Per-user FIFO. **Not exactly-once** — drain delivers then deletes; a delete that
+default 1000, `ttl-seconds` default 7 days); beyond it the oldest are trimmed (bounded gap). The **TTL-drop
+path** (entries past `ttl-seconds`, reaped on drain) is metered as `offline.dropped_retention`; server-side
+`MAXLEN ~` trim is performed by Redis on `XADD` and is not separately metered. Per-user FIFO. **Not
+exactly-once** — drain delivers then deletes; a delete that
 fails after delivery redelivers on the next connect, so **handlers must be idempotent** (each backfilled
 message carries an `X-Offline-Message-Id` in MDC for dedup). **Send-time-only boundary:** `broker.unicast` is
 fire-and-forget, so the offline queue is a fallback for send-time failures only (zero reachable sessions, or a

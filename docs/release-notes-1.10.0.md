@@ -159,7 +159,9 @@ passes `emptyMap()` to register exactly as RC1 (byte-identical).
 
 > **At-least-once to offline users, within the retention window** (`max-messages-per-user` default 1000,
 > `ttl-seconds` default 7 days). Beyond it, the oldest are trimmed (a bounded gap, like reliable broadcast's
-> MAXLEN; metered `offline.dropped_retention`). **Ordering is per-user FIFO** (Redis Stream). Cross-sender
+> MAXLEN). The **TTL-drop path** (entries past `ttl-seconds`, reaped on drain) is metered as
+> `offline.dropped_retention`; server-side `MAXLEN ~` trim is performed by Redis on `XADD` and is not separately
+> metered. **Ordering is per-user FIFO** (Redis Stream). Cross-sender
 > order is not guaranteed (same caveat as reliable). **Not exactly-once:** drain delivers then deletes; if the
 > delete fails after delivery, the next connect redelivers — **handlers must be idempotent** (same contract as
 > reliable broadcast). Each backfilled message carries an `X-Offline-Message-Id` (the Redis stream entry id, in
@@ -227,7 +229,7 @@ offline queue (backfill); on disconnect it unbinds.
 | Meter | Meaning |
 |---|---|
 | `enqueued` / `drained` (counter) | Messages stored offline / drained + backfilled on reconnect. |
-| `dropped_retention` (counter) | Entries trimmed by `MAXLEN`/TTL — **the bounded-gap honesty meter** (alert on `rate(...[5m]) > 0`). |
+| `dropped_retention` (counter) | Entries dropped on the **TTL-drop path** (older than `ttl-seconds`, reaped on drain) — **the bounded-gap honesty meter** (alert on `rate(...[5m]) > 0`). Server-side `MAXLEN ~` stream trim is performed by Redis on `XADD` and is **not separately metered**. |
 | `send_to_user.realtime` / `send_to_user.queued` (counter) | The online/offline split of `sendToUser`. |
 | `unicast_failures` (counter) | Send-time unicast failures (local close on a bound session) — distinct from `queued` and from post-accept loss. |
 | `fallback_enqueue_failures` (counter) | Enqueue itself failed after all unicast paths — **never a silent drop** (logged ERROR). |
@@ -371,7 +373,9 @@ userId 解析，集群会话钩子向 register 传 `emptyMap()`，与 RC1 逐字
 ### 诚实定位（务必先读）
 
 > **对离线用户在保留窗口内至少一次**（`max-messages-per-user` 默认 1000，`ttl-seconds` 默认 7 天）。超出后
-> 最旧的被裁剪（有界缺口，如可靠广播的 MAXLEN；指标 `offline.dropped_retention`）。**按用户 FIFO**（Redis
+> 最旧的被裁剪（有界缺口，如可靠广播的 MAXLEN）。**TTL 丢弃路径**（超过 `ttl-seconds`、drain 时清理的条目）
+> 计入指标 `offline.dropped_retention`；服务端 `MAXLEN ~` 裁剪由 Redis 在 `XADD` 时执行，不单独计量。
+> **按用户 FIFO**（Redis
 > Stream）。跨发送方顺序不保证（与可靠相同的注意点）。**非精确一次：** drain 先投递后删除；若投递后删除失败，
 > 下次连接会重投——**处理器必须幂等**（与可靠广播相同的约定）。每条回填消息携带一个 `X-Offline-Message-Id`
 > （Redis stream 条目 id，投递期间置于 MDC），应用可据该基础设施 id 去重。**离线 = 集群范围内零会话：** 一个
@@ -430,7 +434,7 @@ CompletionStage<Boolean> online = ((UserOperations) sender).isUserOnline("user-4
 | 指标 | 含义 |
 |---|---|
 | `enqueued` / `drained`（计数器） | 离线存储的消息 / 重连时 drain + 回填的消息。 |
-| `dropped_retention`（计数器） | 被 `MAXLEN`/TTL 裁剪的条目——**有界缺口诚实指标**（对 `rate(...[5m]) > 0` 告警）。 |
+| `dropped_retention`（计数器） | 在 **TTL 丢弃路径**（超过 `ttl-seconds`、drain 时清理）丢弃的条目——**有界缺口诚实指标**（对 `rate(...[5m]) > 0` 告警）。服务端 `MAXLEN ~` 裁剪由 Redis 在 `XADD` 时执行，不单独计量。 |
 | `send_to_user.realtime` / `send_to_user.queued`（计数器） | `sendToUser` 的在线/离线分流。 |
 | `unicast_failures`（计数器） | 发送时单播失败（绑定会话上的本地关闭）——区别于 `queued` 与受理后丢失。 |
 | `fallback_enqueue_failures`（计数器） | 在所有单播路径之后入队本身失败——**绝不静默丢弃**（ERROR 日志）。 |

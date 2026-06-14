@@ -746,6 +746,13 @@ public class NettyWebSocketClusterConfigure {
         }
         if (offlineQueueStore != null) {
             sender.setOfflineQueueStore(offlineQueueStore);
+            // Wire the store to the SAME ClusterRuntimeStats the sender exposes + the meter binder reads, so the
+            // offline.dropped_retention meter actually moves on a TTL-drop (RC2 review FIX 4). The store bean is
+            // created before this sender, so the setter (not constructor injection) is the clean wiring point.
+            if (offlineQueueStore instanceof com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisOfflineQueueStore) {
+                ((com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisOfflineQueueStore) offlineQueueStore)
+                        .setRuntimeStats(sender.getClusterRuntimeStats());
+            }
         }
         sender.start();
         log.info("ClusterMessageSender started — cluster mode is ACTIVE (onRedisLoss={}, onPublishFailure={}, maxMsgBytes={}, reliable={}, rooms={}, offline={})",

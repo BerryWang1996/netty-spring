@@ -121,7 +121,8 @@ public class NettyClusterMeterBinder implements MeterBinder {
                 ClusterRuntimeStats::getOfflineDrained, "Offline messages drained + delivered on reconnect (backfill)");
         counter(registry, "netty.cluster.offline.dropped_retention", stats,
                 ClusterRuntimeStats::getOfflineDroppedRetention,
-                "Offline entries dropped by retention (MAXLEN/TTL trim) — the bounded-gap honesty meter");
+                "Offline entries dropped by retention on the TTL-drop path (entry older than ttl-seconds, reaped "
+                        + "on drain) — the bounded-gap honesty meter. Server-side MAXLEN ~ trim is not separately metered");
         counter(registry, "netty.cluster.offline.send_to_user.realtime", stats,
                 ClusterRuntimeStats::getSendToUserRealtime, "sendToUser delivered in realtime (user online)");
         counter(registry, "netty.cluster.offline.send_to_user.queued", stats,

@@ -108,7 +108,9 @@ public class ClusterRuntimeStats {
     /** Offline messages drained + delivered on reconnect (backfill). */
     final AtomicLong offlineDrained = new AtomicLong();
 
-    /** Offline entries dropped by retention (MAXLEN/TTL trim) — the bounded-gap honesty meter. */
+    /** Offline entries dropped by retention on the <b>TTL-drop path</b> (an entry older than {@code ttl-seconds}
+     *  reaped on drain) — the bounded-gap honesty meter. NOTE: server-side {@code MAXLEN ~} stream trimming is
+     *  performed by Redis on XADD and is NOT separately countable from the app, so it is not metered here. */
     final AtomicLong offlineDroppedRetention = new AtomicLong();
 
     /** {@code sendToUser} delivered in realtime (user online → unicast to at least one live session). */
