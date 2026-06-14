@@ -556,11 +556,11 @@ public class NettyWebSocketClusterConfigure {
             StatefulRedisConnection<String, String> connection,
             EnvelopeCodec envelopeCodec, ClusterProperties properties, MessageAuthenticator messageAuthenticator) {
         ClusterProperties.Offline o = properties.getOffline();
-        log.info("Offline queue ENABLED (RedisOfflineQueueStore — per-user stream; maxMsgs={}, ttlSec={}, drainLockMs={})",
-                o.getMaxMessagesPerUser(), o.getTtlSeconds(), o.getDrainLockMs());
+        log.info("Offline queue ENABLED (RedisOfflineQueueStore — per-user stream; maxMsgs={}, ttlSec={}, drainBatch={}, drainLockMs={})",
+                o.getMaxMessagesPerUser(), o.getTtlSeconds(), o.getDrainBatchSize(), o.getDrainLockMs());
         return new com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisOfflineQueueStore(
                 connection, envelopeCodec, messageAuthenticator, properties.getNodeId(),
-                o.getMaxMessagesPerUser(), o.getTtlSeconds(), o.getDrainLockMs());
+                o.getMaxMessagesPerUser(), o.getTtlSeconds(), o.getDrainLockMs(), o.getDrainBatchSize());
     }
 
     @Bean
