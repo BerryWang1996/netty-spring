@@ -26,12 +26,24 @@ import java.util.Base64;
 /**
  * Zero-dependency default {@link EnvelopeCodec} using a compact pipe-delimited text format.
  *
- * <p>Wire format (single line, pipe-separated, 8 fields):
+ * <p>Wire format v2 (single line, pipe-separated, 9 fields — {@code room} appended as the
+ * second-to-last field so {@code payload} stays the trailing rest-of-line field):
  * <pre>
- * {version}|{originNodeId}|{uri}|{kind}|{targetSessionId}|{traceparent}|{timestamp}|{base64payload}
+ * {version}|{originNodeId}|{uri}|{kind}|{targetSessionId}|{traceparent}|{timestamp}|{room}|{base64payload}
  * </pre>
  *
- * <p>Nullable fields ({@code targetSessionId}, {@code traceparent}) are encoded as empty
+ * <p>v1 (1.8.0–1.9.x) had 8 fields and no {@code room}. This codec is <b>version-aware</b> and
+ * rolling-upgrade-safe:
+ * <ul>
+ *   <li>A v2 codec decoding a <b>v1 wire</b> (8 fields, version 1) yields {@code room=null} — no error.</li>
+ *   <li>A v2 codec decoding a <b>v2 wire</b> (9 fields, version 2) parses {@code room}.</li>
+ *   <li>A v1 codec (1.9.x node) decoding a <b>v2 wire</b> discards on the {@code version &gt; max}
+ *       gate (the version token is field 0, read before the payload is touched) — no crash. The v2
+ *       wire keeps the version token in the leading position the v1 splitter still reads.</li>
+ * </ul>
+ * The decoder keys off the actual field count, so both shapes round-trip without a leading discriminator.
+ *
+ * <p>Nullable fields ({@code targetSessionId}, {@code traceparent}, {@code room}) are encoded as empty
  * strings between pipes. The payload is always Base64-encoded (no padding issues with pipe
  * delimiter).
  *
@@ -54,7 +66,12 @@ import java.util.Base64;
 public class SimpleTextEnvelopeCodec implements EnvelopeCodec {
 
     private static final char SEP = '|';
-    private static final int FIELD_COUNT = 8;
+    /** v2 wire field count (was 8 in v1; {@code room} added). Co-bumped in lockstep with
+     *  {@link ClusterEnvelope#CURRENT_VERSION} (1→2). The decoder accepts BOTH 8-field (v1) and
+     *  9-field (v2) wires (version-aware), so a v2 codec reads a v1 wire and vice-versa is gated. */
+    static final int FIELD_COUNT = 9;
+    /** Previous (v1) wire field count — accepted on decode for rolling-upgrade read-compat. */
+    static final int FIELD_COUNT_V1 = 8;
 
     @Override
     public String encode(ClusterEnvelope envelope) {
@@ -66,6 +83,8 @@ public class SimpleTextEnvelopeCodec implements EnvelopeCodec {
         sb.append(envelope.getTargetSessionId() != null ? envelope.getTargetSessionId() : "").append(SEP);
         sb.append(envelope.getTraceparent() != null ? envelope.getTraceparent() : "").append(SEP);
         sb.append(envelope.getTimestamp()).append(SEP);
+        // v2: room as the second-to-last field (payload stays the trailing rest-of-line field).
+        sb.append(envelope.getRoom() != null ? envelope.getRoom() : "").append(SEP);
         sb.append(Base64.getEncoder().encodeToString(envelope.getPayload()));
         return sb.toString();
     }
@@ -76,7 +95,10 @@ public class SimpleTextEnvelopeCodec implements EnvelopeCodec {
             throw new ClusterBrokerException("Empty envelope data");
         }
 
-        // Fast split on pipe — avoid String.split() regex overhead
+        // Fast split on pipe — avoid String.split() regex overhead. Split up to FIELD_COUNT-1 pipes;
+        // the final field (payload, Base64, no pipes) absorbs the rest of the line. This collects a
+        // v2 wire's 9 fields; a v1 wire (8 fields) yields one fewer pipe → fieldIndex stops at 7 and
+        // parts[7] holds the v1 payload (the version-aware branch below maps it correctly).
         String[] parts = new String[FIELD_COUNT];
         int fieldIndex = 0;
         int start = 0;
@@ -86,16 +108,21 @@ public class SimpleTextEnvelopeCodec implements EnvelopeCodec {
                 start = i + 1;
             }
         }
-        // Last field (payload) — everything after the last pipe
+        // Last collected field — everything after the final pipe (payload for v2; payload for v1 too,
+        // since v1 has one fewer field).
         parts[fieldIndex] = data.substring(start);
+        int fieldsSeen = fieldIndex + 1;
 
-        if (fieldIndex < FIELD_COUNT - 1) {
-            throw new ClusterBrokerException("Malformed envelope: expected " + FIELD_COUNT
-                    + " pipe-separated fields, got " + (fieldIndex + 1));
+        // Accept both the v1 (8-field) and v2 (9-field) shapes. Anything shorter is malformed.
+        if (fieldsSeen != FIELD_COUNT && fieldsSeen != FIELD_COUNT_V1) {
+            throw new ClusterBrokerException("Malformed envelope: expected " + FIELD_COUNT_V1 + " (v1) or "
+                    + FIELD_COUNT + " (v2) pipe-separated fields, got " + fieldsSeen);
         }
 
         try {
             int version = Integer.parseInt(parts[0]);
+            // Version gate FIRST (before touching room/payload): a v1 node decoding a v2 wire trips this
+            // and discards cleanly; field 0 is always the version token so this is reachable on any shape.
             if (version > ClusterEnvelope.CURRENT_VERSION) {
                 log.warn("Received envelope version {} (max supported: {}) — discarding",
                         version, ClusterEnvelope.CURRENT_VERSION);
@@ -108,10 +135,21 @@ public class SimpleTextEnvelopeCodec implements EnvelopeCodec {
             String targetSessionId = parts[4].isEmpty() ? null : parts[4];
             String traceparent = parts[5].isEmpty() ? null : parts[5];
             long timestamp = Long.parseLong(parts[6]);
-            byte[] payload = Base64.getDecoder().decode(parts[7]);
+
+            String room;
+            byte[] payload;
+            if (fieldsSeen == FIELD_COUNT) {
+                // v2 wire: room is field 7, payload is field 8.
+                room = parts[7].isEmpty() ? null : parts[7];
+                payload = Base64.getDecoder().decode(parts[8]);
+            } else {
+                // v1 wire (8 fields): no room field; payload is field 7.
+                room = null;
+                payload = Base64.getDecoder().decode(parts[7]);
+            }
 
             return new ClusterEnvelope(version, originNodeId, uri, kind, payload,
-                    targetSessionId, traceparent, timestamp);
+                    targetSessionId, traceparent, timestamp, room);
         } catch (IllegalArgumentException e) {
             throw new ClusterBrokerException("Failed to decode envelope: " + e.getMessage(), e);
         }

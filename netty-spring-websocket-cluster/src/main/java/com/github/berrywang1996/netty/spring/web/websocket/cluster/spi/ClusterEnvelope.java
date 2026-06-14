@@ -37,8 +37,13 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster.spi;
 public final class ClusterEnvelope {
 
     /** Wire format version. Incremented when the envelope structure changes.
-     *  Receivers should discard envelopes with version > their max supported. */
-    public static final int CURRENT_VERSION = 1;
+     *  Receivers should discard envelopes with version &gt; their max supported.
+     *  <p>v1 (1.8.0–1.9.x): 8 wire fields, no {@code room}.
+     *  <p>v2 (1.10.0): adds the {@link #room} field + {@link MessageKind#ROOM_BROADCAST}. The default
+     *  {@code SimpleTextEnvelopeCodec} appends {@code room} as the second-to-last wire field (payload stays
+     *  last) and decodes version-aware, so a v2 codec reads v1 wires (room=null) and a v1 codec discards a
+     *  v2 wire on the version gate — see the codec for the rolling-upgrade contract. */
+    public static final int CURRENT_VERSION = 2;
 
     private final int version;
     private final String originNodeId;
@@ -48,6 +53,8 @@ public final class ClusterEnvelope {
     private final String targetSessionId;
     private final String traceparent;
     private final long timestamp;
+    /** Room sub-dimension within {@link #uri} for {@link MessageKind#ROOM_BROADCAST}; null otherwise. */
+    private final String room;
 
     /**
      * Constructs a new envelope with the current wire version.
@@ -63,15 +70,39 @@ public final class ClusterEnvelope {
     public ClusterEnvelope(String originNodeId, String uri, MessageKind kind,
                            byte[] payload, String targetSessionId, String traceparent,
                            long timestamp) {
-        this(CURRENT_VERSION, originNodeId, uri, kind, payload, targetSessionId, traceparent, timestamp);
+        this(CURRENT_VERSION, originNodeId, uri, kind, payload, targetSessionId, traceparent, timestamp, null);
     }
 
     /**
-     * Constructs a new envelope with an explicit wire version (used by deserializers).
+     * Constructs a new room-scoped envelope ({@code room} non-null) with the current wire version.
+     * Used for {@link MessageKind#ROOM_BROADCAST}.
+     *
+     * @param room the room sub-dimension within {@code uri}; null for non-room messages
+     * @since V1.10.0
+     */
+    public ClusterEnvelope(String originNodeId, String uri, MessageKind kind,
+                           byte[] payload, String targetSessionId, String traceparent,
+                           long timestamp, String room) {
+        this(CURRENT_VERSION, originNodeId, uri, kind, payload, targetSessionId, traceparent, timestamp, room);
+    }
+
+    /**
+     * Constructs a new envelope with an explicit wire version (used by deserializers). Room defaults to null.
      */
     public ClusterEnvelope(int version, String originNodeId, String uri, MessageKind kind,
                            byte[] payload, String targetSessionId, String traceparent,
                            long timestamp) {
+        this(version, originNodeId, uri, kind, payload, targetSessionId, traceparent, timestamp, null);
+    }
+
+    /**
+     * Constructs a new envelope with an explicit wire version and room (used by the v2 deserializer).
+     *
+     * @since V1.10.0
+     */
+    public ClusterEnvelope(int version, String originNodeId, String uri, MessageKind kind,
+                           byte[] payload, String targetSessionId, String traceparent,
+                           long timestamp, String room) {
         this.version = version;
         this.originNodeId = originNodeId;
         this.uri = uri;
@@ -80,6 +111,7 @@ public final class ClusterEnvelope {
         this.targetSessionId = targetSessionId;
         this.traceparent = traceparent;
         this.timestamp = timestamp;
+        this.room = room;
     }
 
     public int getVersion() {
@@ -115,6 +147,16 @@ public final class ClusterEnvelope {
     }
 
     /**
+     * The room sub-dimension within {@link #getUri()} for {@link MessageKind#ROOM_BROADCAST}.
+     *
+     * @return the room, or null for non-room messages
+     * @since V1.10.0
+     */
+    public String getRoom() {
+        return room;
+    }
+
+    /**
      * The kind of cross-node message.
      */
     public enum MessageKind {
@@ -123,6 +165,10 @@ public final class ClusterEnvelope {
         /** Targeted delivery to a single session on a specific node. */
         UNICAST,
         /** Control command: close a remote session (payload = "statusCode|reasonText"). */
-        CLOSE
+        CLOSE,
+        /** Room-scoped fan-out: delivered only to nodes hosting members of {@link #getRoom()} within
+         *  {@link #getUri()}, via the per-node unicast channel; receivers fan out to their local room
+         *  members. Carries a non-null {@code room}. At-most-once (Pub/Sub fire-and-forget). Since V1.10.0. */
+        ROOM_BROADCAST
     }
 }

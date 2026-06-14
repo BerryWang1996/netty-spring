@@ -379,7 +379,7 @@ class RedisIntegrationTest {
 
         assertTrue(received.await(5, TimeUnit.SECONDS));
         assertEquals(1, messages.size());
-        assertEquals(1, messages.get(0).getVersion());
+        assertEquals(ClusterEnvelope.CURRENT_VERSION, messages.get(0).getVersion());
 
         broker.shutdown();
         client.shutdown();
