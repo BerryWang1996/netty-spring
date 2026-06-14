@@ -19,6 +19,7 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster.support;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeHeartbeat;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterReaper;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterRoomRegistry;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.SessionRegistry;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.context.annotation.ConditionContext;
@@ -66,10 +67,18 @@ public class OnAnyRedisSpiRequired implements ConfigurationCondition {
     @Override
     public boolean matches(ConditionContext ctx, AnnotatedTypeMetadata md) {
         ConfigurableListableBeanFactory bf = (ConfigurableListableBeanFactory) ctx.getBeanFactory();
-        return !hasBean(bf, SessionRegistry.class)
+        if (!hasBean(bf, SessionRegistry.class)
                 || !hasBean(bf, ClusterBroker.class)
                 || !hasBean(bf, ClusterNodeHeartbeat.class)
-                || !hasBean(bf, ClusterReaper.class);
+                || !hasBean(bf, ClusterReaper.class)) {
+            return true;
+        }
+        // Room routing (1.10.0): when room.enable=true and the user has NOT supplied their own
+        // ClusterRoomRegistry, the default RedisRoomRegistry will be created and needs the Redis
+        // connection — so the client/connection beans must NOT be gated off.
+        boolean roomEnabled = Boolean.parseBoolean(ctx.getEnvironment()
+                .getProperty("server.netty.websocket.cluster.room.enable", "false"));
+        return roomEnabled && !hasBean(bf, ClusterRoomRegistry.class);
     }
 
     private static boolean hasBean(ConfigurableListableBeanFactory bf, Class<?> type) {

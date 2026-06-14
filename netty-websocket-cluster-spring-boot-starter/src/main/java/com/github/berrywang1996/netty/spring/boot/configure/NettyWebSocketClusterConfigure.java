@@ -499,6 +499,23 @@ public class NettyWebSocketClusterConfigure {
         return new RedisSessionRegistry(connection);
     }
 
+    /**
+     * Gated room registry (1.10.0). Active only when {@code cluster.room.enable=true} on the standalone
+     * Redis path (cluster-nodes empty AND not all-NATS). Reuses the existing standalone Redis connection
+     * bean (no new client). {@code @ConditionalOnMissingBean} lets a user supply their own
+     * {@code ClusterRoomRegistry}. When disabled there is no room bean, no room path, byte-identical to 1.9.0.
+     */
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
+    @ConditionalOnProperty(prefix = "server.netty.websocket.cluster.room", name = "enable", havingValue = "true")
+    @ConditionalOnMissingBean(com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterRoomRegistry.class)
+    public com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterRoomRegistry clusterRoomRegistry(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
+            StatefulRedisConnection<String, String> connection) {
+        log.info("Room-scoped routing ENABLED (RedisRoomRegistry — per-room node-targeted delivery)");
+        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisRoomRegistry(connection);
+    }
+
     @Bean
     @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
     @ConditionalOnMissingBean(ClusterNodeHeartbeat.class)
@@ -648,7 +665,9 @@ public class NettyWebSocketClusterConfigure {
             ClusterProperties properties,
             MessagePayloadCodec messagePayloadCodec,
             @org.springframework.beans.factory.annotation.Autowired(required = false) ReliableBroker reliableBroker,
-            @org.springframework.beans.factory.annotation.Autowired(required = false) ClusterTraceContext traceContext) {
+            @org.springframework.beans.factory.annotation.Autowired(required = false) ClusterTraceContext traceContext,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterRoomRegistry roomRegistry) {
         ClusterMessageSender sender = new ClusterMessageSender(
                 localSender, broker, sessionRegistry, nodeManager,
                 properties.getRegistryReadCacheTtlMs(), messagePayloadCodec);
@@ -663,10 +682,17 @@ public class NettyWebSocketClusterConfigure {
         if (traceContext != null) {
             sender.setTraceContext(traceContext);
         }
+        // Room routing (1.10.0): nullable — present only when cluster.room.enable=true. Wiring the
+        // registry also activates the dead-node hook (the sender's NODE_LEFT callback calls the room
+        // registry's removeAllForNode alongside the existing reliable-group cleanup).
+        if (roomRegistry != null) {
+            sender.setRoomRegistry(roomRegistry);
+            sender.setRoomNodeSetCacheTtlMs(properties.getRoom().getNodeSetCacheTtlMs());
+        }
         sender.start();
-        log.info("ClusterMessageSender started — cluster mode is ACTIVE (onRedisLoss={}, onPublishFailure={}, maxMsgBytes={}, reliable={})",
+        log.info("ClusterMessageSender started — cluster mode is ACTIVE (onRedisLoss={}, onPublishFailure={}, maxMsgBytes={}, reliable={}, rooms={})",
                 properties.getOnRedisLoss(), properties.getOnPublishFailure(), properties.getMessageMaxSizeBytes(),
-                reliableBroker != null);
+                reliableBroker != null, roomRegistry != null);
         return sender;
     }
 

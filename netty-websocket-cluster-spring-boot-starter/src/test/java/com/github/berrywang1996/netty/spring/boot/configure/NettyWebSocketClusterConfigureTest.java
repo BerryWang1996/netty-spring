@@ -431,6 +431,46 @@ class NettyWebSocketClusterConfigureTest {
                 });
     }
 
+    @Test
+    void roomEnabled_wiresRoomRegistry() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-room-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.room.enable=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterRoomRegistry.class);
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterRoomRegistry.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisRoomRegistry.class);
+                    // wired into the cluster sender (room routing active)
+                    assertThat(((ClusterMessageSender) context.getBean(MessageSender.class)).isRoomEnabled())
+                            .as("room registry must be wired into the cluster sender").isTrue();
+                });
+    }
+
+    @Test
+    void roomDisabledByDefault_noRoomRegistryBean_byteIdenticalPath() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-noroom-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterRoomRegistry.class);
+                    // no room path on the sender
+                    assertThat(((ClusterMessageSender) context.getBean(MessageSender.class)).isRoomEnabled())
+                            .as("room routing must be off when room.enable is unset").isFalse();
+                });
+    }
+
     // ---- L1 (RC16): OnAnyRedisSpiRequired gates Redis client/connection ----
     // The Condition matches when AT LEAST ONE of the 4 Redis-backed SPI beans
     // (SessionRegistry, ClusterBroker, ClusterNodeHeartbeat, ClusterReaper) is NOT
