@@ -105,6 +105,7 @@ public class ClusterSessionHookImpl implements ClusterSessionHook {
 
         if (userId != null) {
             clusterSender.getClusterRuntimeStats().incResolvedIdentities();
+            clusterSender.getClusterRuntimeStats().addUsersOnlineLocal(1);
             // Register WITH userId metadata (was emptyMap in RC1).
             registryWriter.register(uri, sessionId, nodeId, Collections.singletonMap("userId", userId));
             final String resolvedUserId = userId;
@@ -179,6 +180,7 @@ public class ClusterSessionHookImpl implements ClusterSessionHook {
                 log.warn("UserIdResolver threw on removal for session {} on URI {}", sessionId, uri, e);
             }
             if (userId != null) {
+                clusterSender.getClusterRuntimeStats().addUsersOnlineLocal(-1);
                 final String resolvedUserId = userId;
                 userRegistry.unbindUser(resolvedUserId, uri, sessionId).exceptionally(ex -> {
                     log.warn("unbindUser({}) failed for session {}", resolvedUserId, sessionId, ex);

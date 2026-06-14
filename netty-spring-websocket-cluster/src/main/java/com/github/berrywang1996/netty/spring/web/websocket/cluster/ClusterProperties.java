@@ -133,6 +133,9 @@ public class ClusterProperties {
     /** Opt-in room-scoped routing (per-room node-targeted delivery). Disabled by default. */
     private Room room = new Room();
 
+    /** Opt-in user-addressed delivery + per-user offline queue. Disabled by default. */
+    private Offline offline = new Offline();
+
     // ---- Getters / Setters ----
 
     public boolean isEnable() { return enable; }
@@ -200,6 +203,9 @@ public class ClusterProperties {
 
     public Room getRoom() { return room; }
     public void setRoom(Room room) { this.room = room; }
+
+    public Offline getOffline() { return offline; }
+    public void setOffline(Offline offline) { this.offline = offline; }
 
     // ---- Nested classes ----
 
@@ -324,6 +330,51 @@ public class ClusterProperties {
         public void setEnable(boolean enable) { this.enable = enable; }
         public long getNodeSetCacheTtlMs() { return nodeSetCacheTtlMs; }
         public void setNodeSetCacheTtlMs(long nodeSetCacheTtlMs) { this.nodeSetCacheTtlMs = nodeSetCacheTtlMs; }
+    }
+
+    /**
+     * User-addressed delivery + per-user offline queue (1.10.0-RC2). Off by default — when
+     * {@code enable=false} there are no offline beans, the {@code UserIdResolver} is never created, and the
+     * cluster session hook resolves nothing + passes {@code emptyMap()} to register exactly as RC1
+     * (byte-identical: no userId resolution, no presence binding, no offline queue). When enabled, a
+     * {@code UserIdResolver} (default {@code HandshakeUserIdResolver}), {@code UserRegistry} (default
+     * {@code RedisUserRegistry}) and {@code OfflineQueueStore} (default {@code RedisOfflineQueueStore}) are
+     * wired, and {@code sendToUser(userId, msg)} delivers to an online user or enqueues for backfill on
+     * reconnect.
+     *
+     * <p><b>SECURITY:</b> the default {@code HandshakeUserIdResolver} trusts a handshake query-param/header
+     * VERBATIM and is <b>convenience/testing only</b>. Production IM MUST supply its own
+     * {@code UserIdResolver} bean that derives the userId from the session's AUTHENTICATED principal — a wrong
+     * identity is cross-user data exposure. See {@code UserIdResolver}'s SECURITY CONTRACT javadoc and
+     * {@code docs/cluster-design.md} §Security.
+     */
+    public static class Offline {
+        /** Master gate. Default false. */
+        private boolean enable = false;
+        /** Where {@code HandshakeUserIdResolver} reads the userId ({@code query:<name>} / {@code header:<name>}). */
+        private String userIdSource = "query:userId";
+        /** Per-user Redis Stream {@code MAXLEN ~} — the offline retention bound (oldest trimmed past this). */
+        private int maxMessagesPerUser = 1000;
+        /** Per-message age cap (seconds); lazily dropped on drain + bounded by stream trim. Default 7 days. */
+        private long ttlSeconds = 604800;
+        /** Max messages drained per connect (the rest drain on a subsequent connect). Default 100. */
+        private int drainBatchSize = 100;
+        /** Per-userId drain lock TTL ({@code SET NX PX}); auto-expires so a crashed drainer can't wedge the
+         *  user's queue. Default 5000. */
+        private long drainLockMs = 5000;
+
+        public boolean isEnable() { return enable; }
+        public void setEnable(boolean enable) { this.enable = enable; }
+        public String getUserIdSource() { return userIdSource; }
+        public void setUserIdSource(String userIdSource) { this.userIdSource = userIdSource; }
+        public int getMaxMessagesPerUser() { return maxMessagesPerUser; }
+        public void setMaxMessagesPerUser(int maxMessagesPerUser) { this.maxMessagesPerUser = maxMessagesPerUser; }
+        public long getTtlSeconds() { return ttlSeconds; }
+        public void setTtlSeconds(long ttlSeconds) { this.ttlSeconds = ttlSeconds; }
+        public int getDrainBatchSize() { return drainBatchSize; }
+        public void setDrainBatchSize(int drainBatchSize) { this.drainBatchSize = drainBatchSize; }
+        public long getDrainLockMs() { return drainLockMs; }
+        public void setDrainLockMs(long drainLockMs) { this.drainLockMs = drainLockMs; }
     }
 
     /**

@@ -187,6 +187,42 @@
       "type": "java.lang.Long",
       "description": "Local cache TTL (ms) for the per-room node-set on the room send hot path (nodesForRoom), mirroring registry-read-cache-ttl-ms. A stale node-set self-heals within this window (at worst targeting a node that no longer hosts the room, or briefly missing a node that just gained a member). The cache is invalidated wholesale on NODE_LEFT.",
       "defaultValue": 5000
+    },
+    {
+      "name": "server.netty.websocket.cluster.offline.enable",
+      "type": "java.lang.Boolean",
+      "description": "Opt-in user-addressed delivery + per-user offline queue (since 1.10.0-RC2). Disabled by default — when false there are no offline beans, the UserIdResolver is never created, and the cluster session hook passes emptyMap to register exactly as RC1 (byte-identical: no userId resolution, no presence binding, no offline queue). When true, a UserIdResolver (default HandshakeUserIdResolver), UserRegistry (default RedisUserRegistry) and OfflineQueueStore (default RedisOfflineQueueStore) are wired, and sendToUser(userId, msg) delivers to an online user or enqueues for FIFO backfill on reconnect. At-least-once to offline users within the retention window; handlers must be idempotent. SECURITY: the default resolver trusts a handshake value VERBATIM and is convenience/testing only — production MUST supply a UserIdResolver bean that derives userId from the AUTHENTICATED principal.",
+      "defaultValue": false
+    },
+    {
+      "name": "server.netty.websocket.cluster.offline.user-id-source",
+      "type": "java.lang.String",
+      "description": "Where the default HandshakeUserIdResolver reads the userId: query:<name> or header:<name> (e.g. query:userId, header:X-User-Id). Malformed/blank falls back to query:userId. CONVENIENCE/TESTING ONLY — the value is trusted verbatim with NO authentication; production MUST supply its own UserIdResolver bean deriving userId from the authenticated principal.",
+      "defaultValue": "query:userId"
+    },
+    {
+      "name": "server.netty.websocket.cluster.offline.max-messages-per-user",
+      "type": "java.lang.Integer",
+      "description": "Per-user Redis Stream MAXLEN (approximate) for the offline queue — the at-least-once retention bound. Older messages are trimmed past this (a bounded gap, metered netty.cluster.offline.dropped_retention).",
+      "defaultValue": 1000
+    },
+    {
+      "name": "server.netty.websocket.cluster.offline.ttl-seconds",
+      "type": "java.lang.Long",
+      "description": "Per-message age cap (seconds) for an offline-queued message. Lazily dropped on drain (an entry older than this is not delivered) and bounded by the stream MAXLEN trim. Default 604800 (7 days).",
+      "defaultValue": 604800
+    },
+    {
+      "name": "server.netty.websocket.cluster.offline.drain-batch-size",
+      "type": "java.lang.Integer",
+      "description": "Max messages drained + delivered per connect (the rest drain on a subsequent connect).",
+      "defaultValue": 100
+    },
+    {
+      "name": "server.netty.websocket.cluster.offline.drain-lock-ms",
+      "type": "java.lang.Long",
+      "description": "Per-userId drain lock TTL (ms; SET NX PX). The lock makes drain EXCLUSIVE per userId so two concurrent multi-device reconnects do not double-deliver (the non-holder's drain returns empty). It auto-expires so a crashed drainer cannot wedge the user's queue.",
+      "defaultValue": 5000
     }
   ],
   "hints": [

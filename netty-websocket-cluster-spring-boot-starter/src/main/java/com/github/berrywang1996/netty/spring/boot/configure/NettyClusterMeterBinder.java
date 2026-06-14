@@ -114,6 +114,33 @@ public class NettyClusterMeterBinder implements MeterBinder {
                 .description("Total local room memberships on this node")
                 .register(registry);
 
+        // ---- Offline queue / user-addressed delivery (1.10.0-RC2) ----
+        counter(registry, "netty.cluster.offline.enqueued", stats,
+                ClusterRuntimeStats::getOfflineEnqueued, "Messages enqueued to a user's offline queue");
+        counter(registry, "netty.cluster.offline.drained", stats,
+                ClusterRuntimeStats::getOfflineDrained, "Offline messages drained + delivered on reconnect (backfill)");
+        counter(registry, "netty.cluster.offline.dropped_retention", stats,
+                ClusterRuntimeStats::getOfflineDroppedRetention,
+                "Offline entries dropped by retention (MAXLEN/TTL trim) — the bounded-gap honesty meter");
+        counter(registry, "netty.cluster.offline.send_to_user.realtime", stats,
+                ClusterRuntimeStats::getSendToUserRealtime, "sendToUser delivered in realtime (user online)");
+        counter(registry, "netty.cluster.offline.send_to_user.queued", stats,
+                ClusterRuntimeStats::getSendToUserQueued, "sendToUser that fell through to the offline queue");
+        counter(registry, "netty.cluster.offline.unicast_failures", stats,
+                ClusterRuntimeStats::getUnicastFailures,
+                "sendToUser send-time unicast failures (local MessageSessionClosedException on a bound session)");
+        counter(registry, "netty.cluster.offline.fallback_enqueue_failures", stats,
+                ClusterRuntimeStats::getFallbackEnqueueFailures,
+                "Fallback enqueue itself failed after all unicast paths (never a silent drop — logged ERROR)");
+        counter(registry, "netty.cluster.offline.resolved_identities", stats,
+                ClusterRuntimeStats::getResolvedIdentities, "Handshakes that resolved to a userId (identified)");
+        counter(registry, "netty.cluster.offline.unresolved_sessions", stats,
+                ClusterRuntimeStats::getUnresolvedSessions, "Handshakes that resolved to null (anonymous)");
+        Gauge.builder("netty.cluster.offline.users.online", stats,
+                        s -> (double) s.getUsersOnlineLocal())
+                .description("Local bound-user sessions on this node (identified live sessions; per-node, not distinct cluster-wide)")
+                .register(registry);
+
         FunctionCounter.builder("netty.cluster.auth.rejected", authenticator,
                         a -> (a instanceof HmacMessageAuthenticator)
                                 ? (double) ((HmacMessageAuthenticator) a).getRejectedCount() : 0.0)

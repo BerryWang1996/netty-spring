@@ -129,6 +129,18 @@ public class ClusterRuntimeStats {
     /** Handshakes that resolved to null (anonymous — no offline queue / presence). */
     final AtomicLong unresolvedSessions = new AtomicLong();
 
+    /** Local bound-user sessions on this node (the {@code users.online} gauge). Incremented on a resolved
+     *  bind, decremented on unbind. Floored at 0. A per-node count of identified live sessions — not a
+     *  distinct cluster-wide user count (that would need a registry scan). */
+    private final AtomicLong usersOnlineLocal = new AtomicLong();
+
+    /** Adjusts the local online-users gauge by {@code delta} (never below 0). */
+    public void addUsersOnlineLocal(long delta) {
+        usersOnlineLocal.updateAndGet(cur -> Math.max(0L, cur + delta));
+    }
+
+    public long getUsersOnlineLocal() { return usersOnlineLocal.get(); }
+
     public void incOfflineEnqueued() { offlineEnqueued.incrementAndGet(); }
     public void addOfflineDrained(long n) { offlineDrained.addAndGet(n); }
     public void addOfflineDroppedRetention(long n) { offlineDroppedRetention.addAndGet(n); }
