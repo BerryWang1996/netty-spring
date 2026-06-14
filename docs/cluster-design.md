@@ -458,6 +458,8 @@ netty-spring/
 
 **1.9.0 RC13 NATS JetStream 可靠投递的传输安全（已落地）**：`NatsJetStreamReliableBroker` 复用 RC9/RC10 的 `nettyClusterNatsKvConnection` 连接，TLS/凭证继承自 `warnIfInsecureNats` 既有路径；**无新增认证路径**。HMAC 在 broker **内部** wrap/unwrap（与 Redis Streams 实现一致），envelope 与 publish/fetch 之间。**威胁模型 PUBLISH-ACL 劫持**：能向 JetStream 流 `PUBLISH` 的主体可注入跨节点广播；**缓解措施**——将 NATS PUBLISH ACL 限制在权威应用节点（NATS account/permissions）；监控流 stats（异常 publish rate 反映非授权写入）。与 Redis Streams 同类威胁同形，详见 release-notes §⑱。
 
+**🔴 1.10.0 RC2 身份与离线队列安全（必读）**：离线队列、在线状态、按用户投递都以 `UserIdResolver` 返回的 `userId` 为键——**错误的身份 = 跨用户数据泄露**（读取他人排队消息、冒充其在线状态、劫持其投递）。这与上面"Redis 是受信任控制平面"的诚实一脉相承：**框架提供机制，运维必须保障身份**。`UserIdResolver` SPI 的 javadoc 携带**安全契约**：返回的 userId 必须派生自会话的**已认证**主体（验签 JWT `sub`、OAuth、SAML NameID），绝不能是客户端可控的原始值。默认实现 `HandshakeUserIdResolver` 逐字读取 `query:userId` / `header:X-User-Id`，**明确仅供便利/测试**（`?userId=bob` 即被当作 `bob`）——**生产 IM 必须提供自己的 `UserIdResolver` `@Bean`**（通常由 `WebSocketHandshakeInterceptor` 认证连接、解析器读取已验证主体）。自动装配仅在 `@ConditionalOnMissingBean` 下注册默认实现；`offline.enable=false`（默认）时解析器永不被调用——无任何身份面。
+
 ## 已知未覆盖项（明确推迟）
 
 - **Kubernetes Operator / Helm Chart**：运维侧专项，不在 `1.8.0` 范围。
@@ -502,6 +504,20 @@ netty-spring/
 - **Origin 自投递抑制**：消费侧比对 `originNodeId`，本节点发布的条目不重复 fan-out。
 - **保留窗口有界缺口**：节点离线时间超过 `stream-max-len` 条目对应的时间窗口，被 `MAXLEN ~` 裁剪的条目不可回放（bounded gap）。这是 at-least-once 在有界保留下的固有契约，不同于无限重放语义。
 - **默认关闭**（`reliable.enable=false`）：无额外连接/线程，`reliableBroadcast()` 抛 `IllegalStateException`。启用后仅影响 `reliableBroadcast()` 调用路径；现有 `topicMessage()`（Pub/Sub）完全不变。
+
+### 离线队列 + 按用户寻址投递设计注记（1.10.0 RC2）
+
+`sendToUser(userId, message)` 提供按稳定用户身份的投递：在线则实时单播，离线（集群范围内零会话）则存储并在重连时 FIFO 回填。与可靠*广播*（1.9.0 RC2，向短暂掉线的**节点**重放）正交——它面向离线**用户**。关键设计点：
+
+- **稳定身份来自握手**：`UserIdResolver` SPI 从握手提取 `userId`（默认 `HandshakeUserIdResolver` 读 `query`/`header`，**仅供测试**——生产须自备认证解析器，见 §安全模型身份注记）。`userId` 流入 register 元数据 + 新的 `UserRegistry`（`userId → sessions` 反向索引）。
+- **`UserRegistry` 是派生的路由/在线索引，不是 `SessionRegistry` 的耐久副本**：选独立 SPI 而非给 `SessionRegistry` 加方法，是为了让 1.9.0 的 `SessionRegistry` 签名及其 3 个实现不变（设计评审 Option B）。经 `removeAllForNode` 对账。RC3 多设备在线状态扩展同一 SPI。
+- **`sessionsForUser` 永不缓存**（离线检测正确性决策）：缓存在线状态会让刚断开的用户读到「在线」 → 对死会话发后即忘单播 → 无异常 → 无兜底 → **静默丢失**。反向查询每次命中 Redis（位于相对冷的 `sendToUser` 路径）。
+- **每用户离线流 + 每 userId drain 锁**：`netty:offline:{b64userId}` 是 HMAC 包裹信封的 Redis Stream（`MAXLEN ~ max-messages-per-user`，与可靠路径一致的写时包裹）。`drain()` 先 `SET netty:offline-lock:{b64userId} {node} NX PX drain-lock-ms`——未获锁（并发多设备重连）则返回空（持锁者投递），获锁则 `XRANGE - +` 读到流尾并 FIFO 返回（惰性丢弃超 TTL 条目）；`delete()` XDEL 已投递 id 再 DEL 锁。**该锁消除确定性多设备重复投递**（否则两设备都会在任一方删除前 `XRANGE` 整条流——必然重复），由 `MultiDeviceDrainLockTest` 回归门守护。
+- **连接时回填（bind→drain 窗口）**：钩子在 `bindUser` 完成**后**再 drain，使 bind→drain 窗口内入队的消息仍在 drain 读到流尾的范围内（被回填，不丢不重）；窗口后到达的消息直接实时投递到已在线会话。
+- **仅发送时边界（诚实）**：`broker.unicast()` 发后即忘，离线队列只兜底**发送时**失败（零可达会话或本地 `MessageSessionClosedException`）；远程会话在受理后、收帧前关闭不入队（指标 `offline.unicast_failures`），精确一次超出范围，处理器靠幂等对账。
+- **有界保留 + 至少一次**：`max-messages-per-user`（默认 1000）/`ttl-seconds`（默认 7 天）之外裁剪（有界缺口，指标 `dropped_retention`）。drain 投递后删除；删除失败下次重投——处理器须幂等（携带 `X-Offline-Message-Id` 便于去重）。
+- **离线 = 集群范围内零会话**：多设备用户有任一在线会话即「在线」，投递到在线设备；按设备离线回填是 RC3。
+- **默认关闭**（`offline.enable=false`）：无离线 Bean、不解析 userId、钩子向 register 传 `emptyMap()`，与 RC1 逐字节一致。仅 Redis（NATS-KV 离线存储是后续 RC）。
 
 ## 技术参考
 

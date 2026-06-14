@@ -749,6 +749,77 @@ local members), `members.local` (gauge).
 
 ---
 
+### 9.5 Offline Queue + User-Addressable Delivery (`sendToUser`) / 离线队列 + 按用户投递
+
+> **Since V1.10.0-RC2.** Opt-in (`cluster.offline.enable=true`, default `false`). When disabled there are no
+> offline beans, no userId resolution, and behavior is byte-identical to RC1 (the hook passes `emptyMap()` to
+> register exactly as before).
+
+`sendToUser(userId, msg)` delivers to a user by **stable identity**: realtime if the user has any live session
+anywhere in the cluster, otherwise the message is stored and **backfilled (FIFO) when they reconnect**. This is
+the "send to an offline user" IM primitive — distinct from `reliableBroadcast` (§9.1), which replays to
+briefly-disconnected **nodes**, not offline **users**.
+
+> ## 🔒 SECURITY — supply your own `UserIdResolver` in production
+>
+> The offline queue, presence, and `sendToUser` all key on the `userId` returned by `UserIdResolver`. **A wrong
+> identity is cross-user data exposure** (read another user's queued messages, impersonate presence, hijack
+> delivery). The default **`HandshakeUserIdResolver` reads `query:userId` / `header:X-User-Id` verbatim and is
+> convenience/TESTING ONLY** — a client connecting with `?userId=bob` would be treated as `bob`. **Production IM
+> MUST supply its own `UserIdResolver` `@Bean`** that derives the userId from the session's **authenticated**
+> principal (verified JWT `sub`, OAuth, SAML NameID) — typically a `WebSocketHandshakeInterceptor`
+> authenticates the connection and the resolver reads the already-verified principal. The auto-config registers
+> the default only under `@ConditionalOnMissingBean`, so your bean replaces it.
+
+```java
+// Production: replace the testing-only default resolver with one that validates identity.
+@Bean
+public UserIdResolver userIdResolver() {
+    return session -> {
+        // The handshake was already authenticated (e.g. by a WebSocketHandshakeInterceptor);
+        // read the VERIFIED principal — never a raw query param.
+        return verifiedJwt(session.getHeader("Authorization")).getSubject();
+    };
+}
+
+// sendToUser lives on the UserOperations sub-interface implemented by ClusterMessageSender.
+UserOperations users = (UserOperations) clusterMessageSender;
+users.sendToUser("user-42", new TextMessage("hi user"));   // realtime if online, else queued for backfill
+CompletionStage<Boolean> online = users.isUserOnline("user-42"); // fresh, uncached presence lookup
+```
+
+When `offline.enable=false`, `sendToUser`/`isUserOnline` throw `IllegalStateException` (explicit, not a silent
+drop). On connect, the cluster session hook resolves the userId, binds presence, and drains the offline queue;
+on disconnect it unbinds.
+
+**Semantics (honest):** at-least-once to offline users within the retention window (`max-messages-per-user`
+default 1000, `ttl-seconds` default 7 days); beyond it the oldest are trimmed (bounded gap, metered
+`offline.dropped_retention`). Per-user FIFO. **Not exactly-once** — drain delivers then deletes; a delete that
+fails after delivery redelivers on the next connect, so **handlers must be idempotent** (each backfilled
+message carries an `X-Offline-Message-Id` in MDC for dedup). **Send-time-only boundary:** `broker.unicast` is
+fire-and-forget, so the offline queue is a fallback for send-time failures only (zero reachable sessions, or a
+local close); a remote session that closes *after* the broker accepted the unicast is **not** recovered
+(metered `offline.unicast_failures`). **Offline = zero sessions cluster-wide:** a multi-device user with any
+online session is "online"; per-device offline backfill is RC3. **Identity required:** anonymous sessions
+(resolver → null) get no userId and no offline queue.
+
+**Config** (`server.netty.websocket.cluster.offline.*`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enable` | `false` | Master switch. `false` = no offline beans, RC1 `emptyMap` hook path (byte-identical). |
+| `user-id-source` | `query:userId` | Where the **testing-only** `HandshakeUserIdResolver` reads the userId (`query:<name>` / `header:<name>`). |
+| `max-messages-per-user` | `1000` | Per-user Redis Stream `MAXLEN ~` — the at-least-once retention bound. |
+| `ttl-seconds` | `604800` | Per-message age cap (7 days); lazily dropped on drain + bounded by stream trim. |
+| `drain-batch-size` | `100` | Max messages drained + delivered per connect. |
+| `drain-lock-ms` | `5000` | Per-userId drain lock TTL (`SET NX PX`); auto-expires so a crashed drainer can't wedge the queue. |
+
+**Metrics** (`netty.cluster.offline.*`): `enqueued` / `drained` / `dropped_retention`,
+`send_to_user.realtime` / `send_to_user.queued`, `unicast_failures`, `fallback_enqueue_failures`,
+`resolved_identities` / `unresolved_sessions` (counters), `users.online` (gauge).
+
+---
+
 ### Cluster-Wide Queries
 
 `ClusterMessageSender` adds async, network-backed queries (cast `MessageSender` to `ClusterMessageSender`, or inject it directly):
@@ -1005,6 +1076,12 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 | `cluster.auth.permissive` | `false` | *(since V1.9.0-RC3)* `true` = sign outbound + accept unsigned inbound (rolling upgrade); `false` = strict (reject invalid/missing tag). |
 | `cluster.room.enable` | `false` | *(since V1.10.0-RC1)* Enable room-scoped per-room node-targeted routing. `false` = no room beans, byte-identical to 1.9.0. See [§9.4 Room-Scoped Routing](#94-room-scoped-routing-per-room-node-targeted-delivery--房间维度路由). |
 | `cluster.room.node-set-cache-ttl-ms` | `5000` | *(since V1.10.0-RC1)* Local cache TTL for the `nodesForRoom` node-set on the room send hot path (mirrors `registry-read-cache-ttl-ms`; invalidated on `NODE_LEFT`). |
+| `cluster.offline.enable` | `false` | *(since V1.10.0-RC2)* Enable user-addressed delivery + per-user offline queue (`sendToUser`). `false` = no offline beans, byte-identical to RC1. See [§9.5 Offline Queue](#95-offline-queue--user-addressable-delivery-sendtouser--离线队列--按用户投递). |
+| `cluster.offline.user-id-source` | `query:userId` | *(since V1.10.0-RC2)* Where the **testing-only** `HandshakeUserIdResolver` reads the userId (`query:<name>` / `header:<name>`). **Production MUST supply its own authenticated `UserIdResolver` bean** — see §9.5 SECURITY. |
+| `cluster.offline.max-messages-per-user` | `1000` | *(since V1.10.0-RC2)* Per-user Redis Stream `MAXLEN ~` — the at-least-once retention bound. |
+| `cluster.offline.ttl-seconds` | `604800` | *(since V1.10.0-RC2)* Per-message age cap (7 days); lazily dropped on drain + bounded by stream trim. |
+| `cluster.offline.drain-batch-size` | `100` | *(since V1.10.0-RC2)* Max messages drained + delivered per connect. |
+| `cluster.offline.drain-lock-ms` | `5000` | *(since V1.10.0-RC2)* Per-userId drain lock TTL (`SET NX PX`); auto-expires so a crashed drainer can't wedge the queue (prevents multi-device double-delivery). |
 
 ---
 
