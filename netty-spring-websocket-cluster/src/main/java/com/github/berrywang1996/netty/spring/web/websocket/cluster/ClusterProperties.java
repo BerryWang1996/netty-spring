@@ -130,6 +130,9 @@ public class ClusterProperties {
     /** Opt-in W3C TraceContext (traceparent) cross-node propagation + MDC restore. Disabled by default. */
     private TracePropagation tracePropagation = new TracePropagation();
 
+    /** Opt-in room-scoped routing (per-room node-targeted delivery). Disabled by default. */
+    private Room room = new Room();
+
     // ---- Getters / Setters ----
 
     public boolean isEnable() { return enable; }
@@ -194,6 +197,9 @@ public class ClusterProperties {
 
     public TracePropagation getTracePropagation() { return tracePropagation; }
     public void setTracePropagation(TracePropagation v) { this.tracePropagation = v; }
+
+    public Room getRoom() { return room; }
+    public void setRoom(Room room) { this.room = room; }
 
     // ---- Nested classes ----
 
@@ -296,6 +302,25 @@ public class ClusterProperties {
 
         public boolean isEnable() { return enable; }
         public void setEnable(boolean enable) { this.enable = enable; }
+    }
+
+    /**
+     * Room-scoped routing (per-room node-targeted delivery). Off by default — when {@code enable=false}
+     * there are no room beans, no room subscriptions, and no ROOM_BROADCAST envelopes are produced
+     * (byte-identical behavior to 1.9.0). When enabled, a {@code ClusterRoomRegistry} bean is wired and
+     * {@code roomMessage(uri, room, msg)} targets only the nodes hosting members of the room.
+     */
+    public static class Room {
+        /** Master gate. Default false. */
+        private boolean enable = false;
+        /** Local cache TTL (ms) for the {@code nodesForRoom} node-set on the room send hot path (mirrors
+         *  {@link #registryReadCacheTtlMs}). A stale node-set self-heals within this window. Default 5000. */
+        private long nodeSetCacheTtlMs = 5000;
+
+        public boolean isEnable() { return enable; }
+        public void setEnable(boolean enable) { this.enable = enable; }
+        public long getNodeSetCacheTtlMs() { return nodeSetCacheTtlMs; }
+        public void setNodeSetCacheTtlMs(long nodeSetCacheTtlMs) { this.nodeSetCacheTtlMs = nodeSetCacheTtlMs; }
     }
 
     /**

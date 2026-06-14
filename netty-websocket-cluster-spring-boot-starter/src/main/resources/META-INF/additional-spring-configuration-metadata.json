@@ -175,6 +175,18 @@
       "type": "java.lang.Boolean",
       "description": "Opt-in W3C TraceContext propagation across cluster hops (since 1.9.0-RC6). Disabled by default — when false, behavior and wire bytes are identical to pre-RC6 (no MDC mutation, no envelope traceparent field). When true, the outbound publisher injects the current traceparent (from MDC / OpenTelemetry context) into the envelope, and inbound consumers extract it onto MDC for the duration of dispatch so logs and downstream spans correlate across nodes. Opt-in to keep zero-dep deployments byte-identical.",
       "defaultValue": false
+    },
+    {
+      "name": "server.netty.websocket.cluster.room.enable",
+      "type": "java.lang.Boolean",
+      "description": "Opt-in room-scoped routing with per-room node-targeted delivery (since 1.10.0-RC1). Disabled by default — when false there are no room beans, no room subscriptions, and no ROOM_BROADCAST envelopes are produced (behavior identical to 1.9.0). When true, a ClusterRoomRegistry bean is wired and roomMessage(uri, room, msg) reaches only the nodes hosting members of that room (fan-out N/k, k = nodes with members) by reusing the existing per-node unicast channel — a real reduction for bounded rooms in large clusters even under random load-balanced placement. A hot room whose members span every node sees no reduction (and costs k targeted sends vs 1 global publish); watch netty.cluster.room.fanout.target_nodes to see whether you are getting reduction.",
+      "defaultValue": false
+    },
+    {
+      "name": "server.netty.websocket.cluster.room.node-set-cache-ttl-ms",
+      "type": "java.lang.Long",
+      "description": "Local cache TTL (ms) for the per-room node-set on the room send hot path (nodesForRoom), mirroring registry-read-cache-ttl-ms. A stale node-set self-heals within this window (at worst targeting a node that no longer hosts the room, or briefly missing a node that just gained a member). The cache is invalidated wholesale on NODE_LEFT.",
+      "defaultValue": 5000
     }
   ],
   "hints": [

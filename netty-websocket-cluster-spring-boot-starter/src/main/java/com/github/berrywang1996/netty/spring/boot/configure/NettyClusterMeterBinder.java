@@ -95,6 +95,25 @@ public class NettyClusterMeterBinder implements MeterBinder {
         counter(registry, "netty.cluster.cache.misses", stats,
                 ClusterRuntimeStats::getCacheMisses, "Node lookup cache misses");
 
+        // ---- Room-scoped routing (1.10.0) ----
+        counter(registry, "netty.cluster.room.broadcast.published", stats,
+                ClusterRuntimeStats::getRoomBroadcastPublished, "Room broadcasts sent (per-room node-targeted)");
+        counter(registry, "netty.cluster.room.broadcast.received", stats,
+                ClusterRuntimeStats::getRoomBroadcastReceived, "Room broadcasts received and locally delivered");
+        counter(registry, "netty.cluster.room.fanout.stale_target", stats,
+                ClusterRuntimeStats::getRoomFanoutStaleTarget,
+                "Room broadcasts received with zero local members (membership churned in-flight = wasted delivery)");
+        // The reduction meter: average nodes targeted per room broadcast — compare to the cluster size to
+        // SEE the N/k reduction (1 = no reduction / hot room). Pass-through gauge (no hot-path cost).
+        Gauge.builder("netty.cluster.room.fanout.target_nodes", stats,
+                        ClusterRuntimeStats::getRoomFanoutTargetsAvg)
+                .description("Average number of nodes targeted per room broadcast (the fan-out reduction meter)")
+                .register(registry);
+        Gauge.builder("netty.cluster.room.members.local", stats,
+                        s -> (double) s.getRoomLocalMemberships())
+                .description("Total local room memberships on this node")
+                .register(registry);
+
         FunctionCounter.builder("netty.cluster.auth.rejected", authenticator,
                         a -> (a instanceof HmacMessageAuthenticator)
                                 ? (double) ((HmacMessageAuthenticator) a).getRejectedCount() : 0.0)

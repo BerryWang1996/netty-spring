@@ -103,6 +103,33 @@ class NettyClusterMeterBinderTest {
     }
 
     @Test
+    void bindsRoomMeters() {
+        ClusterRuntimeStats stats = mock(ClusterRuntimeStats.class);
+        when(stats.getRoomBroadcastPublished()).thenReturn(9L);
+        when(stats.getRoomBroadcastReceived()).thenReturn(8L);
+        when(stats.getRoomFanoutStaleTarget()).thenReturn(2L);
+        when(stats.getRoomFanoutTargetsAvg()).thenReturn(4.5);
+        when(stats.getRoomLocalMemberships()).thenReturn(11L);
+
+        ClusterMessageSender sender = mock(ClusterMessageSender.class);
+        when(sender.getClusterRuntimeStats()).thenReturn(stats);
+        ClusterNodeManager nodeManager = mock(ClusterNodeManager.class);
+        when(nodeManager.getState()).thenReturn(NodeState.ACTIVE);
+        ClusterBroker broker = mock(ClusterBroker.class);
+        when(broker.state()).thenReturn(BrokerState.ACTIVE);
+
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        new NettyClusterMeterBinder(sender, nodeManager, broker, new NoOpMessageAuthenticator())
+                .bindTo(registry);
+
+        assertEquals(9.0, registry.get("netty.cluster.room.broadcast.published").functionCounter().count());
+        assertEquals(8.0, registry.get("netty.cluster.room.broadcast.received").functionCounter().count());
+        assertEquals(2.0, registry.get("netty.cluster.room.fanout.stale_target").functionCounter().count());
+        assertEquals(4.5, registry.get("netty.cluster.room.fanout.target_nodes").gauge().value());
+        assertEquals(11.0, registry.get("netty.cluster.room.members.local").gauge().value());
+    }
+
+    @Test
     void noOpAuthenticatorReportsZeroRejections() {
         ClusterMessageSender sender = mock(ClusterMessageSender.class);
         when(sender.getClusterRuntimeStats()).thenReturn(mock(ClusterRuntimeStats.class));

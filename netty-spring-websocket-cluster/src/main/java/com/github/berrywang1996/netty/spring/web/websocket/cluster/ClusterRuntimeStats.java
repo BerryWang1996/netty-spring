@@ -91,6 +91,15 @@ public class ClusterRuntimeStats {
         roomFanoutTargetsLast.set(targetNodes);
     }
 
+    /** Total local room memberships on this node (gauge). Incremented on a local joinRoom, decremented on
+     *  leaveRoom / removeAllRoomsForSession. Floored at 0 (defensive against a double-leave). */
+    private final AtomicLong roomLocalMemberships = new AtomicLong();
+
+    /** Adjusts the local-room-membership gauge by {@code delta} (never below 0). */
+    public void addRoomLocalMemberships(long delta) {
+        roomLocalMemberships.updateAndGet(cur -> Math.max(0L, cur + delta));
+    }
+
     // ---- Public read API ----
 
     public long getBroadcastPublished() { return broadcastPublished.get(); }
@@ -123,6 +132,9 @@ public class ClusterRuntimeStats {
         long n = roomFanoutSampleCount.get();
         return n == 0 ? 0.0 : (double) roomFanoutTargetsTotal.get() / n;
     }
+
+    /** Total local room memberships on this node (the {@code members.local} gauge). */
+    public long getRoomLocalMemberships() { return roomLocalMemberships.get(); }
 
     /**
      * Cache hit ratio (0.0 – 1.0). Returns 0 if no lookups have been performed.

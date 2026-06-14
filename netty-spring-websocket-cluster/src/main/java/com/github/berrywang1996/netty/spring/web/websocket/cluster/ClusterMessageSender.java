@@ -613,12 +613,14 @@ public class ClusterMessageSender implements MessageSender, RoomOperations {
     public void joinRoom(String uri, String room, String sessionId) {
         ClusterRoomRegistry rr = requireRoomRegistry();
         rr.join(uri, room, sessionId, nodeManager.getNodeId());
+        clusterStats.addRoomLocalMemberships(1);
     }
 
     @Override
     public void leaveRoom(String uri, String room, String sessionId) {
         ClusterRoomRegistry rr = requireRoomRegistry();
         rr.leave(uri, room, sessionId, nodeManager.getNodeId());
+        clusterStats.addRoomLocalMemberships(-1);
     }
 
     /**
@@ -628,7 +630,13 @@ public class ClusterMessageSender implements MessageSender, RoomOperations {
     public void removeAllRoomsForSession(String uri, String sessionId) {
         ClusterRoomRegistry rr = this.roomRegistry;
         if (rr != null) {
+            // Count the session's rooms (local index, no I/O) BEFORE the removal so the gauge decrements
+            // by the right amount.
+            int wasIn = rr.roomsForSession(uri, sessionId).size();
             rr.removeAllForSession(uri, sessionId, nodeManager.getNodeId());
+            if (wasIn > 0) {
+                clusterStats.addRoomLocalMemberships(-wasIn);
+            }
         }
     }
 
