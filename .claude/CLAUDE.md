@@ -5,8 +5,8 @@
 - **Owner**: BerryWang1996 (wangbor@yeah.net), single maintainer
 - **License**: Apache 2.0
 - **Maven Central**: `io.github.berrywang1996:netty-*` (namespace verified at central.sonatype.com)
-- **Current version**: 1.9.0-RC5 (IN DEVELOPMENT — multi-RC cycle, tagged `v1.9.0-RC1`..`v1.9.0-RC5`, NOT pushed/deployed. RC1 reliability hardening (5 items); RC2 reliable broadcast (Redis Streams); RC3 HMAC envelope auth; RC4 full Micrometer cluster metrics; RC5 multi-node E2E + Testcontainers CI + a **cross-node unicast hook-wiring fix** — the E2E found that cluster-mode cross-node unicast/targeted-close were silently broken in 1.8.0~RC4 (ClusterSessionHook never wired onto resolvers due to eager-server-start vs `@AutoConfigureAfter` ordering); fixed via a `SmartInitializingSingleton` that wires the hook post-startup. Final 1.9.0 cut only when the user says the cycle is complete). Latest stable on Central: 1.8.0. Earlier published: 1.4.0, 1.6.2, 1.7.0, 1.7.1, 1.8.0
-- **Next (this 1.9.0 cycle)**: user picks one at a time, or cut final 1.9.0. Remaining roadmap: runnable multi-node Docker demo (Compose+LB+browser), W3C TraceContext propagation, NATS broker, multi/sharded pub/sub, Redis Cluster client → later 2.0.0 (Boot 3.x).
+- **Current version**: 1.10.0-RC2 (IN DEVELOPMENT — 1.10.0 "IM platform foundation" line on Boot 2.7, built on top of 1.9.0 GA. Tagged `v1.10.0-RC1`..`v1.10.0-RC2`, NOT pushed/deployed. **RC1** ClusterRoomRegistry — per-room node-targeted routing (pivoted from a consistent-hashing shard ring after design review proved shards collapse to global broadcast under random LB; reduction = N/k by targeting only member-hosting nodes, reusing the 1.9.0 per-node unicast channel; ceiling-break is RC4, not RC1). **RC2** offline queue + user-addressable delivery (`OfflineQueueStore`/`UserRegistry`/`UserIdResolver` SPIs; `sendToUser` = realtime-if-online-else-queue; per-user Redis Stream + per-userId drain lock; 3 design-review must-fixes [security auth-contract / multi-device drain lock / no-cache presence] + 7 impl-review hardening fixes [compare-and-DEL lock release, empty-drain release, bounded drain-batch, dropped_retention meter, reap TTL/poison, stream PEXPIRE, resolver transport-gate] folded in). Remaining: RC3 multi-device presence → RC4 node-to-node mesh → 1.10.0 GA → commercial promotion playbook. Final 1.10.0 cut only when the cycle completes.) **Latest stable on Central: 1.9.0 GA (released 2026-06-07, deployed).** Earlier published: 1.4.0, 1.6.2, 1.7.0, 1.7.1, 1.8.0
+- **Next (this 1.10.0 cycle)**: RC3 multi-device presence (`PresenceRegistry`, per-device online/away/offline — extends RC2's `UserRegistry`) → RC4 node-to-node mesh (gossip membership, Redis off the hot path — **the real node-ceiling break**) → 1.10.0 GA → commercial promotion playbook. Then later 2.0.0 (Boot 3.x; unlocks sharded pub/sub + Observation API). Drive the RC chain to GA (per-RC cadence: brainstorm→spec→adversarial design-review→plan→subagent impl→adversarial impl-review→cut RC, FF-merge+tag, STOP before push).
 - **Spring Boot**: 2.7.18 (Boot 3.x migration planned for 2.0.0)
 - **JDK**: 17 (GraalVM JDK 17.0.11)
 - **Build**: Maven 3.9.9, 11 modules (including 2 new cluster modules)
@@ -49,10 +49,10 @@ demo-netty-web-spring-boot-starter        — demo app (not published to Central
 - Commit style: `type: description` (fix/feat/docs/release), include `Co-Authored-By: Claude ...`
 - Pre-release: 4-way parallel code audit + adversarial verification model
 
-## 1.9.0 Status (IN DEVELOPMENT — RC1 tagged v1.9.0-RC1; NOT pushed/deployed; final 1.9.0 cut when the cycle completes, incl. reliable delivery)
-Cluster reliability hardening. 304 tests / 11 modules green. Single-node (cluster.enable=false) is
-production-grade and behaviorally identical to 1.7.x/1.8.0; cluster mode targets ≤~10 nodes + a dedicated,
-secured Redis.
+## 1.9.0 Status (✅ GA — released 2026-06-07, deployed to Maven Central. Feature set below. **Active line is now 1.10.0** — see `docs/development-plan.md` + `docs/release-notes-1.10.0.md` for RC1/RC2 and the RC3/RC4→GA roadmap.)
+Cluster reliability hardening. 444 tests / 11 modules green at GA (1.10.0 builds on this; current RC2 total is higher).
+Single-node (cluster.enable=false) is production-grade and behaviorally identical to 1.7.x/1.8.0; cluster mode
+targets ≤~10 nodes + a dedicated, secured Redis.
 
 **1.9.0 ships 5 reliability items deferred from 1.8.0:**
 1. Redis-loss grace period (`redis-loss-grace-period-ms`, default 5000 ms; `0` = instant/1.8.0 behavior). **Only intentional default-behavior change.**

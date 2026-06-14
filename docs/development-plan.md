@@ -133,9 +133,9 @@
 
 | RC | 功能 | 角色 | 状态 |
 |---|---|---|---|
-| RC1 | `ClusterRoomRegistry` —— **per-room 节点定向路由** | 房间原语 + locality-相关真实扣减 + affinity 基础 | 开发中（spec 已批准）|
-| RC2 | 消息历史 + 离线队列（`OfflineQueueStore` SPI）| IM 必需 + 闭环故事 | 规划 |
-| RC3 | 多设备 presence（`PresenceRegistry`，online/away/offline 逐设备）| IM 必需 | 规划 |
+| RC1 | `ClusterRoomRegistry` —— **per-room 节点定向路由** | 房间原语 + locality-相关真实扣减 + affinity 基础 | ✅ 已 cut `v1.10.0-RC1`（未 push/deploy）|
+| RC2 | 离线队列 + 按用户寻址投递（`OfflineQueueStore` + `UserRegistry` + `UserIdResolver` SPI）| IM 必需 + 闭环故事 | ✅ 已 cut `v1.10.0-RC2`（设计审查 3 项 must-fix + 实现审查 7 项硬化均已折叠；未 push/deploy）|
+| RC3 | 多设备 presence（`PresenceRegistry`，online/away/offline 逐设备，扩展 RC2 的 `UserRegistry`）| IM 必需 | 规划 |
 | RC4 | node-to-node mesh（gossip membership，把 Redis 移出热路径）| **真正的节点天花板突破** + 多月工程 | 规划 |
 
 ### ⚠️ RC1 设计修正（诚实记录 —— 这是项目"诚实工程"文化的实例）

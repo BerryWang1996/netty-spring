@@ -274,6 +274,40 @@ carrying the stream id). `UserRegistry` / `OfflineQueueStore` / `UserIdResolver`
 lives on the new `UserOperations` sub-interface, not on `MessageSender`. Redis-only RC2; Boot 2.7 + Lettuce 6.1.
 A user can be in rooms AND have an offline queue (orthogonal keys).
 
+### Tests + review
+
+**532 tests / 11 modules green** (1.9.0 GA's 444 + RC1's ~29 + RC2's ~59: offline SPIs + the testing-only
+`HandshakeUserIdResolver` + its security test, `RedisUserRegistry` / `RedisOfflineQueueStore` unit + real-Redis
+IT, `sendToUser` + fallback enqueue, the drain-on-connect hook, a two-node offline E2E (offline→backfill FIFO
+**and** the bind→drain-window enqueue→delivered-once case), the `MultiDeviceDrainLockTest` exactly-once
+regression gate, `SendToUserRaceTest`, the 3-path context test, plus the 7 hardening regression tests below).
+
+RC2 passed the same two adversarial gates as RC1. The **4-lens design review** returned `FIX_DESIGN_FIRST` and
+**3 must-fixes were folded in before implementation**: (1) the `UserIdResolver` SECURITY auth contract +
+testing-only default; (2) the per-userId drain lock for multi-device exactly-once; (3) `sessionsForUser` is
+never cached (no-silent-loss). The **4-lens implementation review** then returned `rc2ReadyToCut` — security
+lens clean, all 3 must-fixes verified intact, `offline.enable=false` confirmed byte-identical — and surfaced
+**7 real findings, all hardened before this cut** (honest engineering, same as RC1):
+
+1. **Drain-lock release is compare-and-DEL** (Lua `if GET==nodeId then DEL`) — a node never deletes another
+   device's lock that replaced its own after a `PX` auto-expiry (was an unconditional `DEL`).
+2. **Empty/all-skipped drain releases the lock** instead of leaking it until `PX` expiry (the common
+   empty-queue-connect path).
+3. **`drain-batch-size` is now applied** — `XRANGE` is bounded by `Limit.from(drainBatchSize)` (was inert; the
+   whole stream was read), so the rest drain on the next connect as documented.
+4. **`offline.dropped_retention` is now incremented** on the TTL-drop path (the "honesty meter" was pinned at 0);
+   docs clarified that the server-side `MAXLEN ~` trim is not separately metered.
+5. **TTL-expired / poison entries are reaped** (`XDEL`) in the same drain instead of being re-read forever.
+6. **The offline stream key carries a `PEXPIRE`** so a user who is enqueued-to but never reconnects can't leak
+   the key permanently.
+7. **The default `userIdResolver` bean is transport-gated** (`STANDALONE_REDIS_REGISTRY`) like its two
+   collaborators, so `offline.enable=true` on a non-standalone transport no longer leaves an orphan resolver.
+
+**Residual (honest):** the compare-and-DEL fixes lock *release*; full double-read fencing under a drain that
+exceeds `drain-lock-ms` (lock auto-expires mid-drain → a second node re-reads) is out of RC2 scope — handlers
+dedup via the `X-Offline-Message-Id` per the at-least-once contract. The impl review is archived at
+`docs/superpowers/notes/2026-06-14-rc2-impl-review.json`.
+
 ### Deferred to later RCs
 
 Per-device offline backfill (RC3 multi-device presence builds on `UserRegistry`), message history/scrollback
@@ -472,6 +506,35 @@ CompletionStage<Boolean> online = ((UserOperations) sender).isUserOnline("user-4
 无信封线格变化（离线复用现有 v2 信封；`StoredMessage` 是仅 Redis 的包装，携带 stream id）。`UserRegistry` /
 `OfflineQueueStore` / `UserIdResolver` 都是新增 SPI；`sendToUser` 位于新的 `UserOperations` 子接口，不在
 `MessageSender` 上。RC2 仅 Redis；Boot 2.7 + Lettuce 6.1。用户可同时在房间里并拥有离线队列（键正交）。
+
+### 测试 + 审查
+
+**532 个测试 / 11 个模块全绿**（1.9.0 GA 的 444 + RC1 的 ~29 + RC2 的 ~59：离线 SPI + 仅测试用的
+`HandshakeUserIdResolver` 及其安全测试、`RedisUserRegistry` / `RedisOfflineQueueStore` 单测 + 真实 Redis IT、
+`sendToUser` + 兜底入队、连接时 drain 钩子、双节点离线 E2E（离线→FIFO 回填**以及** bind→drain 窗口内入队→只投递一次）、
+`MultiDeviceDrainLockTest` 精确一次回归门、`SendToUserRaceTest`、三路径 context 测试，外加下方 7 项硬化回归测试）。
+
+RC2 经过与 RC1 相同的两道对抗式闸门。**4-lens 设计审查**返回 `FIX_DESIGN_FIRST`，**3 项 must-fix 在实现前已折叠**：
+(1) `UserIdResolver` 安全鉴权契约 + 仅测试用默认实现；(2) 按 userId 的 drain 锁以保证多设备精确一次；
+(3) `sessionsForUser` 绝不缓存（无静默丢失）。随后的**4-lens 实现审查**返回 `rc2ReadyToCut`——安全 lens 全清、
+3 项 must-fix 全部核实未回归、`offline.enable=false` 确认逐字节一致——并发现**7 项真实问题，均已在本次 cut 前硬化**
+（诚实工程，与 RC1 一致）：
+
+1. **drain 锁释放改为 compare-and-DEL**（Lua `if GET==nodeId then DEL`）——节点不会在自己的锁 `PX` 过期、被另一台
+   设备重新获取后误删对方的锁（原为无条件 `DEL`）。
+2. **空/全跳过的 drain 会释放锁**，而非泄漏到 `PX` 过期（最常见的空队列连接路径）。
+3. **`drain-batch-size` 现已生效**——`XRANGE` 由 `Limit.from(drainBatchSize)` 限界（原为无效，会读整条流），
+   其余在下次连接 drain，与文档一致。
+4. **`offline.dropped_retention` 现会自增**（TTL 丢弃路径；"诚实指标"原永远为 0）；文档澄清服务端 `MAXLEN ~`
+   裁剪不单独计量。
+5. **TTL 过期 / 损坏条目会在同一次 drain 被回收**（`XDEL`），不再每次 drain 反复读取。
+6. **离线流键带 `PEXPIRE`**，使被入队但从不重连的用户不会永久泄漏键。
+7. **默认 `userIdResolver` Bean 受传输门控**（`STANDALONE_REDIS_REGISTRY`），与其两个协作 Bean 一致，
+   `offline.enable=true` 在非单机传输上不再遗留孤儿 resolver。
+
+**残留（诚实）**：compare-and-DEL 修的是锁的*释放*；drain 超过 `drain-lock-ms` 时的完整双读栅栏（锁中途自动过期→
+第二个节点重读）不在 RC2 范围——处理器按至少一次契约用 `X-Offline-Message-Id` 去重。实现审查归档于
+`docs/superpowers/notes/2026-06-14-rc2-impl-review.json`。
 
 ### 推迟到后续 RC
 
