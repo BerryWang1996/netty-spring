@@ -21,6 +21,7 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterR
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterRoomRegistry;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.PresenceRegistry;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.SessionRegistry;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserRegistry;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
@@ -88,8 +89,19 @@ public class OnAnyRedisSpiRequired implements ConfigurationCondition {
         // need the Redis connection — so the client/connection beans must stay.
         boolean offlineEnabled = Boolean.parseBoolean(ctx.getEnvironment()
                 .getProperty("server.netty.websocket.cluster.offline.enable", "false"));
-        return offlineEnabled
-                && (!hasBean(bf, UserRegistry.class) || !hasBean(bf, OfflineQueueStore.class));
+        if (offlineEnabled
+                && (!hasBean(bf, UserRegistry.class) || !hasBean(bf, OfflineQueueStore.class))) {
+            return true;
+        }
+        // Multi-device presence (1.10.0-RC3, BLOCKER): when presence.enable=true and the user has NOT supplied
+        // their own PresenceRegistry, the default RedisPresenceRegistry will be created and needs the Redis
+        // connection. Presence ALSO activates the shared identity path (UserRegistry), so a presence-only +
+        // all-custom-core-SPI deployment still needs the Redis client for the default RedisUserRegistry +
+        // RedisPresenceRegistry — without this clause those default beans would have no nettyClusterRedisConnection.
+        boolean presenceEnabled = Boolean.parseBoolean(ctx.getEnvironment()
+                .getProperty("server.netty.websocket.cluster.presence.enable", "false"));
+        return presenceEnabled
+                && (!hasBean(bf, PresenceRegistry.class) || !hasBean(bf, UserRegistry.class));
     }
 
     private static boolean hasBean(ConfigurableListableBeanFactory bf, Class<?> type) {

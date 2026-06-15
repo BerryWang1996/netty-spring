@@ -589,6 +589,157 @@ class NettyWebSocketClusterConfigureTest {
         }
     }
 
+    // ---- Multi-device presence (1.10.0-RC3): gated beans + identity-gating + OnAnyRedisSpiRequired + reserved-URI ----
+
+    /** P1: presence.enable=true → RedisPresenceRegistry bean present + wired into the sender. */
+    @Test
+    void presenceEnabled_createsPresenceRegistryAndWiresSender() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-presence-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.presence.enable=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.PresenceRegistry.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisPresenceRegistry.class);
+                    assertThat(((ClusterMessageSender) context.getBean(MessageSender.class)).isPresenceEnabled())
+                            .as("presence registry must be wired into the cluster sender").isTrue();
+                });
+    }
+
+    /** P2: presence disabled by default → no PresenceRegistry bean, sender presence path off. */
+    @Test
+    void presenceDisabledByDefault_noPresenceBean() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-nopresence-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.PresenceRegistry.class);
+                    assertThat(((ClusterMessageSender) context.getBean(MessageSender.class)).isPresenceEnabled()).isFalse();
+                });
+    }
+
+    /** P3: presence.enable=true, offline.enable=false → identity beans (UserIdResolver + UserRegistry) EXIST
+     *  (identity-gating moved to offline||presence); OfflineQueueStore ABSENT. */
+    @Test
+    void presenceOnly_offlineOff_identityBeansPresent_offlineStoreAbsent() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-presence-identity-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.presence.enable=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    // identity beans present (shared identity activated by presence):
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.room.HandshakeUserIdResolver.class);
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserRegistry.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisUserRegistry.class);
+                    // but NO offline queue (offline is off → sendToUser to an offline user drops, not queues):
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore.class);
+                    assertThat(((ClusterMessageSender) context.getBean(MessageSender.class)).isOfflineEnabled()).isFalse();
+                    assertThat(((ClusterMessageSender) context.getBean(MessageSender.class)).isPresenceEnabled()).isTrue();
+                });
+    }
+
+    /** P4 (BLOCKER #3 regression): presence-only + all-4-custom-core-SPI → nettyClusterRedisConnection STILL created
+     *  (OnAnyRedisSpiRequired honors presence; the default RedisUserRegistry + RedisPresenceRegistry need it). */
+    @Test
+    void presenceOnly_allFourCustomCoreSpi_redisConnectionStillExists() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withUserConfiguration(AllFourSpiOverridesConfig.class)
+                .withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-presence-allspi-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.presence.enable=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    // The headline: presence needs the Redis connection even with all 4 core SPI custom.
+                    assertThat(context).hasBean("nettyClusterRedisConnection");
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.PresenceRegistry.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisPresenceRegistry.class);
+                    assertThat(((ClusterMessageSender) context.getBean(MessageSender.class)).isPresenceEnabled()).isTrue();
+                });
+    }
+
+    /** P5: presence.enable=true on the Redis-Cluster transport → no RedisPresenceRegistry (standalone-gated). */
+    @Test
+    void presenceEnabled_onClusterTransport_noPresenceBean() {
+        Assumptions.assumeTrue(ClusterTestRedisCluster.available(),
+                "no single-node Redis Cluster (no env cluster + no Docker)");
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.cluster-nodes=" + ClusterTestRedisCluster.nodes(),
+                        "server.netty.websocket.cluster.node-id=ctx-presence-cluster-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.presence.enable=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.PresenceRegistry.class);
+                    assertThat(((ClusterMessageSender) context.getBean(MessageSender.class)).isPresenceEnabled()).isFalse();
+                });
+    }
+
+    /** P6 (MAJOR fold): an app @MessageMapping URI equal to the reserved presence channel → context fails fast. */
+    @Test
+    void reservedPresenceUri_failsFast() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withUserConfiguration(ReservedUriServerConfig.class)
+                .withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-reserved-uri-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.presence.enable=true")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    Throwable root = context.getStartupFailure();
+                    while (root.getCause() != null) {
+                        root = root.getCause();
+                    }
+                    assertThat(root).isInstanceOf(IllegalStateException.class);
+                    assertThat(root).hasMessageContaining(ClusterMessageSender.PRESENCE_CHANNEL);
+                });
+    }
+
+    /** Helper @Configuration supplying a real NettyServerBootstrap whose resolver map (set via reflection — the
+     *  field has no setter) collides with the reserved presence channel name. Exercises the reserved-URI fail-fast
+     *  guard without a live Netty server. The map VALUE is null (the guard only inspects the URI keys). */
+    @Configuration
+    static class ReservedUriServerConfig {
+        @Bean
+        com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap nettyServerBootstrap() throws Exception {
+            com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap bootstrap =
+                    new com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap(null);
+            java.util.Map<String, com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver> map =
+                    new java.util.HashMap<>();
+            map.put(ClusterMessageSender.PRESENCE_CHANNEL, null);
+            java.lang.reflect.Field f = com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap.class
+                    .getDeclaredField("webSocketMappingResolverMap");
+            f.setAccessible(true);
+            f.set(bootstrap, map);
+            return bootstrap;
+        }
+    }
+
     // ---- L1 (RC16): OnAnyRedisSpiRequired gates Redis client/connection ----
     // The Condition matches when AT LEAST ONE of the 4 Redis-backed SPI beans
     // (SessionRegistry, ClusterBroker, ClusterNodeHeartbeat, ClusterReaper) is NOT

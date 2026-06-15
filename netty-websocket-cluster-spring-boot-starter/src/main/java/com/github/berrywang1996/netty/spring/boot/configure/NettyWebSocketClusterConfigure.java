@@ -124,6 +124,14 @@ public class NettyWebSocketClusterConfigure {
     static final String NOT_ALL_NATS = "!(" + NATS_TRANSPORT + " and " + NATS_REGISTRY + ")";
     /** Standalone Redis registry/infra: cluster-nodes empty AND not all-NATS. */
     static final String STANDALONE_REDIS_REGISTRY = STANDALONE_TRANSPORT + " and " + NOT_ALL_NATS;
+
+    /** SpEL: the shared identity path is required — offline.enable OR presence.enable (1.10.0-RC3). Both offline
+     *  (RC2) and presence (RC3) need the UserIdResolver + UserRegistry, so identity is gated on either. */
+    static final String IDENTITY_ENABLED =
+            "(${server.netty.websocket.cluster.offline.enable:false} "
+                    + "or ${server.netty.websocket.cluster.presence.enable:false})";
+    /** Standalone-Redis identity gate: identity required AND on the standalone Redis path. */
+    static final String STANDALONE_REDIS_IDENTITY = STANDALONE_REDIS_REGISTRY + " and " + IDENTITY_ENABLED;
     /** Cluster Redis registry/infra: cluster-nodes set AND not all-NATS. */
     static final String CLUSTER_REDIS_REGISTRY = CLUSTER_TRANSPORT + " and " + NOT_ALL_NATS;
 
@@ -529,8 +537,7 @@ public class NettyWebSocketClusterConfigure {
      * created (offline is Redis-standalone-only in RC2 — spec §9) and the testing-only warn never fires there.
      */
     @Bean
-    @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
-    @ConditionalOnProperty(prefix = "server.netty.websocket.cluster.offline", name = "enable", havingValue = "true")
+    @ConditionalOnExpression(STANDALONE_REDIS_IDENTITY)
     @ConditionalOnMissingBean(com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver.class)
     public com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver userIdResolver(
             ClusterProperties properties) {
@@ -538,15 +545,16 @@ public class NettyWebSocketClusterConfigure {
                 properties.getOffline().getUserIdSource());
     }
 
-    /** Gated user presence index (default RedisUserRegistry) on the standalone Redis path. */
+    /** Gated user presence index (default RedisUserRegistry) on the standalone Redis path. Shared by offline and
+     *  presence — identity-gating moved from offline.enable to (offline.enable OR presence.enable) in RC3, so a
+     *  presence-only config still binds users (and the dead-node reap can finally reap it — the RC2 leak fix). */
     @Bean(destroyMethod = "shutdown")
-    @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
-    @ConditionalOnProperty(prefix = "server.netty.websocket.cluster.offline", name = "enable", havingValue = "true")
+    @ConditionalOnExpression(STANDALONE_REDIS_IDENTITY)
     @ConditionalOnMissingBean(com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserRegistry.class)
     public com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserRegistry userRegistry(
             @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
             StatefulRedisConnection<String, String> connection) {
-        log.info("Offline/user-addressed delivery ENABLED (RedisUserRegistry — userId→sessions presence index)");
+        log.info("User-addressed identity ENABLED (RedisUserRegistry — userId→sessions presence index)");
         return new com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisUserRegistry(connection);
     }
 
@@ -565,6 +573,20 @@ public class NettyWebSocketClusterConfigure {
         return new com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisOfflineQueueStore(
                 connection, envelopeCodec, messageAuthenticator, properties.getNodeId(),
                 o.getMaxMessagesPerUser(), o.getTtlSeconds(), o.getDrainLockMs(), o.getDrainBatchSize());
+    }
+
+    /** Gated multi-device presence index (default RedisPresenceRegistry) on the standalone Redis path (1.10.0-RC3).
+     *  Active only when {@code presence.enable=true}; the standalone gate (mirroring the RC2 offline transport-gate)
+     *  keeps it off on Redis-Cluster / all-NATS. {@code @ConditionalOnMissingBean} lets an app supply its own. */
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnExpression(STANDALONE_REDIS_REGISTRY)
+    @ConditionalOnProperty(prefix = "server.netty.websocket.cluster.presence", name = "enable", havingValue = "true")
+    @ConditionalOnMissingBean(com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.PresenceRegistry.class)
+    public com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.PresenceRegistry presenceRegistry(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
+            StatefulRedisConnection<String, String> connection) {
+        log.info("Multi-device presence ENABLED (RedisPresenceRegistry — atomic aggregate presence + change events)");
+        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.room.RedisPresenceRegistry(connection);
     }
 
     @Bean
@@ -722,7 +744,13 @@ public class NettyWebSocketClusterConfigure {
             @org.springframework.beans.factory.annotation.Autowired(required = false)
             com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserRegistry userRegistry,
             @org.springframework.beans.factory.annotation.Autowired(required = false)
-            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore offlineQueueStore) {
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore offlineQueueStore,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.PresenceRegistry presenceRegistry,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver userIdResolver,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.PresenceChangeListener presenceChangeListener) {
         ClusterMessageSender sender = new ClusterMessageSender(
                 localSender, broker, sessionRegistry, nodeManager,
                 properties.getRegistryReadCacheTtlMs(), messagePayloadCodec);
@@ -744,9 +772,13 @@ public class NettyWebSocketClusterConfigure {
             sender.setRoomRegistry(roomRegistry);
             sender.setRoomNodeSetCacheTtlMs(properties.getRoom().getNodeSetCacheTtlMs());
         }
-        // Offline / user-addressed delivery (1.10.0-RC2): nullable — present only when offline.enable=true.
+        // Identity / user-addressed delivery (1.10.0-RC2/RC3): userRegistry is nullable — present when
+        // offline.enable OR presence.enable. Always wire the userRegistry dead-node REAPER on the leader path when
+        // a UserRegistry exists (RC3 — closes the latent RC2 leak where a crashed node's user bindings never got
+        // reaped: userRegistry.removeAllForNode was implemented but never called in prod).
         if (userRegistry != null) {
             sender.setUserRegistry(userRegistry);
+            nodeManager.setUserRegistryReaper(userRegistry::removeAllForNode);
         }
         if (offlineQueueStore != null) {
             sender.setOfflineQueueStore(offlineQueueStore);
@@ -758,10 +790,24 @@ public class NettyWebSocketClusterConfigure {
                         .setRuntimeStats(sender.getClusterRuntimeStats());
             }
         }
+        // Multi-device presence (1.10.0-RC3): nullable — present only when presence.enable=true. Wire the registry,
+        // the userId resolver (for the setPresence(session,...) API), the app presence-change listener (if any), the
+        // publish-changes flag, AND the leader-path presence REAPER (which reaps + publishes the crash OFFLINE events).
+        if (presenceRegistry != null) {
+            sender.setPresenceRegistry(presenceRegistry);
+            sender.setPresencePublishChanges(properties.getPresence().isPublishChanges());
+            if (userIdResolver != null) {
+                sender.setUserIdResolver(userIdResolver);
+            }
+            if (presenceChangeListener != null) {
+                sender.setPresenceChangeListener(presenceChangeListener);
+            }
+            nodeManager.setPresenceReaper(sender::reapPresenceForDeadNode);
+        }
         sender.start();
-        log.info("ClusterMessageSender started — cluster mode is ACTIVE (onRedisLoss={}, onPublishFailure={}, maxMsgBytes={}, reliable={}, rooms={}, offline={})",
+        log.info("ClusterMessageSender started — cluster mode is ACTIVE (onRedisLoss={}, onPublishFailure={}, maxMsgBytes={}, reliable={}, rooms={}, offline={}, presence={})",
                 properties.getOnRedisLoss(), properties.getOnPublishFailure(), properties.getMessageMaxSizeBytes(),
-                reliableBroker != null, roomRegistry != null, sender.isOfflineEnabled());
+                reliableBroker != null, roomRegistry != null, sender.isOfflineEnabled(), sender.isPresenceEnabled());
         return sender;
     }
 
@@ -786,14 +832,21 @@ public class NettyWebSocketClusterConfigure {
             @org.springframework.beans.factory.annotation.Autowired(required = false)
             com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserRegistry userRegistry,
             @org.springframework.beans.factory.annotation.Autowired(required = false)
-            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore offlineQueueStore) {
-        // Offline path active only when offline.enable=true AND all three collaborators are present. When
-        // off (default), the hook passes emptyMap to register exactly as RC1 (byte-identical) — see RC2 §9.
-        boolean offlineEnabled = properties.getOffline().isEnable()
-                && userIdResolver != null && userRegistry != null && offlineQueueStore != null;
-        log.info("Registering cluster session hook for distributed session lifecycle (offline={})", offlineEnabled);
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore offlineQueueStore,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.PresenceRegistry presenceRegistry) {
+        // RC3 flag-split: the hook derives identity/offline/presence from the wired collaborators.
+        //   identity = resolver + userRegistry (gated by offline.enable OR presence.enable) → binds the user;
+        //   offline  = identity + offlineStore (offline.enable) → drain-on-connect;
+        //   presence = identity + presenceRegistry (presence.enable) → setPresence(ONLINE)/clearPresence.
+        // When identity is off (the default) the hook passes emptyMap to register exactly as RC1/RC2 (byte-identical).
+        boolean identityEnabled = userIdResolver != null && userRegistry != null;
+        boolean offlineEnabled = identityEnabled && offlineQueueStore != null;
+        boolean presenceEnabled = identityEnabled && presenceRegistry != null;
+        log.info("Registering cluster session hook for distributed session lifecycle (identity={}, offline={}, presence={})",
+                identityEnabled, offlineEnabled, presenceEnabled);
         return new ClusterSessionHookImpl(clusterRegistryWriter, nodeManager, clusterSender,
-                offlineEnabled, userIdResolver, userRegistry, offlineQueueStore);
+                userIdResolver, userRegistry, offlineQueueStore, presenceRegistry);
     }
 
     /**
@@ -820,6 +873,16 @@ public class NettyWebSocketClusterConfigure {
             Map<String, ?> resolvers = nettyServer.getWebSocketMappingResolverMap();
             if (resolvers == null) {
                 return;
+            }
+            // Reserved-channel guard (RC3 MAJOR fold): presence-change events ride a dedicated control channel
+            // (ClusterMessageSender.PRESENCE_CHANNEL). If an app @MessageMapping URI collides with it, presence
+            // envelopes would mis-route / app traffic would be hijacked — fail fast at startup with a clear message
+            // rather than silently corrupting routing. The map key IS the registered @MessageMapping URI.
+            if (resolvers.containsKey(ClusterMessageSender.PRESENCE_CHANNEL)) {
+                throw new IllegalStateException(
+                        "A @MessageMapping URI collides with the reserved cluster presence channel '"
+                                + ClusterMessageSender.PRESENCE_CHANNEL + "'. This name is reserved for internal "
+                                + "presence-change events — rename your WebSocket mapping to a different URI.");
             }
             int wired = 0;
             for (Object resolver : resolvers.values()) {
