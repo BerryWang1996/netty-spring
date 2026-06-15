@@ -18,6 +18,8 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster;
 
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.PresenceRegistry;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.PresenceStatus;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.StoredMessage;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserRegistry;
@@ -37,12 +39,24 @@ import java.util.List;
  * {@link com.github.berrywang1996.netty.spring.web.websocket.bind.MessageMappingResolver}
  * via {@code setClusterSessionHook()}.
  *
- * <p><b>Offline queue + user-addressed delivery (1.10.0-RC2):</b> when
- * {@code server.netty.websocket.cluster.offline.enable=true}, the hook also resolves a stable {@code userId}
- * from the handshake (via {@link UserIdResolver}), carries it in the register metadata, binds the session in
- * the {@link UserRegistry} presence index, and drains+delivers any queued offline messages on connect
- * (backfill). When offline is disabled (the default), the hook behaves <b>byte-identically to RC1</b> — it
- * passes {@code Collections.emptyMap()} to register and never touches the resolver/registry/store.
+ * <p><b>Capability flag-split (1.10.0-RC3):</b> the hook now distinguishes three independent capabilities
+ * derived from which collaborators are wired:
+ * <ul>
+ *   <li><b>identity</b> ({@code userIdResolver != null && userRegistry != null}) — resolve a stable
+ *       {@code userId} from the handshake (via {@link UserIdResolver}), carry it in the register metadata, and
+ *       bind/unbind the session in the {@link UserRegistry} presence index. Required by both offline and presence.</li>
+ *   <li><b>offline</b> ({@code identity && offlineStore != null}) — drain+deliver any queued offline messages on
+ *       connect (backfill). 1.10.0-RC2.</li>
+ *   <li><b>presence</b> ({@code identity && presenceRegistry != null}) — set this connection {@code ONLINE} on
+ *       connect and clear it on disconnect via the {@link PresenceRegistry} (which fires aggregate transitions).
+ *       1.10.0-RC3.</li>
+ * </ul>
+ *
+ * <p>Pre-RC3 the hook collapsed identity+offline into a single {@code offlineEnabled} flag, so a presence-only
+ * config (offline off, presence on) took the else branch and <b>never bound the user</b> — presence could not
+ * function. The split fixes that: presence-only now binds. When <b>identity is off</b> (no resolver/registry,
+ * the default) the hook behaves <b>byte-identically to RC1/RC2</b> — it passes {@code Collections.emptyMap()} to
+ * register and never touches the resolver/registry/store/presence collaborators.
  *
  * @author berrywang1996
  * @since V1.8.0
@@ -54,22 +68,31 @@ public class ClusterSessionHookImpl implements ClusterSessionHook {
     private final ClusterNodeManager nodeManager;
     private final ClusterMessageSender clusterSender;
 
-    // ---- Offline / user-addressed path (1.10.0-RC2); all null when offline.enable=false ----
+    // ---- Identity / offline / presence capabilities (flags derived from wired collaborators, RC3 split) ----
+    /** identity = resolver + userRegistry present: gates resolve + register-with-userId + bind/unbind. */
+    private final boolean identityEnabled;
+    /** offline = identity + offlineStore present: gates drain-on-connect backfill (RC2). */
     private final boolean offlineEnabled;
+    /** presence = identity + presenceRegistry present: gates setPresence/clearPresence + publish-on-transition (RC3). */
+    private final boolean presenceEnabled;
     private final UserIdResolver userIdResolver;
     private final UserRegistry userRegistry;
     private final OfflineQueueStore offlineStore;
+    private final PresenceRegistry presenceRegistry;
 
-    /** RC1-compatible constructor — offline path disabled (byte-identical to RC1). */
+    /** RC1-compatible constructor — identity/offline/presence all disabled (byte-identical to RC1). */
     public ClusterSessionHookImpl(CoalescingRegistryWriter registryWriter,
                                   ClusterNodeManager nodeManager,
                                   ClusterMessageSender clusterSender) {
-        this(registryWriter, nodeManager, clusterSender, false, null, null, null);
+        this(registryWriter, nodeManager, clusterSender, null, null, null, null);
     }
 
     /**
-     * Full constructor. When {@code offlineEnabled} is true the resolver/registry/store MUST be non-null;
-     * when false the offline collaborators are ignored and the hook is RC1-identical.
+     * RC2-compatible constructor — offline path; no presence. The {@code offlineEnabled} flag is an explicit
+     * master kill-switch for the WHOLE identity+offline path (RC2 semantics): when {@code false}, ALL
+     * collaborators are ignored and the hook is byte-identical to RC1 (no resolver call, no bind). When
+     * {@code true}, identity+offline are derived from the (then-required) non-null resolver/registry/store.
+     * Delegates to the RC3 constructor with {@code presenceRegistry=null}.
      */
     public ClusterSessionHookImpl(CoalescingRegistryWriter registryWriter,
                                   ClusterNodeManager nodeManager,
@@ -78,13 +101,35 @@ public class ClusterSessionHookImpl implements ClusterSessionHook {
                                   UserIdResolver userIdResolver,
                                   UserRegistry userRegistry,
                                   OfflineQueueStore offlineStore) {
+        this(registryWriter, nodeManager, clusterSender,
+                offlineEnabled ? userIdResolver : null,
+                offlineEnabled ? userRegistry : null,
+                offlineEnabled ? offlineStore : null,
+                null);
+    }
+
+    /**
+     * Full RC3 constructor. The three capability flags are derived from which collaborators are wired:
+     * identity = resolver + userRegistry; offline = identity + offlineStore; presence = identity + presenceRegistry.
+     * Any collaborator may be null to disable its capability; all null = RC1-identical (emptyMap register).
+     */
+    public ClusterSessionHookImpl(CoalescingRegistryWriter registryWriter,
+                                  ClusterNodeManager nodeManager,
+                                  ClusterMessageSender clusterSender,
+                                  UserIdResolver userIdResolver,
+                                  UserRegistry userRegistry,
+                                  OfflineQueueStore offlineStore,
+                                  PresenceRegistry presenceRegistry) {
         this.registryWriter = registryWriter;
         this.nodeManager = nodeManager;
         this.clusterSender = clusterSender;
-        this.offlineEnabled = offlineEnabled && userIdResolver != null && userRegistry != null && offlineStore != null;
+        this.identityEnabled = userIdResolver != null && userRegistry != null;
+        this.offlineEnabled = identityEnabled && offlineStore != null;
+        this.presenceEnabled = identityEnabled && presenceRegistry != null;
         this.userIdResolver = userIdResolver;
         this.userRegistry = userRegistry;
         this.offlineStore = offlineStore;
+        this.presenceRegistry = presenceRegistry;
     }
 
     @Override
@@ -92,10 +137,11 @@ public class ClusterSessionHookImpl implements ClusterSessionHook {
         String nodeId = nodeManager.getNodeId();
         String sessionId = session.getSessionId();
 
-        // RC2: resolve the userId ONLY when the offline path is enabled — otherwise emptyMap, exactly as RC1
-        // (so offline.enable=false is byte-identical: no resolver call, no userId in metadata).
+        // RC3: resolve the userId ONLY when the identity path is enabled (resolver + userRegistry wired) —
+        // otherwise emptyMap, exactly as RC1 (no resolver call, no userId in metadata). Identity is shared by
+        // both offline and presence, so a presence-only config still binds (the RC3 flag-split fix).
         String userId = null;
-        if (offlineEnabled) {
+        if (identityEnabled) {
             try {
                 userId = userIdResolver.resolve(session);
             } catch (Exception e) {
@@ -109,21 +155,33 @@ public class ClusterSessionHookImpl implements ClusterSessionHook {
             // Register WITH userId metadata (was emptyMap in RC1).
             registryWriter.register(uri, sessionId, nodeId, Collections.singletonMap("userId", userId));
             final String resolvedUserId = userId;
-            // Bind presence, THEN drain the offline queue (backfill). Drain after bind completes so any
+            // Bind presence index, THEN run the per-capability follow-ups. Drain after bind completes so any
             // message enqueued in the bind→drain window — which drain reads up to the stream tail — is
             // delivered (and a message arriving after bind reaches the now-online session in realtime).
             userRegistry.bindUser(resolvedUserId, uri, sessionId, nodeId)
-                    .thenRun(() -> drainOnConnect(resolvedUserId, uri, sessionId))
+                    .thenRun(() -> {
+                        if (offlineEnabled) {
+                            drainOnConnect(resolvedUserId, uri, sessionId);
+                        }
+                        if (presenceEnabled) {
+                            // Mark this connection ONLINE; fires an aggregate transition (first device → OFFLINE→ONLINE).
+                            clusterSender.setPresenceFromHook(resolvedUserId, nodeId, sessionId, PresenceStatus.ONLINE)
+                                    .exceptionally(ex -> {
+                                        log.warn("setPresence(ONLINE) failed for user {} session {}", resolvedUserId, sessionId, ex);
+                                        return null;
+                                    });
+                        }
+                    })
                     .exceptionally(ex -> {
-                        log.warn("bindUser({}) failed for session {} — offline backfill skipped this connect",
+                        log.warn("bindUser({}) failed for session {} — backfill/presence skipped this connect",
                                 resolvedUserId, sessionId, ex);
                         return null;
                     });
         } else {
-            if (offlineEnabled) {
+            if (identityEnabled) {
                 clusterSender.getClusterRuntimeStats().incUnresolvedSessions();
             }
-            // Anonymous (or offline disabled) → emptyMap, exactly as RC1.
+            // Anonymous (or identity disabled) → emptyMap, exactly as RC1.
             registryWriter.register(uri, sessionId, nodeId, Collections.emptyMap());
         }
 
@@ -170,9 +228,9 @@ public class ClusterSessionHookImpl implements ClusterSessionHook {
     public void onSessionRemoved(MessageSession session, String uri) {
         String sessionId = session.getSessionId();
 
-        // RC2: unbind the user from the presence index (the handshake request is still readable here — see
-        // the ClusterSessionHook lifecycle guarantee). Resolve ONLY when offline is enabled (else RC1 path).
-        if (offlineEnabled) {
+        // RC3: clear presence + unbind the user from the index (the handshake request is still readable here —
+        // see the ClusterSessionHook lifecycle guarantee). Resolve ONLY when identity is enabled (else RC1 path).
+        if (identityEnabled) {
             String userId = null;
             try {
                 userId = userIdResolver.resolve(session);
@@ -182,6 +240,14 @@ public class ClusterSessionHookImpl implements ClusterSessionHook {
             if (userId != null) {
                 clusterSender.getClusterRuntimeStats().addUsersOnlineLocal(-1);
                 final String resolvedUserId = userId;
+                String nodeId = nodeManager.getNodeId();
+                // Presence: clear this connection (fires an aggregate transition — last device → ONLINE→OFFLINE).
+                if (presenceEnabled) {
+                    clusterSender.clearPresenceFromHook(resolvedUserId, nodeId, sessionId).exceptionally(ex -> {
+                        log.warn("clearPresence failed for user {} session {}", resolvedUserId, sessionId, ex);
+                        return null;
+                    });
+                }
                 userRegistry.unbindUser(resolvedUserId, uri, sessionId).exceptionally(ex -> {
                     log.warn("unbindUser({}) failed for session {}", resolvedUserId, sessionId, ex);
                     return null;
