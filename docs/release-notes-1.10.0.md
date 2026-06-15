@@ -316,6 +316,163 @@ Per-device offline backfill (RC3 multi-device presence builds on `UserRegistry`)
 
 ---
 
+## 1.10.0-RC3 — Multi-device presence (`PresenceRegistry`)
+
+**The third 1.10.0 feature.** Per-user **aggregate** presence — `ONLINE` / `AWAY` / `OFFLINE`, correctly derived
+across **all** of a user's live connections — plus **live presence-change events** so apps can build rosters ("a
+contact just came online"). Builds on RC2 identity (`UserIdResolver` / `UserRegistry`). Opt-in
+(`presence.enable=false` by default); combined with `offline.enable=false` it is **byte-identical to RC1/RC2**
+(identity off → `register(emptyMap())`, tripwire-tested).
+
+### Honest positioning (read this first)
+
+> RC3 ships **aggregate** presence (multi-device-*aware*) + events. It does **NOT** ship stable per-device
+> *addressing* ("sign out my laptop specifically", "read on device X"). That needs a stable device identity
+> (a `DeviceIdResolver` SPI parallel to `UserIdResolver`); the design review judged it a **one-way-door API
+> decision**, and the only identity RC3 could synthesize today (`nodeId|sessionId`) is ephemeral and
+> topology-leaking. So RC3 exposes **aggregate + per-status connection counts**, never a leaked device map, and
+> defers per-device addressing to a follow-on. The feature is still "multi-device presence" because the aggregate
+> is multi-device-aware; what is deferred is *addressing* individual devices. (Same kind of recorded scope
+> correction as RC1's shard-ring → node-set.)
+
+Two more honesty notes, stated/metered, not hidden:
+
+- **Broadcast ceiling.** Presence-change events are a **broadcast** — same ~10-node Redis Pub/Sub ceiling as
+  `topicMessage`. High-scale presence wants the RC4 mesh. Presence flap (mobile blips toggling online/away) fans
+  out per *aggregate* transition; the Lua suppresses no-op (same-status) re-sets, but debounce beyond that is the
+  **app's** job.
+- **Stale-ONLINE window / advisory read.** After a hard crash, a dead connection lingers `ONLINE` in the hash
+  until reconciliation reaps it — bounded by `heartbeatTimeoutMs (10s) + reconciliationIntervalMs (15s) +
+  leader-claim + SCAN` (~25s at defaults). **`getPresence` reflects last-known state, NOT a liveness probe** —
+  latency-sensitive consumers treat it as advisory and rely on `sendToUser`'s delivery-time fresh lookup +
+  offline-queue fallback for correctness. The reap-emitted `→OFFLINE` event (below) is the authoritative
+  self-heal correction.
+
+### 🐛 Also a correctness fix — the latent RC2 dead-node user-binding leak
+
+The design review surfaced a **latent RC2 bug**: `UserRegistry.removeAllForNode` was implemented but **never
+wired** into the dead-node fan-out, so a crashed node's `netty:user:*` bindings leaked forever (false-ONLINE →
+`sendToUser` fire-and-forget to a dead session → silent loss). RC3 touches the reconciliation path for presence
+reap and **closes this gap too**: the leader-elected primary path now reaps `sessionRegistry` **and**
+`userRegistry` **and** `presenceRegistry` on the same retried chain (failure re-queues the dead node for the next
+sweep — not the exception-swallowing best-effort callback). Regression-tested end-to-end on real Redis
+(`UserRegistryReapRegressionIT`). This only changes **crash-recovery** behavior (stale bindings now cleared); the
+happy path is unchanged.
+
+### The model
+
+- **Per-connection status ∈ {ONLINE, AWAY}** — app-reported. A connection is `ONLINE` on connect (hook default);
+  the app may mark it `AWAY` (idle). `OFFLINE` is **derived** (zero live connections), never stored as a status.
+- **User aggregate (computed, never stored as truth):** `ONLINE` if **any** connection is ONLINE; else `AWAY` if
+  ≥1 connection exists; else `OFFLINE` (zero connections).
+- Redis hash `netty:presence:{b64userId}` (hash-tagged, co-located with `netty:user:{b64userId}`); field =
+  `nodeId|sessionId` (nodeId leading so reap can prefix-match), value = the status. Every op
+  (`setPresence`/`setPresenceForUser`/`clearPresence`/`removeAllForNode`) is **one atomic `EVAL`**: read old
+  aggregate → mutate → recompute new aggregate → return `(old,new)`. Lua serializes concurrent multi-node ops on
+  the single slot, so two simultaneous first-connections yield **exactly one** `OFFLINE→ONLINE` transition.
+
+### Events — dedicated reserved channel + new `PRESENCE_CHANGE` kind
+
+- New `MessageKind.PRESENCE_CHANGE` (appended; **no envelope version bump** — `CURRENT_VERSION` stays 2). Payload
+  = `userId|oldAggregate|newAggregate`.
+- Presence rides a **dedicated reserved channel** (`ClusterMessageSender.PRESENCE_CHANNEL`), NOT the broadcast
+  topic path (which would mis-dispatch a presence envelope as an app message). A dedicated `onPresenceMessage`
+  listener is subscribed unconditionally at `start()` (a node with zero local sessions still receives events for
+  users it watches). **Origin self-suppression:** the transition fires the local listener directly and publishes
+  for OTHER nodes; the origin drops its own echo (fires exactly once locally + once per remote node).
+- **Reserved-name guard:** the context fails fast at startup if any `@MessageMapping` URI equals the reserved
+  presence channel name (real enforcement, not a javadoc note).
+- **Rolling-upgrade safe:** an RC2 (v2) node never subscribes to the presence channel, so it never decodes a
+  `PRESENCE_CHANGE` kind — topic isolation, no version bump, mixed RC2/RC3 cluster safe for all normal traffic.
+
+### Reconciliation reap is the dominant crash path (the BLOCKER fix)
+
+`clearPresence` runs only on a graceful `onSessionRemoved`. A hard crash (kill -9 / OOM / partition) never calls
+it. So the authoritative source of `→OFFLINE` on a crash is the dead-node reap:
+`presenceRegistry.removeAllForNode(dead)` (transition-aware Lua) returns one `PresenceTransition` per user whose
+aggregate changed, and the **leader-elected** reaping node publishes one `PRESENCE_CHANGE` per changed user.
+Proven by `PresenceCrashReapE2ETest` — two senders on one Redis, a user's only device on node-A, a simulated
+hard crash drives node-B's reap → node-B's listener receives `u: ONLINE→OFFLINE` and `getPresence(u) == OFFLINE`.
+
+### API — `PresenceOperations` (a sub-interface on `ClusterMessageSender`)
+
+```java
+PresenceOperations p = (PresenceOperations) sender;     // sender is @Primary
+p.setPresence(session, PresenceStatus.AWAY);            // set THIS connection's status
+p.setPresenceForUser("alice", PresenceStatus.AWAY);     // the "set me away" convenience (all of a user's conns)
+UserPresence up = p.getPresence("alice").toCompletableFuture().join(); // advisory aggregate + per-status counts
+
+// Roster hook (one app @Bean, optional):
+@Bean PresenceChangeListener rosterPush() {
+    return (userId, oldAgg, newAgg) -> { /* push to watchers via sender.sendToUser(...) */ };
+}
+```
+
+Throws `IllegalStateException` when `presence.enable=false` (explicit, not a silent drop) — mirrors
+`RoomOperations`/`UserOperations`. The base `MessageSender` is untouched.
+
+### Config
+
+| Key | Default | Meaning |
+|---|---|---|
+| `server.netty.websocket.cluster.presence.enable` | `false` | Master switch. Activates the shared identity path (`UserIdResolver` + `UserRegistry`) even if `offline.enable=false`, plus a `RedisPresenceRegistry`. Standalone-Redis only. |
+| `server.netty.websocket.cluster.presence.publish-changes` | `true` | Broadcast aggregate transitions as `PRESENCE_CHANGE` events. `false` = the local listener still fires but no cross-node event is published (query-only deployments). |
+
+> **Footgun, stated:** with `presence.enable=true` but `offline.enable=false`, `UserRegistry` exists so
+> `sendToUser` is available, but there is **no offline queue** → an offline user's message is **dropped, not
+> queued**. The "queued" path requires `offline.enable=true`.
+
+### Metrics (`netty.cluster.presence.*`, when Micrometer is present)
+
+| Meter | Meaning |
+|---|---|
+| `netty.cluster.presence.changes` | Aggregate transitions detected locally (old != new) — the only case that fires an event |
+| `netty.cluster.presence.events_published` | `PRESENCE_CHANGE` events published to the reserved channel |
+| `netty.cluster.presence.events_received` | events received from other nodes (after origin self-suppression) |
+| `netty.cluster.presence.self_delivery_dropped` | own-origin echoes dropped on receive (self-suppression) |
+| `netty.cluster.presence.set` | connection-level presence writes (`setPresence`) |
+| `netty.cluster.presence.reap_offline` | OFFLINE/AWAY transitions emitted by the dead-node reap — the crash-path correction meter |
+
+### Backward compatibility
+
+`presence.enable=false` AND `offline.enable=false` → identity off → `register(emptyMap())`, **byte-identical to
+RC1/RC2** (tripwire-tested). The **intentional behavior change** is the dead-node reap now also reaps
+`UserRegistry` (closing the RC2 leak) — crash-recovery only; the happy path is unchanged. New SPIs
+(`PresenceRegistry`/`PresenceStatus`/`UserPresence`/`PresenceChangeListener`/`PresenceTransition`/
+`PresenceOperations`) are additive; `PRESENCE_CHANGE` is a new kind on a dedicated channel with no envelope
+version bump (mixed RC2/RC3 safe). Redis-only RC3; Boot 2.7 + Lettuce 6.1.
+
+### Tests + review
+
+**<RC3 COUNT> tests / 11 modules green** (the RC2 total + RC3's presence additions: `PresenceRegistry` SPI +
+value types + `InMemoryPresenceRegistry`; `RedisPresenceRegistry` atomic-Lua unit + real-Redis IT;
+`PRESENCE_CHANGE` rolling-upgrade case; `PresenceOperations` + dedicated listener + publish; the
+identity/offline/presence hook flag-split; the leader-elected reap of userRegistry + presence; `presence.*` config
++ meters + metadata; auto-config gated beans + `OnAnyRedisSpiRequired` presence clause + reserved-URI guard; the
+crash→OFFLINE two-node E2E **and** the RC2 userRegistry-reap regression IT).
+
+RC3 passed the same two adversarial gates as RC1/RC2. The **design review** returned `fixDesignFirst=TRUE` with
+**3 BLOCKER + 3 MAJOR + 3 MINOR** findings, **all folded before implementation** (archived at
+`docs/superpowers/notes/2026-06-15-rc3-presence-design-review.json`):
+
+- **BLOCKER** crash-path OFFLINE event dropped → transition-aware reap + leader publish.
+- **BLOCKER** presence/userRegistry reap unwired (the latent RC2 leak) → leader-elected primary-path fan-out + RC2 fix.
+- **BLOCKER** `OnAnyRedisSpiRequired` omits presence → presence clause + the presence-only-all-custom-SPI context test.
+- **MAJOR** reserved topic mis-dispatch via `onBroadcastMessage` → dedicated `onPresenceMessage` + `PRESENCE_CHANGE`
+  kind + reserved-name guard.
+- **MAJOR** hook single-flag → identity/offline/presence split (presence-only now binds).
+- **MAJOR** `getPresence` device-key one-way-door → aggregate + counts, no leaked map; per-device addressing deferred.
+- **MINOR** stale-ONLINE window / advisory read; **MINOR** self-suppression + listener fire-site; **MINOR**
+  per-session ergonomics (`setPresenceForUser`).
+
+### Deferred to later RCs
+
+Stable per-device addressing (`DeviceIdResolver` SPI + per-device map), `invisible`/`dnd`/custom statuses,
+auto-away timeout, last-seen timestamps, a server-side watcher/roster graph, and `NatsKvPresenceRegistry`
+(all-NATS parity).
+
+---
+
 # 发布说明 — 1.10.0（中文）
 
 > **状态：开发中（RC 周期）。** 1.10.0 是构建在 1.9.0 GA 之上的 IM 平台线。各 RC 在特性分支上累积，直至最终
@@ -540,3 +697,120 @@ RC2 经过与 RC1 相同的两道对抗式闸门。**4-lens 设计审查**返回
 
 按设备的离线回填（RC3 多设备在线状态基于 `UserRegistry`）、消息历史/回滚（保留一切 + 拉取 API——不同量级）、
 房间/群组到离线、`NatsKvOfflineQueueStore`（全 NATS 对等）、以及精确一次。
+
+---
+
+## 1.10.0-RC3 — 多设备在线状态（`PresenceRegistry`）
+
+**1.10.0 的第三个特性。** 按用户的**聚合**在线状态——`ONLINE` / `AWAY` / `OFFLINE`，跨该用户**所有**活动连接
+正确推导——外加**实时在线状态变更事件**，让应用构建好友列表（"某联系人刚上线"）。基于 RC2 身份
+（`UserIdResolver` / `UserRegistry`）。可选开关（默认 `presence.enable=false`）；与 `offline.enable=false` 组合时
+与 RC1/RC2 **逐字节一致**（身份关闭 → `register(emptyMap())`，有 tripwire 测试）。
+
+### 诚实定位（务必先读）
+
+> RC3 交付**聚合**在线状态（多设备**感知**）+ 事件。它**不**交付稳定的按设备**寻址**（"只登出我的笔记本"、
+> "在设备 X 上已读"）。那需要一个稳定的设备身份（与 `UserIdResolver` 平行的 `DeviceIdResolver` SPI）；设计审查
+> 判定这是**单向门 API 决策**，而 RC3 今天唯一能合成的身份（`nodeId|sessionId`）是临时且泄漏拓扑的。因此 RC3
+> 暴露**聚合 + 按状态的连接计数**，绝不泄漏设备映射，并把按设备寻址推迟到后续。这仍是"多设备在线状态"，因为
+> 聚合是多设备感知的；被推迟的是对单个设备的*寻址*。（与 RC1 的分片环→节点集合一样，是被记录的范围修正。）
+
+另外两条诚实说明（已声明、已指标化，未被隐藏）：
+
+- **广播上限。** 在线状态变更事件是**广播**——与 `topicMessage` 相同的 ~10 节点 Redis Pub/Sub 上限。大规模在线
+  状态需要 RC4 mesh。在线状态抖动（移动网络闪断导致 online/away 翻转）按*聚合*转换扇出；Lua 抑制无操作（同状态）
+  重设，但超出此范围的去抖是**应用**的职责。
+- **陈旧 ONLINE 窗口 / 建议性读取。** 硬崩溃后，死连接在 hash 中保持 `ONLINE`，直到对账回收——上界为
+  `heartbeatTimeoutMs(10s) + reconciliationIntervalMs(15s) + leader 抢占 + SCAN`（默认约 25s）。**`getPresence`
+  反映最后已知状态，不是存活探针**——对延迟敏感的消费者将其视为建议性，并依赖 `sendToUser` 投递时的新鲜查找 +
+  离线队列兜底来保证正确性。回收发出的 `→OFFLINE` 事件（见下）是权威的自愈修正。
+
+### 🐛 同时是一个正确性修复——潜伏的 RC2 死节点用户绑定泄漏
+
+设计审查发现一个**潜伏的 RC2 缺陷**：`UserRegistry.removeAllForNode` 虽已实现但**从未接入**死节点清理扇出，
+所以崩溃节点的 `netty:user:*` 绑定永久泄漏（假 ONLINE → `sendToUser` 向死会话即发即忘 → 静默丢失）。RC3 触及
+对账路径做在线状态回收，**顺带闭合此缺口**：leader 选举的主路径现在在同一条带重试的链上回收 `sessionRegistry`
+**与** `userRegistry` **与** `presenceRegistry`（失败则把死节点重新排队到下次扫描——不是吞异常的尽力回调）。
+在真实 Redis 上端到端回归测试（`UserRegistryReapRegressionIT`）。这仅改变**崩溃恢复**行为（陈旧绑定现被清除）；
+正常路径不变。
+
+### 模型
+
+- **按连接状态 ∈ {ONLINE, AWAY}**——由应用上报。连接在连上时默认 `ONLINE`；应用可标记为 `AWAY`（空闲）。
+  `OFFLINE` 是**推导**出来的（零活动连接），从不作为状态存储。
+- **用户聚合（计算得出，从不作为真值存储）：** 任一连接 ONLINE 则 `ONLINE`；否则有 ≥1 连接则 `AWAY`；否则
+  `OFFLINE`（零连接）。
+- Redis hash `netty:presence:{b64userId}`（hash-tag，与 `netty:user:{b64userId}` 同槽）；字段 =
+  `nodeId|sessionId`（nodeId 在前以便回收前缀匹配），值 = 状态。每个操作
+  （`setPresence`/`setPresenceForUser`/`clearPresence`/`removeAllForNode`）都是**一次原子 `EVAL`**：读旧聚合 →
+  变更 → 重算新聚合 → 返回 `(old,new)`。Lua 在单槽上串行化跨节点并发操作，所以两个同时的首次连接只产生
+  **恰好一次** `OFFLINE→ONLINE` 转换。
+
+### 事件——专用保留通道 + 新 `PRESENCE_CHANGE` 类型
+
+- 新增 `MessageKind.PRESENCE_CHANGE`（追加；**不升信封版本**——`CURRENT_VERSION` 保持 2）。负载 =
+  `userId|oldAggregate|newAggregate`。
+- 在线状态走**专用保留通道**（`ClusterMessageSender.PRESENCE_CHANNEL`），不走广播 topic 路径（否则会把在线状态
+  信封误派为应用消息）。专用 `onPresenceMessage` 监听器在 `start()` 时无条件订阅（零本地会话的节点也能收到它
+  关注用户的事件）。**源自抑制：** 转换直接触发本地监听器并为其他节点发布；源节点丢弃自己的回声（本地恰好一次
+  + 每个远端节点一次）。
+- **保留名守卫：** 若任何 `@MessageMapping` URI 等于保留的在线状态通道名，上下文在启动时快速失败（真正强制，
+  不是 javadoc 注释）。
+- **滚动升级安全：** RC2（v2）节点从不订阅在线状态通道，所以从不解码 `PRESENCE_CHANGE` 类型——topic 隔离、
+  不升版本、混合 RC2/RC3 集群对所有常规流量安全。
+
+### 对账回收是主导崩溃路径（BLOCKER 修复）
+
+`clearPresence` 仅在优雅 `onSessionRemoved` 时运行。硬崩溃（kill -9 / OOM / 分区）从不调用它。所以崩溃时
+`→OFFLINE` 的权威来源是死节点回收：`presenceRegistry.removeAllForNode(dead)`（转换感知 Lua）为每个聚合变化的
+用户返回一个 `PresenceTransition`，**leader 选举**的回收节点为每个变化用户发布一个 `PRESENCE_CHANGE`。
+由 `PresenceCrashReapE2ETest` 证明——一个 Redis 上两个 sender，用户唯一设备在 node-A，模拟硬崩溃驱动 node-B
+回收 → node-B 监听器收到 `u: ONLINE→OFFLINE` 且 `getPresence(u) == OFFLINE`。
+
+### API——`PresenceOperations`（`ClusterMessageSender` 上的子接口）
+
+`presence.enable=false` 时抛 `IllegalStateException`（显式，不静默丢弃）——与 `RoomOperations`/`UserOperations`
+一致。基础 `MessageSender` 不变。`setPresence(session, status)` / `setPresenceForUser(userId, status)` /
+`getPresence(userId)`；可选 `PresenceChangeListener` 应用 `@Bean` 作为好友列表钩子。
+
+### 配置
+
+| 键 | 默认 | 含义 |
+|---|---|---|
+| `server.netty.websocket.cluster.presence.enable` | `false` | 总开关。即使 `offline.enable=false` 也激活共享身份路径（`UserIdResolver` + `UserRegistry`），外加 `RedisPresenceRegistry`。仅单机 Redis。 |
+| `server.netty.websocket.cluster.presence.publish-changes` | `true` | 是否把聚合转换作为 `PRESENCE_CHANGE` 广播。`false` = 本地监听器仍触发但不发布跨节点事件（仅查询部署）。 |
+
+> **已声明的坑：** `presence.enable=true` 但 `offline.enable=false` 时，`UserRegistry` 存在所以 `sendToUser`
+> 可用，但**没有离线队列** → 离线用户的消息被**丢弃，不入队**。"入队"路径需要 `offline.enable=true`。
+
+### 指标（`netty.cluster.presence.*`，存在 Micrometer 时）
+
+`changes`（本地检测到的聚合转换，唯一触发事件的情形）、`events_published`、`events_received`、
+`self_delivery_dropped`（源自回声抑制）、`set`（按连接写入）、`reap_offline`（死节点回收发出的 OFFLINE/AWAY
+转换——崩溃路径修正指标）。
+
+### 向后兼容
+
+`presence.enable=false` **且** `offline.enable=false` → 身份关闭 → `register(emptyMap())`，与 RC1/RC2
+**逐字节一致**（有 tripwire 测试）。**有意的行为变化**是死节点回收现在也回收 `UserRegistry`（闭合 RC2 泄漏）——
+仅崩溃恢复；正常路径不变。新增 SPI 均为加性；`PRESENCE_CHANGE` 是专用通道上的新类型，不升信封版本（混合
+RC2/RC3 安全）。RC3 仅 Redis；Boot 2.7 + Lettuce 6.1。
+
+### 测试 + 审查
+
+**<RC3 COUNT> 个测试 / 11 个模块全绿**（RC2 总数 + RC3 的在线状态新增：`PresenceRegistry` SPI + 值类型 +
+`InMemoryPresenceRegistry`；`RedisPresenceRegistry` 原子 Lua 单测 + 真实 Redis IT；`PRESENCE_CHANGE` 滚动升级
+用例；`PresenceOperations` + 专用监听器 + 发布；身份/离线/在线状态钩子分拆；leader 选举的 userRegistry + 在线
+状态回收；`presence.*` 配置 + 指标 + 元数据；自动装配 gated bean + `OnAnyRedisSpiRequired` 在线状态子句 +
+保留 URI 守卫；崩溃→OFFLINE 双节点 E2E **以及** RC2 userRegistry-reap 回归 IT）。
+
+RC3 经过与 RC1/RC2 相同的两道对抗式闸门。**设计审查**返回 `fixDesignFirst=TRUE`，**3 BLOCKER + 3 MAJOR +
+3 MINOR**，**全部在实现前折叠**（归档于 `docs/superpowers/notes/2026-06-15-rc3-presence-design-review.json`）：
+崩溃路径 OFFLINE 丢失、presence/userRegistry 回收未接入（潜伏 RC2 泄漏）、`OnAnyRedisSpiRequired` 漏在线状态
+（3 BLOCKER）；保留 topic 误派、钩子单标志、`getPresence` 设备键单向门（3 MAJOR）；陈旧 ONLINE 窗口、源自抑制
+触发点、按用户便利方法（3 MINOR）。
+
+### 推迟到后续 RC
+
+稳定的按设备寻址（`DeviceIdResolver` SPI + 按设备映射）、`invisible`/`dnd`/自定义状态、自动 away 超时、
+最后在线时间戳、服务端 watcher/roster 图、`NatsKvPresenceRegistry`（全 NATS 对等）。

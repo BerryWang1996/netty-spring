@@ -49,6 +49,8 @@
 | Testcontainers 端到端 CI + 进程内双节点 E2E（`ClusterMultiNodeE2ETest`） | ✅ 1.9.0 RC5 | 集群集成测试在 CI 真实运行（不再跳过）；E2E 证明跨节点广播/单播；锁定跨节点单播 hook-wiring 修复 |
 | 可运行的多节点 Docker 示例（Compose + 负载均衡 + 浏览器） | ⏳ 未来版本 | 面向人工演示；CI 验证已由上一行覆盖 |
 | **房间维度路由（`ClusterRoomRegistry`，按房间节点定向投递，opt-in）** | ✅ 1.10.0 RC1 | `roomMessage(uri, room, msg)` 只定向承载该房间成员的节点（复用 1.9.0 单播通道），扇出降到 **N/k**（k = 有成员的节点数）——**对有界房间是真实削减，即使随机落点**；**热房间（成员遍布所有节点）无削减**（且发布侧 k≈N 次定向发送 vs 1 次全局发布——此时改用 `topicMessage`）。原子 Lua（join/leave/removeAll）+ 本地索引 + hash-tag 单 slot；envelope v2（`room` 字段 + `ROOM_BROADCAST`，与 v1 滚动升级兼容）；`room.*` 2 个配置项 + `netty.cluster.room.*` 5 个指标（`fanout.target_nodes` 是削减观测点）；默认关闭、行为与 1.9.0 一致。**注意：这是"按房间局部性削减"，不是无条件的全局扇出削减——真正的集群级广播扇出削减仍需 RC4 mesh / 2.0.0 sharded pub/sub。** 设计修正（分片环 → 节点集合）归档于 `docs/superpowers/notes/2026-06-08-room-registry-design-review.json` |
+| **离线队列 + 按用户寻址投递（`UserRegistry`/`OfflineQueueStore`/`UserIdResolver`，opt-in）** | ✅ 1.10.0 RC2 | `sendToUser(userId, msg)`：在线实时单播，离线（集群范围内零会话）则按用户 Redis Stream 存储并在重连时 FIFO 回填；每 userId drain 锁保证多设备精确一次；`sessionsForUser` 永不缓存（杜绝假在线静默丢失）。`offline.*` 6 个配置项 + `netty.cluster.offline.*` 指标；默认关闭、行为与 RC1 逐字节一致。**安全：默认 `HandshakeUserIdResolver` 仅供测试——生产须自备认证解析器**（见 §安全模型）。详见下方设计注记 |
+| **多设备聚合在线状态（`PresenceRegistry`，aggregate ONLINE/AWAY/OFFLINE + 变更事件，opt-in）** | ✅ 1.10.0 RC3 | 按用户聚合在线状态（跨所有连接，原子 Lua 转换检测）+ 专用保留通道上的 `PRESENCE_CHANGE` 事件（不升信封版本）；死节点 leader 选举回收发出权威 `→OFFLINE`，**并顺带闭合潜伏的 RC2 死节点用户绑定泄漏**（`userRegistry.removeAllForNode` 此前从未接入对账，RC3 接到 leader 主路径）。`presence.*` 2 个配置项 + `netty.cluster.presence.*` 6 个指标；身份门控从 `offline.enable` 改为 `offline.enable OR presence.enable`；默认关闭、与 RC1/RC2 逐字节一致。**按设备*寻址*推迟**（需稳定 `DeviceIdResolver`）；事件是广播（~10 节点 Pub/Sub 上限）；`getPresence` 为建议性读取，非存活探针。设计修正（设备键单向门 → 聚合+计数）归档于 `docs/superpowers/notes/2026-06-15-rc3-presence-design-review.json` |
 
 ## 目标
 
@@ -516,8 +518,21 @@ netty-spring/
 - **连接时回填（bind→drain 窗口）**：钩子在 `bindUser` 完成**后**再 drain，使 bind→drain 窗口内入队的消息仍在 drain 读到流尾的范围内（被回填，不丢不重）；窗口后到达的消息直接实时投递到已在线会话。
 - **仅发送时边界（诚实）**：`broker.unicast()` 发后即忘，离线队列只兜底**发送时**失败（零可达会话或本地 `MessageSessionClosedException`）；远程会话在受理后、收帧前关闭不入队（指标 `offline.unicast_failures`），精确一次超出范围，处理器靠幂等对账。
 - **有界保留 + 至少一次**：`max-messages-per-user`（默认 1000）/`ttl-seconds`（默认 7 天）之外裁剪（有界缺口）。**TTL 丢弃路径**（超过 `ttl-seconds`、drain 时清理的条目）计入指标 `dropped_retention`；服务端 `MAXLEN ~` 裁剪由 Redis 在 `XADD` 时执行，不单独计量。drain 投递后删除；删除失败下次重投——处理器须幂等（携带 `X-Offline-Message-Id` 便于去重）。
-- **离线 = 集群范围内零会话**：多设备用户有任一在线会话即「在线」，投递到在线设备；按设备离线回填是 RC3。
+- **离线 = 集群范围内零会话**：多设备用户有任一在线会话即「在线」，投递到在线设备；按设备离线回填随按设备**寻址**一并推迟到后续 RC（RC3 多设备在线状态交付的是聚合，不含按设备寻址）。
 - **默认关闭**（`offline.enable=false`）：无离线 Bean、不解析 userId、钩子向 register 传 `emptyMap()`，与 RC1 逐字节一致。仅 Redis（NATS-KV 离线存储是后续 RC）。
+
+### 多设备在线状态设计注记（1.10.0 RC3）
+
+RC3 在 RC2 身份之上新增**按用户的聚合在线状态** + **实时变更事件**。交付的是*聚合*（多设备**感知**）；按设备**寻址**被记录推迟（需稳定 `DeviceIdResolver`，属单向门，今天唯一能合成的 `nodeId|sessionId` 是临时且泄漏拓扑的）——因此公开 API 暴露**聚合 + 按状态连接计数**，绝不泄漏设备映射。关键设计点：
+
+- **新 `PresenceRegistry` SPI（仅 Redis，与 RC2 `UserRegistry` 平行，而非挂在其上）**：Redis hash `netty:presence:{b64userId}`（hash-tag，与 `netty:user:{b64userId}` 同槽）；字段 `nodeId|sessionId`（nodeId 在前以便回收前缀匹配），值为 `ONLINE`/`AWAY`。`OFFLINE` 是推导的聚合（零连接），从不作为存储状态。
+- **原子 Lua 转换检测（正确性核心）**：`setPresence`/`setPresenceForUser`/`clearPresence`/`removeAllForNode` 各为**一次 `EVAL`**——读旧聚合（`HVALS`）→ 变更 → 重算新聚合 → 返回 `(old,new)`。Lua 在单槽上串行化跨节点并发，所以两个同时首连只产生**恰好一次** `OFFLINE→ONLINE`（第二个看到 `old==ONLINE`）。
+- **专用保留通道 + 新 `PRESENCE_CHANGE` 类型**：在线状态事件走专用通道（`ClusterMessageSender.PRESENCE_CHANNEL`），**不**走广播 topic 路径（否则 `onBroadcastMessage` 会把在线状态信封误派为应用消息）；专用 `onPresenceMessage` 监听器在 `start()` 无条件订阅（零本地会话节点也收）；源自抑制（本地直触发 + 为他节点发布，源丢自身回声）。新 `MessageKind.PRESENCE_CHANGE` 追加，**不升信封版本**（`CURRENT_VERSION` 保持 2），滚动升级安全。自动装配启动时对碰撞保留名的 `@MessageMapping` URI 快速失败。
+- **对账回收是主导崩溃路径（BLOCKER）**：硬崩溃从不调 `clearPresence`，所以 `→OFFLINE` 的权威来源是死节点回收。`presenceRegistry.removeAllForNode(dead)`（转换感知 Lua）为每个聚合变化用户返回一个 `PresenceTransition`，**leader 选举**的回收节点为每个变化用户发布一个 `PRESENCE_CHANGE`。
+- **🐛 同时闭合潜伏的 RC2 死节点用户绑定泄漏（对账缺口修复）**：RC2 的 `UserRegistry.removeAllForNode` 虽实现但**从未接入**死节点扇出——崩溃节点的 `netty:user:*` 绑定永久泄漏（假 ONLINE → `sendToUser` 即发即忘到死会话 → 静默丢失）。RC3 把 `userRegistry` + `presenceRegistry` 的回收接到 `ClusterNodeManager.doReconciliation` 的 **leader 选举主路径**上（与 `sessionRegistry.removeAllForNode` 同一条带 `.exceptionally` 重试的链，失败重新排队下次扫描——不是吞异常的尽力 `deadNodeCallback`）。`UserRegistry` 那句「经 removeAllForNode 对账」自此才真正成立，由 `UserRegistryReapRegressionIT` 端到端守护。
+- **建议性读取（陈旧 ONLINE 窗口）**：`getPresence` 不缓存，返回最后已知状态——**不是存活探针**。崩溃后死连接保持 ONLINE 直到对账回收（上界 `heartbeatTimeoutMs + reconciliationIntervalMs + leader 抢占 + SCAN`，默认约 25s）；延迟敏感者视其为建议性，正确性依赖 `sendToUser` 投递时的新鲜查找 + 离线兜底。回收发出的 `→OFFLINE` 是权威自愈修正。
+- **广播上限**：在线状态事件是广播——与 `topicMessage` 同的 ~10 节点 Pub/Sub 上限；大规模需 RC4 mesh。Lua 抑制同状态无操作重设，去抖超此为应用职责。
+- **默认关闭**（`presence.enable=false`）：与 `offline.enable=false` 组合 → 身份关闭 → `register(emptyMap())`，与 RC1/RC2 逐字节一致。仅 Redis（NATS-KV 在线状态是后续 RC）。
 
 ## 技术参考
 

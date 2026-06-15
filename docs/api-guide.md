@@ -802,8 +802,9 @@ message carries an `X-Offline-Message-Id` in MDC for dedup). **Send-time-only bo
 fire-and-forget, so the offline queue is a fallback for send-time failures only (zero reachable sessions, or a
 local close); a remote session that closes *after* the broker accepted the unicast is **not** recovered
 (metered `offline.unicast_failures`). **Offline = zero sessions cluster-wide:** a multi-device user with any
-online session is "online"; per-device offline backfill is RC3. **Identity required:** anonymous sessions
-(resolver → null) get no userId and no offline queue.
+online session is "online"; per-device offline backfill is deferred together with per-device addressing (RC3
+multi-device presence ships aggregate presence, not per-device addressing). **Identity required:** anonymous
+sessions (resolver → null) get no userId and no offline queue.
 
 **Config** (`server.netty.websocket.cluster.offline.*`):
 
@@ -819,6 +820,67 @@ online session is "online"; per-device offline backfill is RC3. **Identity requi
 **Metrics** (`netty.cluster.offline.*`): `enqueued` / `drained` / `dropped_retention`,
 `send_to_user.realtime` / `send_to_user.queued`, `unicast_failures`, `fallback_enqueue_failures`,
 `resolved_identities` / `unresolved_sessions` (counters), `users.online` (gauge).
+
+### 9.6 Multi-Device Presence (`PresenceOperations`) / 多设备在线状态
+
+> **Since V1.10.0-RC3.** Opt-in (`cluster.presence.enable=true`, default `false`). Combined with
+> `offline.enable=false` it is byte-identical to RC1/RC2. Standalone-Redis only.
+
+Per-user **aggregate** presence — `ONLINE` / `AWAY` / `OFFLINE`, correctly derived across **all** of a user's
+live connections — plus **live presence-change events** so you can build rosters. Enabling presence activates the
+shared identity path (`UserIdResolver` + `UserRegistry`) even when `offline.enable=false`, so a presence-only
+config still binds users. Presence rides RC2's `userId` identity (read the §9.5 SECURITY note — a wrong identity
+is cross-user data exposure).
+
+> **Honest scope:** RC3 ships *aggregate* presence (multi-device-*aware*) + events. It does **not** ship stable
+> per-device *addressing* ("sign out my laptop", "read on device X") — that needs a `DeviceIdResolver` and is
+> deferred. The read shape is the aggregate + per-status connection counts, never a leaked device map.
+
+```java
+// PresenceOperations lives on the sub-interface implemented by ClusterMessageSender.
+PresenceOperations presence = (PresenceOperations) clusterMessageSender;
+
+presence.setPresence(session, PresenceStatus.AWAY);            // set THIS connection's status (e.g. mark idle)
+presence.setPresenceForUser("user-42", PresenceStatus.AWAY);   // the "set me away" convenience (all conns)
+CompletionStage<UserPresence> up = presence.getPresence("user-42"); // advisory aggregate + per-status counts
+
+// Roster hook: one optional app @Bean, fired once per AGGREGATE transition (locally + on every other node).
+@Bean
+PresenceChangeListener rosterPush(/* your watcher graph + sender */) {
+    return (userId, oldAgg, newAgg) -> {
+        // e.g. push to this user's watchers: sender.sendToUser(watcher, presenceUpdate(userId, newAgg));
+    };
+}
+```
+
+When `presence.enable=false`, `setPresence`/`setPresenceForUser`/`getPresence` throw `IllegalStateException`
+(explicit, not a silent drop). On connect the hook sets the connection `ONLINE`; on disconnect it clears it.
+
+**Semantics (honest):**
+- **`getPresence` is ADVISORY — last-known state, NOT a liveness probe.** After a hard crash a dead connection
+  lingers `ONLINE` until reconciliation reaps it (bounded by `heartbeatTimeout + reconciliationInterval +
+  leader-claim + SCAN`, ~25 s at defaults). Latency-sensitive consumers treat it as advisory and rely on
+  `sendToUser`'s delivery-time fresh lookup + offline-queue fallback (§9.5) for correctness. The reap-emitted
+  `→OFFLINE` event is the authoritative self-heal correction.
+- **Events are a broadcast** on a reserved control channel — same **~10-node Pub/Sub ceiling** as `topicMessage`.
+  High-scale presence wants the RC4 mesh. The atomic Lua suppresses no-op (same-status) re-sets; debounce beyond
+  that (presence flap from mobile blips) is the **app's** job. Set `presence.publish-changes=false` for a
+  query-only deployment (the local listener still fires; no cross-node event is published).
+- **Footgun:** with `presence.enable=true` but `offline.enable=false`, `sendToUser` is available (UserRegistry
+  exists) but there is **no offline queue** → an offline user's message is **dropped, not queued**. The "queued"
+  path requires `offline.enable=true`.
+- **Crash-recovery fix:** RC3's dead-node reconciliation now also reaps `UserRegistry` (closing a latent RC2 leak
+  where a crashed node's user bindings lingered forever). Crash-recovery behavior only; the happy path is unchanged.
+
+**Config** (`server.netty.websocket.cluster.presence.*`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enable` | `false` | Master switch. Activates `UserIdResolver` + `UserRegistry` (shared identity) even if `offline.enable=false`, plus a `RedisPresenceRegistry`. Standalone-Redis only. |
+| `publish-changes` | `true` | Broadcast aggregate transitions as `PRESENCE_CHANGE` events. `false` = local listener fires but no cross-node event (query-only). |
+
+**Metrics** (`netty.cluster.presence.*`): `changes`, `events_published`, `events_received`,
+`self_delivery_dropped`, `set`, `reap_offline` (the last is the crash-path correction meter).
 
 ---
 
@@ -1084,6 +1146,8 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 | `cluster.offline.ttl-seconds` | `604800` | *(since V1.10.0-RC2)* Per-message age cap (7 days); lazily dropped on drain + bounded by stream trim. |
 | `cluster.offline.drain-batch-size` | `100` | *(since V1.10.0-RC2)* Max messages drained + delivered per connect. |
 | `cluster.offline.drain-lock-ms` | `5000` | *(since V1.10.0-RC2)* Per-userId drain lock TTL (`SET NX PX`); auto-expires so a crashed drainer can't wedge the queue (prevents multi-device double-delivery). |
+| `cluster.presence.enable` | `false` | *(since V1.10.0-RC3)* Enable multi-device aggregate presence + presence-change events. Activates the shared identity path (`UserIdResolver` + `UserRegistry`) even if `offline.enable=false`. `false` = no presence beans, byte-identical to RC1/RC2. Standalone-Redis only. See [§9.6 Multi-Device Presence](#96-multi-device-presence-presenceoperations--多设备在线状态). |
+| `cluster.presence.publish-changes` | `true` | *(since V1.10.0-RC3)* Broadcast aggregate transitions as `PRESENCE_CHANGE` events. `false` = the local `PresenceChangeListener` still fires but no cross-node event is published (query-only deployments). |
 
 ---
 
