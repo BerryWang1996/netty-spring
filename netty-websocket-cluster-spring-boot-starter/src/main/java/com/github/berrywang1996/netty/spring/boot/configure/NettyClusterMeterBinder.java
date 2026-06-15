@@ -142,6 +142,24 @@ public class NettyClusterMeterBinder implements MeterBinder {
                 .description("Local bound-user sessions on this node (identified live sessions; per-node, not distinct cluster-wide)")
                 .register(registry);
 
+        // ---- Multi-device presence (1.10.0-RC3) ----
+        counter(registry, "netty.cluster.presence.changes", stats,
+                ClusterRuntimeStats::getPresenceChanges,
+                "Aggregate presence transitions detected locally (old != new) — the only case that fires an event");
+        counter(registry, "netty.cluster.presence.events_published", stats,
+                ClusterRuntimeStats::getPresenceEventsPublished, "PRESENCE_CHANGE events published to the reserved channel");
+        counter(registry, "netty.cluster.presence.events_received", stats,
+                ClusterRuntimeStats::getPresenceEventsReceived,
+                "PRESENCE_CHANGE events received from other nodes (after origin self-suppression)");
+        counter(registry, "netty.cluster.presence.self_delivery_dropped", stats,
+                ClusterRuntimeStats::getPresenceSelfDeliveryDropped,
+                "Own-origin PRESENCE_CHANGE echoes dropped on receive (self-suppression)");
+        counter(registry, "netty.cluster.presence.set", stats,
+                ClusterRuntimeStats::getPresenceSet, "Connection-level presence writes (setPresence)");
+        counter(registry, "netty.cluster.presence.reap_offline", stats,
+                ClusterRuntimeStats::getPresenceReapOffline,
+                "OFFLINE/AWAY transitions emitted by the dead-node reap — the crash-path correction meter");
+
         FunctionCounter.builder("netty.cluster.auth.rejected", authenticator,
                         a -> (a instanceof HmacMessageAuthenticator)
                                 ? (double) ((HmacMessageAuthenticator) a).getRejectedCount() : 0.0)

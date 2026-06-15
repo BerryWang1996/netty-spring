@@ -136,6 +136,9 @@ public class ClusterProperties {
     /** Opt-in user-addressed delivery + per-user offline queue. Disabled by default. */
     private Offline offline = new Offline();
 
+    /** Opt-in multi-device aggregate presence + presence-change events (1.10.0-RC3). Disabled by default. */
+    private Presence presence = new Presence();
+
     // ---- Getters / Setters ----
 
     public boolean isEnable() { return enable; }
@@ -206,6 +209,9 @@ public class ClusterProperties {
 
     public Offline getOffline() { return offline; }
     public void setOffline(Offline offline) { this.offline = offline; }
+
+    public Presence getPresence() { return presence; }
+    public void setPresence(Presence presence) { this.presence = presence; }
 
     // ---- Nested classes ----
 
@@ -375,6 +381,28 @@ public class ClusterProperties {
         public void setDrainBatchSize(int drainBatchSize) { this.drainBatchSize = drainBatchSize; }
         public long getDrainLockMs() { return drainLockMs; }
         public void setDrainLockMs(long drainLockMs) { this.drainLockMs = drainLockMs; }
+    }
+
+    /**
+     * Multi-device aggregate presence settings (1.10.0-RC3). Requires the shared identity path
+     * ({@code UserIdResolver} + {@code UserRegistry}), so enabling presence activates those beans even when
+     * {@code offline.enable=false}. Standalone-Redis only (no Redis-Cluster client). Aggregate is multi-device
+     * aware (ONLINE/AWAY/OFFLINE across all of a user's connections); per-device <i>addressing</i> is deferred.
+     * Presence-change events are a <b>broadcast</b> on a reserved channel (same ~10-node Pub/Sub ceiling as
+     * {@code topicMessage}); {@code getPresence} is ADVISORY (last-known state, not a liveness probe).
+     */
+    public static class Presence {
+        /** Master gate. Default false. */
+        private boolean enable = false;
+        /** Whether aggregate transitions are broadcast cluster-wide as PRESENCE_CHANGE events. When false the
+         *  local {@code PresenceChangeListener} still fires but no cross-node event is published (query-only
+         *  deployments). Default true. */
+        private boolean publishChanges = true;
+
+        public boolean isEnable() { return enable; }
+        public void setEnable(boolean enable) { this.enable = enable; }
+        public boolean isPublishChanges() { return publishChanges; }
+        public void setPublishChanges(boolean publishChanges) { this.publishChanges = publishChanges; }
     }
 
     /**

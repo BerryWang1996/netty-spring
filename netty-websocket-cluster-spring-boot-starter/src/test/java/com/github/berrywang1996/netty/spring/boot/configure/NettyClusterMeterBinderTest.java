@@ -130,6 +130,35 @@ class NettyClusterMeterBinderTest {
     }
 
     @Test
+    void bindsPresenceMeters() {
+        ClusterRuntimeStats stats = mock(ClusterRuntimeStats.class);
+        when(stats.getPresenceChanges()).thenReturn(6L);
+        when(stats.getPresenceEventsPublished()).thenReturn(5L);
+        when(stats.getPresenceEventsReceived()).thenReturn(4L);
+        when(stats.getPresenceSelfDeliveryDropped()).thenReturn(3L);
+        when(stats.getPresenceSet()).thenReturn(7L);
+        when(stats.getPresenceReapOffline()).thenReturn(2L);
+
+        ClusterMessageSender sender = mock(ClusterMessageSender.class);
+        when(sender.getClusterRuntimeStats()).thenReturn(stats);
+        ClusterNodeManager nodeManager = mock(ClusterNodeManager.class);
+        when(nodeManager.getState()).thenReturn(NodeState.ACTIVE);
+        ClusterBroker broker = mock(ClusterBroker.class);
+        when(broker.state()).thenReturn(BrokerState.ACTIVE);
+
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        new NettyClusterMeterBinder(sender, nodeManager, broker, new NoOpMessageAuthenticator())
+                .bindTo(registry);
+
+        assertEquals(6.0, registry.get("netty.cluster.presence.changes").functionCounter().count());
+        assertEquals(5.0, registry.get("netty.cluster.presence.events_published").functionCounter().count());
+        assertEquals(4.0, registry.get("netty.cluster.presence.events_received").functionCounter().count());
+        assertEquals(3.0, registry.get("netty.cluster.presence.self_delivery_dropped").functionCounter().count());
+        assertEquals(7.0, registry.get("netty.cluster.presence.set").functionCounter().count());
+        assertEquals(2.0, registry.get("netty.cluster.presence.reap_offline").functionCounter().count());
+    }
+
+    @Test
     void noOpAuthenticatorReportsZeroRejections() {
         ClusterMessageSender sender = mock(ClusterMessageSender.class);
         when(sender.getClusterRuntimeStats()).thenReturn(mock(ClusterRuntimeStats.class));

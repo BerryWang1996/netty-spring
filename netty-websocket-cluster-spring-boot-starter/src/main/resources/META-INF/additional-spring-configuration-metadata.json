@@ -223,6 +223,18 @@
       "type": "java.lang.Long",
       "description": "Per-userId drain lock TTL (ms; SET NX PX). The lock makes drain EXCLUSIVE per userId so two concurrent multi-device reconnects do not double-deliver (the non-holder's drain returns empty). It auto-expires so a crashed drainer cannot wedge the user's queue.",
       "defaultValue": 5000
+    },
+    {
+      "name": "server.netty.websocket.cluster.presence.enable",
+      "type": "java.lang.Boolean",
+      "description": "Opt-in multi-device aggregate presence + presence-change events (since 1.10.0-RC3). Disabled by default. When true it activates the shared identity path (UserIdResolver + UserRegistry) even if offline.enable=false, plus a RedisPresenceRegistry: each connection is ONLINE on connect (the app may mark it AWAY), and the user AGGREGATE (ONLINE if any connection is ONLINE, else AWAY if any exists, else OFFLINE) is computed atomically across all of a user's connections. A PresenceChangeListener fires once per aggregate transition (local + on every other node), and a hard-crash dead-node reap emits the authoritative ->OFFLINE event. Standalone-Redis only (not the Redis-Cluster client). getPresence is ADVISORY (last-known state, NOT a liveness probe); events are a broadcast with the same ~10-node Pub/Sub ceiling as topicMessage. Per-device ADDRESSING is deferred. NOTE: presence.enable without offline.enable means sendToUser is available but an offline user's message is DROPPED, not queued (no offline queue).",
+      "defaultValue": false
+    },
+    {
+      "name": "server.netty.websocket.cluster.presence.publish-changes",
+      "type": "java.lang.Boolean",
+      "description": "Whether aggregate presence transitions are broadcast cluster-wide as PRESENCE_CHANGE events on the reserved channel. When false the local PresenceChangeListener still fires but no cross-node event is published (query-only deployments that only call getPresence). Default true.",
+      "defaultValue": true
     }
   ],
   "hints": [
