@@ -163,6 +163,35 @@ public class ClusterRuntimeStats {
     public long getResolvedIdentities() { return resolvedIdentities.get(); }
     public long getUnresolvedSessions() { return unresolvedSessions.get(); }
 
+    // ---- Multi-device presence (1.10.0-RC3) ----
+
+    /** Aggregate presence transitions detected locally (old != new), the only case that fires an event. */
+    final AtomicLong presenceChanges = new AtomicLong();
+    /** PRESENCE_CHANGE events published to the reserved channel. */
+    final AtomicLong presenceEventsPublished = new AtomicLong();
+    /** PRESENCE_CHANGE events received from other nodes (after origin self-suppression). */
+    final AtomicLong presenceEventsReceived = new AtomicLong();
+    /** Own-origin PRESENCE_CHANGE echoes dropped on receive (self-suppression). */
+    final AtomicLong presenceSelfDeliveryDropped = new AtomicLong();
+    /** Connection-level presence writes (setPresence). */
+    final AtomicLong presenceSet = new AtomicLong();
+    /** OFFLINE/AWAY transitions emitted by the dead-node reap — the crash-path correction meter. */
+    final AtomicLong presenceReapOffline = new AtomicLong();
+
+    public void incPresenceChanges() { presenceChanges.incrementAndGet(); }
+    public void incPresenceEventsPublished() { presenceEventsPublished.incrementAndGet(); }
+    public void incPresenceEventsReceived() { presenceEventsReceived.incrementAndGet(); }
+    public void incPresenceSelfDeliveryDropped() { presenceSelfDeliveryDropped.incrementAndGet(); }
+    public void incPresenceSet() { presenceSet.incrementAndGet(); }
+    public void incPresenceReapOffline() { presenceReapOffline.incrementAndGet(); }
+
+    public long getPresenceChanges() { return presenceChanges.get(); }
+    public long getPresenceEventsPublished() { return presenceEventsPublished.get(); }
+    public long getPresenceEventsReceived() { return presenceEventsReceived.get(); }
+    public long getPresenceSelfDeliveryDropped() { return presenceSelfDeliveryDropped.get(); }
+    public long getPresenceSet() { return presenceSet.get(); }
+    public long getPresenceReapOffline() { return presenceReapOffline.get(); }
+
     // ---- Public read API ----
 
     public long getBroadcastPublished() { return broadcastPublished.get(); }

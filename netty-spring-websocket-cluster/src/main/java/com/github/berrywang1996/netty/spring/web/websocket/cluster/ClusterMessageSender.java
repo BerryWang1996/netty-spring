@@ -62,7 +62,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * @see SessionRegistry
  */
 @Slf4j
-public class ClusterMessageSender implements MessageSender, RoomOperations, UserOperations {
+public class ClusterMessageSender implements MessageSender, RoomOperations, UserOperations, PresenceOperations {
 
     private final MessageSender localSender;
     private final ClusterBroker broker;
@@ -127,6 +127,20 @@ public class ClusterMessageSender implements MessageSender, RoomOperations, User
     private volatile UserRegistry userRegistry;
     /** Per-user durable offline queue; null when offline.enable=false. 1.10.0-RC2. */
     private volatile OfflineQueueStore offlineStore;
+
+    /** Reserved broker channel for presence-change events (1.10.0-RC3). Forbidden as an app {@code @MessageMapping}
+     *  URI (the auto-config fails fast if one collides). Only RC3 nodes subscribe to it, so an RC2 node never
+     *  decodes a {@code PRESENCE_CHANGE} kind — that is the rolling-upgrade safety, not a version bump. */
+    public static final String PRESENCE_CHANNEL = "__netty_cluster_presence__";
+
+    /** Per-device presence index; null when presence.enable=false. 1.10.0-RC3. */
+    private volatile PresenceRegistry presenceRegistry;
+    /** App callback on aggregate presence transitions; null = no app listener. 1.10.0-RC3. */
+    private volatile PresenceChangeListener presenceChangeListener;
+    /** Whether transitions are broadcast cluster-wide (presence.publish-changes). 1.10.0-RC3. */
+    private volatile boolean presencePublishChanges = true;
+    /** Resolves a session's userId for the {@code setPresence(session,...)} API; null when identity is off. RC3. */
+    private volatile UserIdResolver userIdResolver;
 
     public ClusterMessageSender(MessageSender localSender,
                                 ClusterBroker broker,
@@ -256,6 +270,31 @@ public class ClusterMessageSender implements MessageSender, RoomOperations, User
         return userRegistry != null && offlineStore != null;
     }
 
+    /** Injects the presence index (enables {@link PresenceOperations}). Null = presence disabled. 1.10.0-RC3. */
+    public void setPresenceRegistry(PresenceRegistry presenceRegistry) {
+        this.presenceRegistry = presenceRegistry;
+    }
+
+    /** Injects the app presence-change listener (null = no app listener). 1.10.0-RC3. */
+    public void setPresenceChangeListener(PresenceChangeListener presenceChangeListener) {
+        this.presenceChangeListener = presenceChangeListener;
+    }
+
+    /** Whether aggregate transitions are broadcast cluster-wide (presence.publish-changes). 1.10.0-RC3. */
+    public void setPresencePublishChanges(boolean presencePublishChanges) {
+        this.presencePublishChanges = presencePublishChanges;
+    }
+
+    /** Injects the userId resolver used by {@link #setPresence(MessageSession, PresenceStatus)}. 1.10.0-RC3. */
+    public void setUserIdResolver(UserIdResolver userIdResolver) {
+        this.userIdResolver = userIdResolver;
+    }
+
+    /** Whether presence is active (a {@link PresenceRegistry} is wired). */
+    public boolean isPresenceEnabled() {
+        return presenceRegistry != null;
+    }
+
     /** Current traceparent for an outgoing envelope, or null when propagation is off. */
     private String currentTraceparent() {
         ClusterTraceContext tc = this.traceContext;
@@ -315,6 +354,13 @@ public class ClusterMessageSender implements MessageSender, RoomOperations, User
             for (String uri : localSender.getRegisteredUri()) {
                 subscribeReliable(uri);
             }
+        }
+
+        // Presence: subscribe to the reserved presence channel UNCONDITIONALLY (not driven by getRegisteredUri) so a
+        // node with zero local sessions still receives presence events for users it watches (RC3). Dedicated
+        // listener — presence is NOT routed through onBroadcastMessage (which would mis-deliver it as an app message).
+        if (presenceRegistry != null) {
+            broker.subscribe(PRESENCE_CHANNEL, this::onPresenceMessage);
         }
 
         log.info("ClusterMessageSender started for node {} — {} URI broadcast subscriptions",
@@ -888,6 +934,145 @@ public class ClusterMessageSender implements MessageSender, RoomOperations, User
                     + "server.netty.websocket.cluster.offline.enable=true to use isUserOnline()");
         }
         return ur.isUserOnline(userId);
+    }
+
+    // ==================== PresenceOperations (1.10.0-RC3) ====================
+
+    @Override
+    public CompletionStage<Void> setPresence(MessageSession session, PresenceStatus status) {
+        requirePresence();
+        String userId = userIdResolver != null ? safeResolve(session) : null;
+        if (userId == null) {
+            // Anonymous (no resolver / unresolved): no presence identity — no-op (not an error).
+            return java.util.concurrent.CompletableFuture.completedFuture(null);
+        }
+        return setPresenceFromHook(userId, nodeManager.getNodeId(), session.getSessionId(), status);
+    }
+
+    @Override
+    public CompletionStage<Void> setPresenceForUser(String userId, PresenceStatus status) {
+        requirePresence();
+        return presenceRegistry.setPresenceForUser(userId, status)
+                .thenAccept(t -> firePresenceTransition(userId, t));
+    }
+
+    @Override
+    public CompletionStage<UserPresence> getPresence(String userId) {
+        requirePresence();
+        return presenceRegistry.getPresence(userId);
+    }
+
+    private void requirePresence() {
+        if (presenceRegistry == null) {
+            throw new IllegalStateException("Presence is disabled; set "
+                    + "server.netty.websocket.cluster.presence.enable=true to use PresenceOperations");
+        }
+    }
+
+    private String safeResolve(MessageSession session) {
+        try {
+            return userIdResolver.resolve(session);
+        } catch (Exception e) {
+            log.warn("UserIdResolver threw during setPresence for session {}", session.getSessionId(), e);
+            return null;
+        }
+    }
+
+    /** Internal: set a connection's status on connect or via the API; fires the transition. Called by the hook. */
+    public CompletionStage<Void> setPresenceFromHook(String userId, String nodeId, String sessionId, PresenceStatus status) {
+        if (presenceRegistry == null) {
+            return java.util.concurrent.CompletableFuture.completedFuture(null);
+        }
+        clusterStats.incPresenceSet();
+        return presenceRegistry.setPresence(userId, nodeId, sessionId, status)
+                .thenAccept(t -> firePresenceTransition(userId, t));
+    }
+
+    /** Internal: clear a connection on disconnect; fires the transition. Called by the hook. */
+    public CompletionStage<Void> clearPresenceFromHook(String userId, String nodeId, String sessionId) {
+        if (presenceRegistry == null) {
+            return java.util.concurrent.CompletableFuture.completedFuture(null);
+        }
+        return presenceRegistry.clearPresence(userId, nodeId, sessionId)
+                .thenAccept(t -> firePresenceTransition(userId, t));
+    }
+
+    /**
+     * Fires an aggregate presence transition (only when it actually changed): local-first the app listener, then
+     * publish to the reserved channel for OTHER nodes (the origin self-suppresses its own echo in
+     * {@link #onPresenceMessage}). This is the single fire-site, reused by the connect hook and the dead-node reap.
+     */
+    private void firePresenceTransition(String userId, PresenceTransition t) {
+        if (t == null || !t.changed()) {
+            return;
+        }
+        clusterStats.incPresenceChanges();
+        PresenceChangeListener l = this.presenceChangeListener;
+        if (l != null) {
+            try {
+                l.onPresenceChange(userId, t.getOldAggregate(), t.getNewAggregate());
+            } catch (Exception e) {
+                log.warn("PresenceChangeListener threw for user {} ({}->{})",
+                        userId, t.getOldAggregate(), t.getNewAggregate(), e);
+            }
+        }
+        if (presencePublishChanges) {
+            String payload = userId + "|" + t.getOldAggregate().name() + "|" + t.getNewAggregate().name();
+            ClusterEnvelope env = new ClusterEnvelope(nodeManager.getNodeId(), PRESENCE_CHANNEL,
+                    ClusterEnvelope.MessageKind.PRESENCE_CHANGE, payload.getBytes(StandardCharsets.UTF_8),
+                    null, currentTraceparent(), System.currentTimeMillis());
+            try {
+                broker.publish(PRESENCE_CHANNEL, env);
+                clusterStats.incPresenceEventsPublished();
+            } catch (Exception e) {
+                log.warn("Failed to publish presence change for user {}", userId, e);
+            }
+        }
+    }
+
+    /** Receives a PRESENCE_CHANGE from another node and fires the local app listener (origin self-suppressed). */
+    private void onPresenceMessage(ClusterEnvelope envelope) {
+        if (nodeManager.getNodeId().equals(envelope.getOriginNodeId())) {
+            clusterStats.incPresenceSelfDeliveryDropped();
+            return;
+        }
+        String payload = envelope.getPayload() == null ? "" : new String(envelope.getPayload(), StandardCharsets.UTF_8);
+        String[] parts = payload.split("\\|", 3);
+        if (parts.length != 3) {
+            log.warn("Malformed presence event payload: {}", payload);
+            return;
+        }
+        clusterStats.incPresenceEventsReceived();
+        PresenceChangeListener l = this.presenceChangeListener;
+        if (l != null) {
+            try {
+                l.onPresenceChange(parts[0], PresenceStatus.valueOf(parts[1]), PresenceStatus.valueOf(parts[2]));
+            } catch (Exception e) {
+                log.warn("PresenceChangeListener threw for received event {}", payload, e);
+            }
+        }
+    }
+
+    /**
+     * Leader-side dead-node presence reap (RC3 BLOCKER fix): removes a crashed node's connections from every user's
+     * presence and emits the resulting OFFLINE/AWAY transitions — the authoritative source of OFFLINE events on the
+     * dominant crash path (a hard crash never calls clearPresence). Called from the reconciliation reaper on the one
+     * leader-elected node, so each affected user emits exactly one transition.
+     */
+    public CompletionStage<Void> reapPresenceForDeadNode(String deadNodeId) {
+        PresenceRegistry pr = this.presenceRegistry;
+        if (pr == null) {
+            return java.util.concurrent.CompletableFuture.completedFuture(null);
+        }
+        return pr.removeAllForNode(deadNodeId).thenAccept(transitions -> {
+            if (transitions == null) {
+                return;
+            }
+            for (PresenceTransition t : transitions) {
+                clusterStats.incPresenceReapOffline();
+                firePresenceTransition(t.getUserId(), t); // local listener + publish to watcher nodes
+            }
+        }).toCompletableFuture();
     }
 
     /** MDC key carrying the offline message's store id during its delivery on reconnect, so handler logs
