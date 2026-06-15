@@ -21,12 +21,15 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 
 /**
  * Manages this node's lifecycle within the cluster: heartbeat, state transitions,
@@ -64,6 +67,21 @@ public class ClusterNodeManager {
 
     /** Callback invoked when a dead node is detected during reconciliation (for cache invalidation). */
     private volatile java.util.function.Consumer<String> deadNodeCallback;
+
+    /**
+     * Reaper for the {@code userRegistry} reverse-index on the leader-elected primary path (RC3 — closes the latent
+     * RC2 gap where a crashed node's {@code netty:user:*} bindings leaked forever). Null = not wired (no offline /
+     * presence identity). Chained AFTER {@code sessionRegistry.removeAllForNode} on the SAME retried path, so a
+     * failure re-queues the dead node for the next sweep (it is NOT the exception-swallowing deadNodeCallback).
+     */
+    private volatile Function<String, CompletionStage<Void>> userRegistryReaper;
+
+    /**
+     * Reaper for the presence index on the leader-elected primary path (RC3 BLOCKER fix). Removes a crashed node's
+     * connections from every user's presence AND publishes the resulting OFFLINE/AWAY transitions — the authoritative
+     * crash-path OFFLINE event. Null = presence disabled. Chained on the same retried path as the session reap.
+     */
+    private volatile Function<String, CompletionStage<Void>> presenceReaper;
 
     /** Reconciliation leader-election: only the claim winner cleans up a dead node. Default = always-reap. */
     private volatile ClusterReaper reaper = ClusterReaper.alwaysReap();
@@ -145,6 +163,24 @@ public class ClusterNodeManager {
      */
     public void setDeadNodeCallback(java.util.function.Consumer<String> callback) {
         this.deadNodeCallback = callback;
+    }
+
+    /**
+     * Sets the leader-path reaper for the {@code userRegistry} reverse-index (RC3 — closes the RC2 stale-binding
+     * leak). Wired by auto-config to {@code userRegistry::removeAllForNode} whenever a {@code UserRegistry} bean
+     * exists (independent of presence). Null = not wired.
+     */
+    public void setUserRegistryReaper(Function<String, CompletionStage<Void>> userRegistryReaper) {
+        this.userRegistryReaper = userRegistryReaper;
+    }
+
+    /**
+     * Sets the leader-path presence reaper (RC3 BLOCKER fix). Wired by auto-config to
+     * {@code sender::reapPresenceForDeadNode}, which removes the dead node's presence connections AND publishes the
+     * resulting OFFLINE/AWAY events. Null = presence disabled.
+     */
+    public void setPresenceReaper(Function<String, CompletionStage<Void>> presenceReaper) {
+        this.presenceReaper = presenceReaper;
     }
 
     /**
@@ -505,8 +541,14 @@ public class ClusterNodeManager {
                     // FIX L4: chain deregister + cache-callback AFTER session cleanup completes, on
                     // reconScheduler so shutdown's awaitTermination (FIX L7) covers the tail. The LEFT
                     // guard prevents a shutdown-race from poking the transport from a dead local node.
+                    // RC3: on the SAME leader-elected + retried path, also reap the userRegistry reverse-index
+                    // (closes the RC2 stale-binding leak) and the presence index (which publishes the crash-path
+                    // OFFLINE events). Both are chained BEFORE the deregister so a failure in either re-queues the
+                    // dead node via the shared .exceptionally — they are NOT on the exception-swallowing callback.
                     try {
                         sessionRegistry.removeAllForNode(dead)
+                                .thenComposeAsync(v -> reapUserRegistry(dead), reconScheduler)
+                                .thenComposeAsync(v -> reapPresence(dead), reconScheduler)
                                 .thenRunAsync(() -> {
                                     if (state.get() == NodeState.LEFT) {
                                         log.debug("Skipping deregister of dead node {} — local node LEFT", dead);
@@ -526,9 +568,10 @@ public class ClusterNodeManager {
                                     }
                                 }, reconScheduler)
                                 .exceptionally(ex -> {
-                                    // Cleanup failed → leave the dead node in the nodes set so the
-                                    // next sweep retries (and we don't deregister it prematurely).
-                                    log.warn("Failed to clean sessions for dead node {} — will retry on next sweep", dead, ex);
+                                    // Cleanup failed (session/user/presence reap or deregister) → leave the dead
+                                    // node in the nodes set so the next sweep retries it (we don't deregister it
+                                    // prematurely, and the stale bindings/presence get another reap attempt).
+                                    log.warn("Failed to clean up dead node {} — will retry on next sweep", dead, ex);
                                     return null;
                                 });
                     } catch (java.util.concurrent.RejectedExecutionException rex) {
@@ -540,6 +583,18 @@ public class ClusterNodeManager {
         } catch (Exception e) {
             log.warn("Reconciliation sweep failed for node {}", nodeId, e);
         }
+    }
+
+    /** Invokes the userRegistry reaper if wired (RC3); a completed stage when not (no-op, preserves the chain). */
+    private CompletionStage<Void> reapUserRegistry(String dead) {
+        Function<String, CompletionStage<Void>> r = this.userRegistryReaper;
+        return r != null ? r.apply(dead) : CompletableFuture.completedFuture(null);
+    }
+
+    /** Invokes the presence reaper if wired (RC3 — also publishes the crash-path OFFLINE events); else no-op. */
+    private CompletionStage<Void> reapPresence(String dead) {
+        Function<String, CompletionStage<Void>> r = this.presenceReaper;
+        return r != null ? r.apply(dead) : CompletableFuture.completedFuture(null);
     }
 
     /**
