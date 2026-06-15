@@ -169,6 +169,12 @@ public final class ClusterEnvelope {
         /** Room-scoped fan-out: delivered only to nodes hosting members of {@link #getRoom()} within
          *  {@link #getUri()}, via the per-node unicast channel; receivers fan out to their local room
          *  members. Carries a non-null {@code room}. At-most-once (Pub/Sub fire-and-forget). Since V1.10.0. */
-        ROOM_BROADCAST
+        ROOM_BROADCAST,
+        /** Presence-change event (1.10.0-RC3): a user's aggregate presence transitioned. Published on the
+         *  reserved presence channel only RC3+ nodes subscribe to (payload = "userId|oldAggregate|newAggregate").
+         *  Appended LAST so existing ordinals are unchanged; the codec serializes the kind by {@code name()}, and
+         *  an RC2 (v2) node never subscribes to the presence channel so it never decodes this kind — hence NO
+         *  envelope version bump (a bump would make RC2 nodes discard all RC3 traffic). Since V1.10.0. */
+        PRESENCE_CHANGE
     }
 }

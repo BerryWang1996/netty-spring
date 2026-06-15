@@ -86,6 +86,23 @@ class EnvelopeRollingUpgradeTest {
     }
 
     @Test
+    void presenceChange_roundTripsOnV2_noVersionBump() {
+        // RC3: the PRESENCE_CHANGE kind is appended to the enum and rides the reserved presence channel; it must
+        // round-trip on the SAME v2 wire (the codec serializes the kind by name) WITHOUT a version bump — a bump
+        // would make RC2 (v2) nodes discard all RC3 traffic. RC2 nodes never subscribe to the presence channel so
+        // they never decode this kind; topic isolation, not a version gate, provides the rolling-upgrade safety.
+        ClusterEnvelope env = new ClusterEnvelope(
+                "node-A", "__netty_cluster_presence__", ClusterEnvelope.MessageKind.PRESENCE_CHANGE,
+                "u|ONLINE|OFFLINE".getBytes(StandardCharsets.UTF_8), null, null, 123L);
+        ClusterEnvelope back = codec.decode(codec.encode(env));
+        assertNotNull(back);
+        assertEquals(ClusterEnvelope.MessageKind.PRESENCE_CHANGE, back.getKind());
+        assertEquals("u|ONLINE|OFFLINE", new String(back.getPayload(), StandardCharsets.UTF_8));
+        assertNull(back.getRoom(), "a presence event carries no room");
+        assertEquals(2, ClusterEnvelope.CURRENT_VERSION, "adding a kind must NOT bump the envelope version");
+    }
+
+    @Test
     void v2CodecDecodesV1Wire_roomNull() {
         // A hand-built v1 wire: 8 fields, version 1, NO room field (exactly what a 1.9.0 node emits).
         String b64payload = Base64.getEncoder().encodeToString("T:legacy".getBytes(StandardCharsets.UTF_8));
