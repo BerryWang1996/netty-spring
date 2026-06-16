@@ -101,7 +101,10 @@ class ReapPresenceTest {
         sender.reapPresenceForDeadNode("node-A").toCompletableFuture().join();
 
         assertEquals(1, presenceEvents(), "one OFFLINE event for the user whose last device was on the dead node");
-        assertEquals("u|ONLINE|OFFLINE", lastPresencePayload());
+        // the wire payload carries the base64url-encoded userId (delimiter-safe — see firePresenceTransition)
+        String b64u = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("u".getBytes(StandardCharsets.UTF_8));
+        assertEquals(b64u + "|ONLINE|OFFLINE", lastPresencePayload());
         assertEquals(1, sender.getClusterRuntimeStats().getPresenceReapOffline());
         assertEquals(PresenceStatus.OFFLINE,
                 presenceRegistry.getPresence("u").toCompletableFuture().join().getAggregate());
