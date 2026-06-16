@@ -148,8 +148,10 @@ which **swallows exceptions to `log.debug`**); **`userRegistry.removeAllForNode`
 ## 6. Events — dedicated channel + new MessageKind (MAJOR fix)
 
 - **New `MessageKind.PRESENCE_CHANGE`** (mirrors RC1 `ROOM_BROADCAST` — a new kind dispatched by kind, **no envelope
-  version bump**; `CURRENT_VERSION` stays 2). Payload = `userId|oldAggregate|newAggregate` (simple text, codec-encoded;
-  HMAC-wrapped consistent with the broker if auth is on).
+  version bump**; `CURRENT_VERSION` stays 2). Payload = `base64url(userId)|oldAggregate|newAggregate` — the userId is
+  base64url-encoded (the only field that can contain `|`) so a `|`-bearing userId can't corrupt the delimited body and
+  silently drop the event on remote nodes (mirrors the storage-side delimiter-safe encoding; impl-review fix). Simple
+  text, codec-encoded; HMAC-wrapped consistent with the broker if auth is on.
 - **Dedicated reserved channel** (a control name, e.g. constant `PRESENCE_CHANNEL`). Presence does **NOT** ride the
   broadcast-topic path: `onBroadcastMessage` is hard-wired to `deserializePayload` + `localSender.topicMessage(uri,…)`
   and would mis-dispatch a presence envelope as an app message. Instead:

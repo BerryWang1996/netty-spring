@@ -374,7 +374,8 @@ happy path is unchanged.
 ### Events — dedicated reserved channel + new `PRESENCE_CHANGE` kind
 
 - New `MessageKind.PRESENCE_CHANGE` (appended; **no envelope version bump** — `CURRENT_VERSION` stays 2). Payload
-  = `userId|oldAggregate|newAggregate`.
+  = `base64url(userId)|oldAggregate|newAggregate` — the userId is base64url-encoded so a `|`-bearing userId (e.g. a
+  multi-tenant principal `tenant|alice`) can't corrupt the delimited body and silently drop the event on remote nodes.
 - Presence rides a **dedicated reserved channel** (`ClusterMessageSender.PRESENCE_CHANNEL`), NOT the broadcast
   topic path (which would mis-dispatch a presence envelope as an app message). A dedicated `onPresenceMessage`
   listener is subscribed unconditionally at `start()` (a node with zero local sessions still receives events for
@@ -444,7 +445,7 @@ version bump (mixed RC2/RC3 safe). Redis-only RC3; Boot 2.7 + Lettuce 6.1.
 
 ### Tests + review
 
-**<RC3 COUNT> tests / 11 modules green** (the RC2 total + RC3's presence additions: `PresenceRegistry` SPI +
+**573 tests / 11 modules green** (RC2's 532 + RC3's ~41: `PresenceRegistry` SPI +
 value types + `InMemoryPresenceRegistry`; `RedisPresenceRegistry` atomic-Lua unit + real-Redis IT;
 `PRESENCE_CHANGE` rolling-upgrade case; `PresenceOperations` + dedicated listener + publish; the
 identity/offline/presence hook flag-split; the leader-elected reap of userRegistry + presence; `presence.*` config
@@ -464,6 +465,14 @@ RC3 passed the same two adversarial gates as RC1/RC2. The **design review** retu
 - **MAJOR** `getPresence` device-key one-way-door → aggregate + counts, no leaked map; per-device addressing deferred.
 - **MINOR** stale-ONLINE window / advisory read; **MINOR** self-suppression + listener fire-site; **MINOR**
   per-session ergonomics (`setPresenceForUser`).
+
+The **implementation review** (4 lenses, post-impl) returned `rc3ReadyToCut=true` with **1 confirmed MAJOR, fixed
+before this cut** (archived at `docs/superpowers/notes/2026-06-15-rc3-presence-impl-review.json`): the presence event
+wire body emitted a **raw userId** before the `|`-delimited fields, so a `|`-bearing userId (e.g. a multi-tenant
+principal `tenant|alice`) mis-parsed on remote nodes and **silently dropped** the cross-node `PRESENCE_CHANGE`
+(including the crash-path reap OFFLINE) on every watcher except the origin. Fixed by base64url-encoding the userId in
+the payload (mirroring the storage-side delimiter-safe encoding), with a `tenant|alice` cross-node round-trip
+regression test.
 
 ### Deferred to later RCs
 
@@ -749,7 +758,8 @@ RC2 经过与 RC1 相同的两道对抗式闸门。**4-lens 设计审查**返回
 ### 事件——专用保留通道 + 新 `PRESENCE_CHANGE` 类型
 
 - 新增 `MessageKind.PRESENCE_CHANGE`（追加；**不升信封版本**——`CURRENT_VERSION` 保持 2）。负载 =
-  `userId|oldAggregate|newAggregate`。
+  `base64url(userId)|oldAggregate|newAggregate`——userId 经 base64url 编码（唯一可能含 `|` 的字段），避免含 `|` 的
+  userId（如多租户主体 `tenant|alice`）破坏分隔体、在远端节点静默丢事件。
 - 在线状态走**专用保留通道**（`ClusterMessageSender.PRESENCE_CHANNEL`），不走广播 topic 路径（否则会把在线状态
   信封误派为应用消息）。专用 `onPresenceMessage` 监听器在 `start()` 时无条件订阅（零本地会话的节点也能收到它
   关注用户的事件）。**源自抑制：** 转换直接触发本地监听器并为其他节点发布；源节点丢弃自己的回声（本地恰好一次
@@ -798,7 +808,7 @@ RC2/RC3 安全）。RC3 仅 Redis；Boot 2.7 + Lettuce 6.1。
 
 ### 测试 + 审查
 
-**<RC3 COUNT> 个测试 / 11 个模块全绿**（RC2 总数 + RC3 的在线状态新增：`PresenceRegistry` SPI + 值类型 +
+**573 个测试 / 11 个模块全绿**（RC2 的 532 + RC3 的 ~41：`PresenceRegistry` SPI + 值类型 +
 `InMemoryPresenceRegistry`；`RedisPresenceRegistry` 原子 Lua 单测 + 真实 Redis IT；`PRESENCE_CHANGE` 滚动升级
 用例；`PresenceOperations` + 专用监听器 + 发布；身份/离线/在线状态钩子分拆；leader 选举的 userRegistry + 在线
 状态回收；`presence.*` 配置 + 指标 + 元数据；自动装配 gated bean + `OnAnyRedisSpiRequired` 在线状态子句 +
@@ -809,6 +819,12 @@ RC3 经过与 RC1/RC2 相同的两道对抗式闸门。**设计审查**返回 `f
 崩溃路径 OFFLINE 丢失、presence/userRegistry 回收未接入（潜伏 RC2 泄漏）、`OnAnyRedisSpiRequired` 漏在线状态
 （3 BLOCKER）；保留 topic 误派、钩子单标志、`getPresence` 设备键单向门（3 MAJOR）；陈旧 ONLINE 窗口、源自抑制
 触发点、按用户便利方法（3 MINOR）。
+
+**实现审查**（4 lens，实现后）返回 `rc3ReadyToCut=true`，并发现**1 个 MAJOR，已在本次 cut 前修复**（归档于
+`docs/superpowers/notes/2026-06-15-rc3-presence-impl-review.json`）：在线状态事件负载在 `|` 分隔字段前放了**未编码的
+userId**，含 `|` 的 userId（如多租户主体 `tenant|alice`）在远端节点解析错位 → 在除源节点外的每个 watcher 上**静默丢弃**
+跨节点 `PRESENCE_CHANGE`（含崩溃路径回收 OFFLINE）。已通过对负载中的 userId 做 base64url 编码修复（与存储侧的分隔安全
+编码一致），并补 `tenant|alice` 跨节点往返回归测试。
 
 ### 推迟到后续 RC
 
