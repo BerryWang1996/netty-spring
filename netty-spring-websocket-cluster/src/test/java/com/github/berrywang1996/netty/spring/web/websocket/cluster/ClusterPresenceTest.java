@@ -109,8 +109,10 @@ class ClusterPresenceTest {
 
     @Test
     void remoteEvent_firesListener() {
+        // The wire payload carries a base64url-encoded userId (delimiter-safe); the listener gets it decoded.
+        String b64v = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString("v".getBytes(StandardCharsets.UTF_8));
         ClusterEnvelope remote = new ClusterEnvelope("node-B", ClusterMessageSender.PRESENCE_CHANNEL,
-                ClusterEnvelope.MessageKind.PRESENCE_CHANGE, "v|OFFLINE|ONLINE".getBytes(StandardCharsets.UTF_8),
+                ClusterEnvelope.MessageKind.PRESENCE_CHANGE, (b64v + "|OFFLINE|ONLINE").getBytes(StandardCharsets.UTF_8),
                 null, null, 1L);
         broker.publish(ClusterMessageSender.PRESENCE_CHANNEL, remote);
 
@@ -149,6 +151,28 @@ class ClusterPresenceTest {
         sender.setPresenceForUser("u", PresenceStatus.AWAY).toCompletableFuture().join();
         assertTrue(listener.events.contains("u|ONLINE|AWAY"));
         assertEquals(PresenceStatus.AWAY, sender.getPresence("u").toCompletableFuture().join().getAggregate());
+    }
+
+    @Test
+    void pipeBearingUserId_survivesCrossNodeRoundTrip() {
+        // A userId containing '|' (e.g. a multi-tenant principal "tenant|alice", a SAML NameID) must NOT corrupt the
+        // pipe-delimited event body and silently drop the event on remote nodes (RC3 impl-review MAJOR).
+        sender.setPresenceFromHook("tenant|alice", "node-A", "s1", PresenceStatus.ONLINE).toCompletableFuture().join();
+        // origin local-first path passed the real userId through (no parsing)
+        assertTrue(listener.events.contains("tenant|alice|OFFLINE|ONLINE"));
+
+        // re-deliver the ACTUAL published envelope as if from a REMOTE node → onPresenceMessage must decode the
+        // base64url userId back to "tenant|alice" (not mis-split on the embedded '|').
+        ClusterEnvelope published = broker.getPublishedEnvelopes().stream()
+                .filter(e -> e.getKind() == ClusterEnvelope.MessageKind.PRESENCE_CHANGE).findFirst().orElseThrow();
+        listener.events.clear();
+        ClusterEnvelope remote = new ClusterEnvelope("node-B", ClusterMessageSender.PRESENCE_CHANNEL,
+                ClusterEnvelope.MessageKind.PRESENCE_CHANGE, published.getPayload(), null, null, 1L);
+        broker.publish(ClusterMessageSender.PRESENCE_CHANNEL, remote);
+
+        assertTrue(listener.events.contains("tenant|alice|OFFLINE|ONLINE"),
+                "remote node must decode the base64url userId back to 'tenant|alice'");
+        assertEquals(1, sender.getClusterRuntimeStats().getPresenceEventsReceived());
     }
 
     /** Records (userId|old|new) for each callback. */

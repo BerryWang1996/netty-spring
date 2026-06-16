@@ -1017,7 +1017,10 @@ public class ClusterMessageSender implements MessageSender, RoomOperations, User
             }
         }
         if (presencePublishChanges) {
-            String payload = userId + "|" + t.getOldAggregate().name() + "|" + t.getNewAggregate().name();
+            // base64url-encode the userId (the only field that can contain '|') so a userId like "tenant|alice"
+            // does not corrupt the pipe-delimited event body and silently drop the event on remote nodes — mirrors
+            // the storage-side delimiter-safe encoding (RedisPresenceRegistry/RedisUserRegistry). RC3 impl-review fix.
+            String payload = b64UserId(userId) + "|" + t.getOldAggregate().name() + "|" + t.getNewAggregate().name();
             ClusterEnvelope env = new ClusterEnvelope(nodeManager.getNodeId(), PRESENCE_CHANNEL,
                     ClusterEnvelope.MessageKind.PRESENCE_CHANGE, payload.getBytes(StandardCharsets.UTF_8),
                     null, currentTraceparent(), System.currentTimeMillis());
@@ -1046,11 +1049,22 @@ public class ClusterMessageSender implements MessageSender, RoomOperations, User
         PresenceChangeListener l = this.presenceChangeListener;
         if (l != null) {
             try {
-                l.onPresenceChange(parts[0], PresenceStatus.valueOf(parts[1]), PresenceStatus.valueOf(parts[2]));
+                // parts[0] is the base64url-encoded userId (see firePresenceTransition) — decode before delivering.
+                l.onPresenceChange(unb64UserId(parts[0]), PresenceStatus.valueOf(parts[1]), PresenceStatus.valueOf(parts[2]));
             } catch (Exception e) {
                 log.warn("PresenceChangeListener threw for received event {}", payload, e);
             }
         }
+    }
+
+    /** Base64url (no padding) encode — delimiter-safe so a '|'-bearing userId can't corrupt the presence event body. */
+    private static String b64UserId(String userId) {
+        return java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(userId.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String unb64UserId(String b64) {
+        return new String(java.util.Base64.getUrlDecoder().decode(b64), StandardCharsets.UTF_8);
     }
 
     /**
