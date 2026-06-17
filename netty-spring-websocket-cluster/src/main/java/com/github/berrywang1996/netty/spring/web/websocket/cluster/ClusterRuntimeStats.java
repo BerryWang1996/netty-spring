@@ -192,6 +192,23 @@ public class ClusterRuntimeStats {
     public long getPresenceSet() { return presenceSet.get(); }
     public long getPresenceReapOffline() { return presenceReapOffline.get(); }
 
+    // ---- Mesh transport (1.10.0-RC4a) ----
+
+    /** Frames received over the mesh TCP transport. */
+    final AtomicLong meshFramesReceived = new AtomicLong();
+    /** Sends that failed (no address / connect failure / async write failure). */
+    final AtomicLong meshSendFailures = new AtomicLong();
+    /** Frames dropped because the peer's outbound channel was not writable — the backpressure drop (RC4a M1). */
+    final AtomicLong meshSendDroppedBackpressure = new AtomicLong();
+
+    public void incMeshFramesReceived() { meshFramesReceived.incrementAndGet(); }
+    public void incMeshSendFailures() { meshSendFailures.incrementAndGet(); }
+    public void incMeshSendDroppedBackpressure() { meshSendDroppedBackpressure.incrementAndGet(); }
+
+    public long getMeshFramesReceived() { return meshFramesReceived.get(); }
+    public long getMeshSendFailures() { return meshSendFailures.get(); }
+    public long getMeshSendDroppedBackpressure() { return meshSendDroppedBackpressure.get(); }
+
     // ---- Public read API ----
 
     public long getBroadcastPublished() { return broadcastPublished.get(); }
