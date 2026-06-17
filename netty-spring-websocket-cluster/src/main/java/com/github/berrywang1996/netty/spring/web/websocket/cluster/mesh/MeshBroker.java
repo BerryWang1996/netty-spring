@@ -96,6 +96,8 @@ public class MeshBroker implements ClusterBroker {
     private EventLoopGroup workerGroup;
     private Channel serverChannel;
     private Bootstrap clientBootstrap;
+    /** Periodic membership tick: re-advertise + proactively connect to peers + evaluate isolation (RC4a M5). */
+    private java.util.concurrent.ScheduledExecutorService meshScheduler;
 
     public MeshBroker(String nodeId, MeshNodeDirectory directory, EnvelopeCodec codec,
                       MessageAuthenticator authenticator, ClusterRuntimeStats stats,
@@ -152,8 +154,64 @@ public class MeshBroker implements ClusterBroker {
 
         directory.advertise(nodeId, advertisedHost, port, advertiseTtlMs);
         state.set(BrokerState.ACTIVE);
+
+        // Membership tick: re-advertise (keep the TTL alive), proactively connect to peers, and evaluate isolation.
+        this.meshScheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(
+                namedThreads("cluster-mesh-tick"));
+        long tickMs = Math.max(1000L, advertiseTtlMs / 3);
+        meshScheduler.scheduleAtFixedRate(this::membershipTick, tickMs, tickMs, TimeUnit.MILLISECONDS);
+
         log.info("MeshBroker started for node {} — listening {}:{}, advertising {}:{}",
                 nodeId, bindAddress, port, advertisedHost, port);
+    }
+
+    /** Re-advertise this node, proactively (re)connect to known peers so broadcast doesn't pay connect latency, and
+     *  evaluate isolation. Best-effort; never throws out of the scheduler. */
+    private void membershipTick() {
+        try {
+            directory.advertise(nodeId, advertisedHost, port, advertiseTtlMs);
+            Map<String, String> peers = directory.peers(nodeId).toCompletableFuture().join();
+            int reachable = 0;
+            for (Map.Entry<String, String> e : peers.entrySet()) {
+                Channel ch = connectionTo(e.getKey(), e.getValue());
+                if (ch != null && ch.isActive()) {
+                    reachable++;
+                }
+            }
+            evaluateReachability(peers.size(), reachable);
+        } catch (Exception e) {
+            log.debug("mesh membership tick failed", e);
+        }
+    }
+
+    /**
+     * Isolation rule (RC4a M5): the mesh degrades + fires {@code onTransportLost} ONLY on TOTAL isolation — the node
+     * has peers it should reach ({@code shouldReach > 0}) but can reach NONE of them. A single/partial dead peer is
+     * per-target (handled by {@link #sendTo}'s failure/drop counting), NOT a global degrade. This keeps the
+     * {@code on-redis-loss}/grace/{@code DEGRADED} machinery meaningful in mesh mode ("I am cut off from the whole
+     * mesh") instead of silently dead. Package-visible for the regression test.
+     */
+    void evaluateReachability(int shouldReach, int reachable) {
+        if (state.get() == BrokerState.SHUTDOWN) {
+            return;
+        }
+        if (shouldReach > 0 && reachable == 0) {
+            if (state.compareAndSet(BrokerState.ACTIVE, BrokerState.DEGRADED)) {
+                log.warn("MeshBroker node {} is ISOLATED — 0 of {} peers reachable; degrading", nodeId, shouldReach);
+                TransportStateListener l = transportStateListener;
+                if (l != null) {
+                    l.onTransportLost();
+                }
+            }
+        } else if (reachable > 0) {
+            if (state.compareAndSet(BrokerState.DEGRADED, BrokerState.ACTIVE)) {
+                log.info("MeshBroker node {} recovered — {} of {} peers reachable", nodeId, reachable, shouldReach);
+                TransportStateListener l = transportStateListener;
+                if (l != null) {
+                    l.onTransportRestored();
+                }
+            }
+        }
     }
 
     // ---- ClusterBroker ----
@@ -209,6 +267,9 @@ public class MeshBroker implements ClusterBroker {
     @Override
     public void shutdown() {
         state.set(BrokerState.SHUTDOWN);
+        if (meshScheduler != null) {
+            meshScheduler.shutdownNow();
+        }
         try {
             directory.remove(nodeId);
         } catch (Exception e) {
