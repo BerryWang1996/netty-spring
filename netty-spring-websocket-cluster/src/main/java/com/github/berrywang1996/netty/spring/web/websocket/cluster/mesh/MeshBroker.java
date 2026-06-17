@@ -88,6 +88,10 @@ public class MeshBroker implements ClusterBroker {
     private final AtomicReference<BrokerState> state = new AtomicReference<>(BrokerState.RESYNC);
     private volatile TransportStateListener transportStateListener;
 
+    /** Dispatch pool (RC4a M3): the listener callback (local fan-out / app work) runs HERE, never on the Netty I/O
+     *  event loop — decode happens on the loop, delivery is handed off. Mirrors the other Redis SPIs' dedicated pools. */
+    private final java.util.concurrent.ExecutorService dispatchExecutor;
+
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
     private Channel serverChannel;
@@ -109,6 +113,7 @@ public class MeshBroker implements ClusterBroker {
         this.advertiseTtlMs = advertiseTtlMs;
         this.writeBufferLowWaterMark = writeBufferLowWaterMark;
         this.writeBufferHighWaterMark = writeBufferHighWaterMark;
+        this.dispatchExecutor = java.util.concurrent.Executors.newFixedThreadPool(2, namedThreads("cluster-mesh-dispatch"));
     }
 
     /** Binds the TCP server, prepares the outbound bootstrap, and advertises this node's address. */
@@ -222,6 +227,15 @@ public class MeshBroker implements ClusterBroker {
         if (workerGroup != null) {
             workerGroup.shutdownGracefully(0, 2, TimeUnit.SECONDS);
         }
+        dispatchExecutor.shutdown();
+        try {
+            if (!dispatchExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
+                dispatchExecutor.shutdownNow();
+            }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            dispatchExecutor.shutdownNow();
+        }
         log.info("MeshBroker shut down for node {}", nodeId);
     }
 
@@ -308,7 +322,13 @@ public class MeshBroker implements ClusterBroker {
         if (env == null) {
             return;
         }
-        deliver(env);
+        // M3: hand delivery (the listener callback — local fan-out / app work) to the dispatch pool; the Netty I/O
+        // event loop must not run listener work (ClusterMessageListener.onMessage must not block the I/O thread).
+        try {
+            dispatchExecutor.execute(() -> deliver(env));
+        } catch (java.util.concurrent.RejectedExecutionException rex) {
+            log.debug("mesh dispatch rejected (shutting down) — dropping inbound frame");
+        }
     }
 
     /** Routes a decoded envelope to the right local listener. */
