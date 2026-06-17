@@ -67,7 +67,7 @@ class MeshBrokerTest {
 
     private MeshBroker newBroker(String nodeId, int port) {
         return new MeshBroker(nodeId, dir, new SimpleTextEnvelopeCodec(), new NoOpMessageAuthenticator(),
-                new ClusterRuntimeStats(), "127.0.0.1", port, "127.0.0.1", 1_048_576, 30000);
+                new ClusterRuntimeStats(), "127.0.0.1", port, "127.0.0.1", 1_048_576, 30000, 32768, 65536);
     }
 
     @AfterEach

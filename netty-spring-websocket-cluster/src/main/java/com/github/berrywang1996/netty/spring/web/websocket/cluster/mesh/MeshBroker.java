@@ -35,6 +35,7 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
@@ -76,6 +77,8 @@ public class MeshBroker implements ClusterBroker {
     private final String advertisedHost;
     private final int maxFrameBytes;
     private final long advertiseTtlMs;
+    private final int writeBufferLowWaterMark;
+    private final int writeBufferHighWaterMark;
 
     private final ConcurrentHashMap<String, ClusterMessageListener> broadcastListeners = new ConcurrentHashMap<>();
     private final AtomicReference<ClusterMessageListener> unicastListener = new AtomicReference<>();
@@ -92,7 +95,8 @@ public class MeshBroker implements ClusterBroker {
 
     public MeshBroker(String nodeId, MeshNodeDirectory directory, EnvelopeCodec codec,
                       MessageAuthenticator authenticator, ClusterRuntimeStats stats,
-                      String bindAddress, int port, String advertisedHost, int maxFrameBytes, long advertiseTtlMs) {
+                      String bindAddress, int port, String advertisedHost, int maxFrameBytes, long advertiseTtlMs,
+                      int writeBufferLowWaterMark, int writeBufferHighWaterMark) {
         this.nodeId = nodeId;
         this.directory = directory;
         this.codec = codec;
@@ -103,6 +107,8 @@ public class MeshBroker implements ClusterBroker {
         this.advertisedHost = advertisedHost;
         this.maxFrameBytes = maxFrameBytes;
         this.advertiseTtlMs = advertiseTtlMs;
+        this.writeBufferLowWaterMark = writeBufferLowWaterMark;
+        this.writeBufferHighWaterMark = writeBufferHighWaterMark;
     }
 
     /** Binds the TCP server, prepares the outbound bootstrap, and advertises this node's address. */
@@ -127,6 +133,10 @@ public class MeshBroker implements ClusterBroker {
         clientBootstrap.group(workerGroup)
                 .channel(NioSocketChannel.class)
                 .option(ChannelOption.SO_KEEPALIVE, true)
+                // RC4a M1 (the verified BLOCKER): bound the outbound buffer so a SLOW peer can't accumulate
+                // unflushed writes and OOM the sender. Past the high mark the channel goes !writable and sendTo drops.
+                .option(ChannelOption.WRITE_BUFFER_WATER_MARK,
+                        new WriteBufferWaterMark(writeBufferLowWaterMark, writeBufferHighWaterMark))
                 .handler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
@@ -225,16 +235,31 @@ public class MeshBroker implements ClusterBroker {
                 stats.incMeshSendFailures();
                 return;
             }
-            ch.writeAndFlush(MeshFrames.toPayload(wrapped)).addListener(f -> {
-                if (!f.isSuccess()) {
-                    stats.incMeshSendFailures();
-                    log.debug("mesh send to {} failed", peerNodeId, f.cause());
-                }
-            });
+            writeFramed(peerNodeId, ch, wrapped);
         } catch (Exception e) {
             stats.incMeshSendFailures();
             log.debug("mesh send to {} threw", peerNodeId, e);
         }
+    }
+
+    /**
+     * Writes one framed envelope to a peer channel WITH backpressure (RC4a M1, the verified BLOCKER): if the channel
+     * is not writable (its outbound buffer is at the high watermark — a slow peer), the frame is <b>dropped and
+     * counted</b> rather than buffered unboundedly (at-most-once already permits a drop; the loss is now visible via
+     * {@code mesh.send_dropped_backpressure}, never a silent buffer-until-OOM). Package-visible for the regression test.
+     */
+    void writeFramed(String peerNodeId, Channel ch, String wrapped) {
+        if (!ch.isWritable()) {
+            stats.incMeshSendDroppedBackpressure();
+            log.debug("mesh peer {} not writable (backpressure) — dropping frame", peerNodeId);
+            return;
+        }
+        ch.writeAndFlush(MeshFrames.toPayload(wrapped)).addListener(f -> {
+            if (!f.isSuccess()) {
+                stats.incMeshSendFailures();
+                log.debug("mesh send to {} failed", peerNodeId, f.cause());
+            }
+        });
     }
 
     private Channel connectionTo(String peerNodeId, String addr) {
