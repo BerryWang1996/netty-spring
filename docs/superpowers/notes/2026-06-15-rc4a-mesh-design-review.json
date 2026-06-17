@@ -1,0 +1,50 @@
+{
+  "summary": "Adversarial design review of 1.10.0-RC4a MeshBroker (TCP transport skeleton) before spec: 4 lenses + skeptic verify + synthesis",
+  "agentCount": 32,
+  "logs": [
+    "[verify:framing-transport:3] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:discovery-membership:6] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:discovery-membership:1] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:lifecycle-degrade:1] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:lifecycle-degrade:0] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:framing-transport:0] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:lifecycle-degrade:2] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:lifecycle-degrade:3] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:lifecycle-degrade:5] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:scope-spi-fit:1] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:scope-spi-fit:0] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:framing-transport:5] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:framing-transport:1] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:discovery-membership:2] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:discovery-membership:4] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:lifecycle-degrade:4] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:scope-spi-fit:4] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:discovery-membership:5] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:discovery-membership:3] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:discovery-membership:0] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:scope-spi-fit:2] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:scope-spi-fit:5] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:scope-spi-fit:3] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:scope-spi-fit:6] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:discovery-membership:7] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:framing-transport:4] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "Confirmed design findings: 1; clean lenses: none",
+    "[You are the synthesis lead for the 1.10.0-RC4a MeshBroker DE] failed: You've hit your session limit · resets 11:30am (Asia/Shanghai)"
+  ],
+  "result": {
+    "survivedCount": 1,
+    "cleanLenses": [],
+    "survived": [
+      {
+        "lens": "framing-transport",
+        "title": "No outbound write-buffer bound (writeBufferWaterMark) on the per-peer cached connection — a slow/stalled peer's unflushed writes accumulate unbounded on the sender, OOMing the publisher",
+        "severity": "BLOCKER",
+        "scenario": "CONNECTION MODEL: 'a lazily-created cached OUTBOUND connection per peer' carries ALL traffic (broadcast + unicast + room + presence) to that peer. topicMessage publishes to ALL peers (naive RC4a broadcast). When a peer is slow to read (GC pause, overloaded, network congestion) its TCP receive window closes; the sender's Netty channel stops being writable and every `channel.write(frame)` buffers in the ChannelOutboundBuffer. The design states NO writeBufferWaterMark and NO drop/backpressure policy. Under sustained broadcast load to a stalled peer, the outbound buffer grows without bound until the sender heap is exhausted — one slow peer takes down the whole node. This is strictly worse than Redis, where Lettuce has its own bounded request queue and a single slow Redis backs off the publisher uniformly (and the design itself markets 'a single dead peer does NOT globally degrade the node' — but an unbounded buffer means a single SLOW peer globally KILLS the node). The design also says publish is fire-and-forget via onPublishFailure (log/throw) — but a buffered-but-never-flushed write produces NO failure callback, so the loss is silent until OOM.",
+        "fix": "Mandate WriteBufferWaterMark (high/low) on each outbound channel bootstrap, and a documented policy when channel.isWritable()==false: either drop the frame for that peer (at-most-once is already the contract — count it via clusterStats/onPublishFailure) or bound a per-peer queue and shed. The spec must state the watermark defaults (e.g. 32KiB/64KiB) and that an un-writable peer's frames are dropped+counted, not buffered indefinitely. Tie this to onPublishFailure so the loss is visible, not silent.",
+        "confirmedSeverity": "BLOCKER",
+        "why": "SURVIVES. This is a real, concrete design flaw in the RC4a MeshBroker TCP transport as described, caught at the correct gate (no RC4 spec/code exists yet — MeshBroker is \"规划/planning\"; cluster-design.md:385 + ClusterBroker.java:24-25 confirm it is designed as \"Netty TCP/gRPC 直连\").\n\nMECHANISM IS REAL, NOT HYPOTHETICAL. Netty's ChannelOutboundBuffer is unbounded by default. On a per-peer cached OUTBOUND connection that carries ALL traffic to a peer (the natural skeleton), when that peer stalls (GC pause / congestion / overload) its TCP receive window closes and every channel.write(frame) succeeds-and-queues on the sender heap with no flush. With the design stating NO writeBufferWaterMark and NO isWritable()/drop policy, the buffer grows without bound until the publisher OOMs. The mesh's own stated engagement trigger is precisely heavy broadcast load (single-node decode >80k, N≳15 active broadcast, room fan-out — cluster-design.md:118,387), i.e. exactly the regime where a stalled peer accumulates outbound bytes fastest. One slow peer takes down the whole node.\n\nSILENT-LOSS SUB-CLAIM IS LOAD-BEARING AND HOLDS. The ClusterBroker SPI's only failure surfaces are a synchronously-thrown ClusterBrokerException (ClusterBroker.java:59) or onPublishFailure. A buffered-but-never-flushed write produces NEITHER, so the documented at-most-once broadcast contract (ClusterBroker.java:54) is violated SILENTLY: frames are accepted, never delivered, never counted as failures — until OOM. This is strictly worse than the Redis baseline, where Lettuce has a bounded command queue and a single slow Redis backs off / fails fast uniformly.\n\nOUT-OF-SCOPE REFUTATION REJECTED. A naive skeleton may be naive about ROUTING (broadcast-to-all vs interest routing) without being unsafe; but an unbounded outbound buffer is a LIVENESS/SAFETY flaw, not a feature-completeness gap. A skeleton a single slow peer can OOM is unsafe, not merely incomplete. It also directly contradicts the design's own marketed property that \"a single dead peer does NOT globally degrade the node\" (an unbounded buffer means a single SLOW peer globally KILLS the node).\n\nALREADY-HANDLED REFUTATION REJECTED. The codebase establishes watermark + isWritable() as a first-class, documented backpressure pattern — but only on its server-side HTTP/WS pipeline (NettyChannelInitializer.configureWriteBufferWaterMark, javadoc: \"prevents fast producers from overwhelming slow consumers\"; config keys write-buffer-low/high-water-mark in api-guide.md:1103-1104). That precedent does NOT cover the proposed mesh OUTBOUND peer bootstrap, which is a brand-new connection the finding correctly flags as needing the same treatment. The existence of this in-repo precedent strengthens the finding: the team already knows the hazard and the cure, yet the design-as-described omits it on the new transport.\n\nThe fix is concrete, cheap, and precedent-aligned: mandate WriteBufferWaterMark defaults (e.g. 32KiB/64KiB) on each outbound channel bootstrap and a documented policy on isWritable()==false (drop+count via clusterStats/onPublishFailure so loss is visible, not silent). BLOCKER is defensible: node-level availability loss (OOM) plus silent contract violation from a single slow peer."
+      }
+    ],
+    "synthesis": null
+  }
+}
