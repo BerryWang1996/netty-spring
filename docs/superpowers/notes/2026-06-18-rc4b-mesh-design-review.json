@@ -1,0 +1,62 @@
+{
+  "review": "1.10.0-RC4b interest-routed mesh broadcast — adversarial design review (v1 spec)",
+  "date": "2026-06-18",
+  "method": "4 lenses (correctness, scope-honesty, composition, architecture) + skeptic verify; 31 agents",
+  "verdict": {
+    "fixDesignFirst": true,
+    "totalFindings": 27,
+    "confirmedCount": 14,
+    "blocksPlanningCount": 12,
+    "outcome": "v1 spec (registered-mapping-grained interest) returned for rework; v2 spec folds all blocking findings — see docs/superpowers/specs/2026-06-18-mesh-rc4b-design.md §12"
+  },
+  "rootFlaws": [
+    {
+      "id": "A",
+      "severity": "BLOCKER (cluster of findings: correctness#1/#2/#4, architecture, scope-honesty)",
+      "title": "Interest was registered-@MessageMapping-grained, not session-grained — zero reduction on a homogeneous fleet",
+      "detail": "getRegisteredUri() = static @MessageMapping set, subscribed once at boot per URI (computeIfAbsent), never removed (onLocalUriInactive is a no-op). So a node's interest = its full static mapped-URI set forever ⇒ interest set for every app URI is permanently all-N nodes on a homogeneous deployment. The 'zero-session-but-subscribed' reduction was fictional; unsubscribe() SPI + SREM/SCARD-DEL was dead code; the 'sparse topic' win required a HETEROGENEOUS build (mapping absent on some nodes' jars), an unstated precondition contradicting 'same app on every node'.",
+      "fold": "Pivot to session-grained interest: per-URI live-session refcount in ClusterMessageSender (onLocalUriActive/onLocalUriInactive fire per-session; detect 0↔1); subscribe on first live session, unsubscribe on last. Reduction now genuine on homogeneous fleets (tracks live audience, not deployed code). Broker subscription stays held (receive capability), decoupled from interest (send targeting)."
+    },
+    {
+      "id": "B",
+      "severity": "BLOCKER (correctness#3, composition, architecture)",
+      "title": "PRESENCE_CHANNEL interest never registered ⇒ interest routing prunes presence to ZERO recipients",
+      "detail": "The §4.4 interest-SADD hook was wired into subscribeBroadcast, but presence subscribes via a direct broker.subscribe(PRESENCE_CHANNEL) that bypasses it. With interest routing on + healthy registry, nodesForUri(PRESENCE_CHANNEL) returns empty (successful, non-null read, NOT the null fallback) ⇒ publish prunes every peer ⇒ silent cross-node presence regression (a shipped RC3 GA feature).",
+      "fold": "Register PERMANENT interest for PRESENCE_CHANNEL at the presence subscribe site (§4.6), never session-retracted (cleared only on shutdown/dead-node reap). Composition test added."
+    },
+    {
+      "id": "C",
+      "severity": "BLOCKER (composition)",
+      "title": "Failure sentinel: 'verbatim RC1' nodesForRoomCached returns emptySet-on-failure ⇒ a Redis blip silently drops the whole broadcast",
+      "detail": "RC1 nodesForRoomCached returns Collections.emptySet() on lookup timeout/error. The spec's publish() contract requires the OPPOSITE: read failure must yield null ⇒ all-peers fallback; the two sources of truth in §4.3 contradicted each other on the most safety-critical branch.",
+      "fold": "nodesForUriCached returns null on absent/failure/timeout ⇒ all-peers fallback; non-null (possibly empty) only on a successful authoritative read ⇒ empty = correct prune-all. Explicit DELIBERATE divergence from RC1; two tests (timeout⇒all-peers, authoritative-empty⇒no-peers)."
+    },
+    {
+      "id": "D",
+      "severity": "MINOR-blocking (architecture)",
+      "title": "Non-atomic SREM+conditional-DEL unsubscribe races across nodes",
+      "detail": "A SREM→0, B SADD→1, A DEL wipes B ⇒ B silently stops receiving. RedisRoomRegistry.LEAVE_LUA avoids this with a single EVAL.",
+      "fold": "Single atomic Lua EVAL (SREM + conditional DEL on SCARD==0) mandated; non-atomic option removed (§4.2)."
+    },
+    {
+      "id": "E",
+      "severity": "MINOR-blocking (architecture/composition)",
+      "title": "removeAllForNode SCAN mischaracterized as 'same shape as room' — it is O(distinct-URIs), not node-scoped",
+      "detail": "Room removeAllForNode embeds nodeId in the key suffix (node-scoped SCAN); the interest schema puts nodeId as a set member, so removeAllForNode must SCAN all interest keys cluster-wide.",
+      "fold": "Honest cost statement (§4.2): node-agnostic O(distinct-URIs) SCAN on the leader-elected off-hot-path reap, acceptable at the documented scale (use rooms for high cardinality). Per-node reverse index deferred (§10)."
+    },
+    {
+      "id": "F",
+      "severity": "MINOR-blocking (gating/auto-config)",
+      "title": "OnAnyRedisSpiRequired 'same shape' mesh-interest clause redundant / wrong predicate",
+      "detail": "The existing MeshNodeDirectory clause already retains nettyClusterRedisConnection for any mesh deployment; a 'same shape' interest clause is redundant or (omitting interest-routing.enable) over-retains.",
+      "fold": "No new clause (§5); documented + context test (mesh + fully custom mesh SPI ⇒ Redis gated off)."
+    }
+  ],
+  "nonBlockingFolded": [
+    "Cold-start/first-publish race documented as the ≤TTL freshly-subscribed window (§6)",
+    "Over/under-interest fail-safe framing via the receive-vs-send separation (§2, §6)",
+    "RC4b metrics written to the sender's shared ClusterRuntimeStats so RC4d meters read them (also fixes RC4a BL6) (§7)",
+    "§1 examples corrected to live-audience-partitioned, not heterogeneous-build"
+  ]
+}
