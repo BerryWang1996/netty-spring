@@ -411,6 +411,11 @@ public class MeshBroker implements ClusterBroker {
         }
     }
 
+    /** Test hook: the node-address directory (package-visible). */
+    MeshNodeDirectory directoryForTest() {
+        return directory;
+    }
+
     private void checkActive() {
         BrokerState s = state.get();
         if (s == BrokerState.SHUTDOWN) {
