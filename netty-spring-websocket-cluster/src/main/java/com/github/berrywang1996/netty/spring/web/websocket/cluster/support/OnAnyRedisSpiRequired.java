@@ -19,6 +19,7 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster.support;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeHeartbeat;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterReaper;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshNodeDirectory;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterRoomRegistry;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore;
@@ -110,7 +111,16 @@ public class OnAnyRedisSpiRequired implements ConfigurationCondition {
         // deployment would gate the Redis connection off and the default directory couldn't autowire it.
         boolean meshEnabled = Boolean.parseBoolean(ctx.getEnvironment()
                 .getProperty("server.netty.websocket.cluster.mesh.enable", "false"));
-        return meshEnabled && !hasBean(bf, MeshNodeDirectory.class);
+        if (meshEnabled && !hasBean(bf, MeshNodeDirectory.class)) {
+            return true;
+        }
+        // Mesh interest routing (1.10.0-RC4b): the default RedisMeshInterestRegistry is gated independently of the
+        // directory (mesh.enable + interest-routing.enable), so a custom MeshNodeDirectory + the default interest
+        // registry must still retain the Redis connection the registry autowires (otherwise a custom-directory +
+        // default-interest + all-custom-core-SPI deployment would orphan the connection at startup).
+        boolean interestRoutingEnabled = meshEnabled && Boolean.parseBoolean(ctx.getEnvironment()
+                .getProperty("server.netty.websocket.cluster.mesh.interest-routing.enable", "true"));
+        return interestRoutingEnabled && !hasBean(bf, MeshInterestRegistry.class);
     }
 
     private static boolean hasBean(ConfigurableListableBeanFactory bf, Class<?> type) {

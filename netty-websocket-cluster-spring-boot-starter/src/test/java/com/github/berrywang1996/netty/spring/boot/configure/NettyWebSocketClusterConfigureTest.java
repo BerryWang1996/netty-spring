@@ -183,6 +183,87 @@ class NettyWebSocketClusterConfigureTest {
                 });
     }
 
+    /** RC4b: mesh.enable=true + interest-routing default on ⇒ a RedisMeshInterestRegistry bean is present. */
+    @Test
+    void meshInterestRouting_enabled_interestRegistryPresent() throws Exception {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        int meshPort;
+        try (java.net.ServerSocket s = new java.net.ServerSocket(0)) {
+            meshPort = s.getLocalPort();
+        }
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-interest-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.mesh.enable=true",
+                        "server.netty.websocket.cluster.mesh.bind-address=127.0.0.1",
+                        "server.netty.websocket.cluster.mesh.advertised-host=127.0.0.1",
+                        "server.netty.websocket.cluster.mesh.port=" + meshPort)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry.class);
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.mesh.RedisMeshInterestRegistry.class);
+                });
+    }
+
+    /** RC4b: interest-routing.enable=false ⇒ no interest registry (publish stays RC4a all-peers). */
+    @Test
+    void meshInterestRouting_disabled_noInterestRegistry() throws Exception {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        int meshPort;
+        try (java.net.ServerSocket s = new java.net.ServerSocket(0)) {
+            meshPort = s.getLocalPort();
+        }
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-no-interest-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.mesh.enable=true",
+                        "server.netty.websocket.cluster.mesh.advertised-host=127.0.0.1",
+                        "server.netty.websocket.cluster.mesh.port=" + meshPort,
+                        "server.netty.websocket.cluster.mesh.interest-routing.enable=false")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry.class);
+                });
+    }
+
+    /** RC4b R3 (OnAnyRedisSpiRequired regression): mesh + ALL-4-custom core SPI + a CUSTOM MeshNodeDirectory +
+     *  the DEFAULT interest registry ⇒ nettyClusterRedisConnection STILL created (the interest clause retains it for
+     *  the default RedisMeshInterestRegistry; the directory clause alone would NOT, since the directory is custom). */
+    @Test
+    void meshCustomDirectory_defaultInterestRegistry_allCustomCore_redisConnectionStillExists() throws Exception {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        int meshPort;
+        try (java.net.ServerSocket s = new java.net.ServerSocket(0)) {
+            meshPort = s.getLocalPort();
+        }
+        runner.withUserConfiguration(AllFourSpiOverridesConfig.class, CustomMeshDirectoryConfig.class)
+                .withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-mesh-customdir-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.mesh.enable=true",
+                        "server.netty.websocket.cluster.mesh.advertised-host=127.0.0.1",
+                        "server.netty.websocket.cluster.mesh.port=" + meshPort)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    // The headline: the default interest registry needs the Redis connection even with a custom
+                    // directory + all-4-custom core SPI (the directory clause is false; the interest clause saves it).
+                    assertThat(context).hasBean("nettyClusterRedisConnection");
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.mesh.RedisMeshInterestRegistry.class);
+                });
+    }
+
     @Test
     void clusterNodesSet_usesRedisClusterTransport_notStandalone() {
         Assumptions.assumeTrue(ClusterTestRedisCluster.available(),
@@ -866,6 +947,17 @@ class NettyWebSocketClusterConfigureTest {
         ClusterNodeHeartbeat customClusterNodeHeartbeat() { return mock(ClusterNodeHeartbeat.class); }
         @Bean(name = "customClusterReaper")
         ClusterReaper customClusterReaper() { return mock(ClusterReaper.class); }
+    }
+
+    /** Helper @Configuration supplying a CUSTOM MeshNodeDirectory (RC4b R3 test) — a mock, since these context
+     *  tests verify bean-graph wiring, not runtime. A custom directory makes the OnAnyRedisSpiRequired directory
+     *  clause false, so only the interest clause can retain the Redis connection for the default interest registry. */
+    @Configuration
+    static class CustomMeshDirectoryConfig {
+        @Bean(name = "customMeshNodeDirectory")
+        com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshNodeDirectory customMeshNodeDirectory() {
+            return mock(com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshNodeDirectory.class);
+        }
     }
 
     /** Helper @Configuration with ONE user override (partial-override path). */

@@ -339,12 +339,27 @@ public class NettyWebSocketClusterConfigure {
         return new com.github.berrywang1996.netty.spring.web.websocket.cluster.mesh.RedisMeshNodeDirectory(connection);
     }
 
+    // ---- Mesh interest registry (RC4b): session-grained per-URI node-set; active when interest-routing.enable=true ----
+
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnExpression(STANDALONE_MESH_BROKER
+            + " and ${server.netty.websocket.cluster.mesh.interest-routing.enable:true}")
+    @ConditionalOnMissingBean(com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry.class)
+    public com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry meshInterestRegistry(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
+            StatefulRedisConnection<String, String> connection) {
+        log.info("Mesh interest routing ENABLED (RedisMeshInterestRegistry — session-grained per-URI node-set)");
+        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.mesh.RedisMeshInterestRegistry(connection);
+    }
+
     @Bean(destroyMethod = "shutdown")
     @ConditionalOnExpression(STANDALONE_MESH_BROKER)
     @ConditionalOnMissingBean(ClusterBroker.class)
     public ClusterBroker clusterBrokerMesh(ClusterProperties properties, ClusterNodeManager nodeManager,
             EnvelopeCodec envelopeCodec, MessageAuthenticator messageAuthenticator,
             ClusterNodeHeartbeat clusterNodeHeartbeat,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry meshInterestRegistry,
             com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshNodeDirectory meshNodeDirectory)
             throws Exception {
         ClusterProperties.Mesh m = properties.getMesh();
@@ -369,6 +384,16 @@ public class NettyWebSocketClusterConfigure {
         // healthy sole-survivor false-degrades (and under on-redis-loss=CLOSE_ALL force-closes all local clients).
         long hbTimeoutMs = properties.getHeartbeatTimeoutSeconds() * 1000L;
         broker.setDeadNodeView(() -> new java.util.HashSet<>(clusterNodeHeartbeat.findExpiredNodes(hbTimeoutMs)));
+        // RC4b: when interest routing is on, wire the send-side router (cache + null-vs-empty sentinel + reserved
+        // bypass). PRESENCE_CHANNEL bypasses pruning (always all-peers). Reuses the command timeout for the lookup.
+        if (meshInterestRegistry != null) {
+            java.util.Set<String> reserved = java.util.Collections.singleton(
+                    com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterMessageSender.PRESENCE_CHANNEL);
+            broker.setInterestRouter(
+                    new com.github.berrywang1996.netty.spring.web.websocket.cluster.mesh.MeshInterestRouter(
+                            meshInterestRegistry, reserved,
+                            m.getInterestRouting().getNodeSetCacheTtlMs(), properties.getCommandTimeoutMs()));
+        }
         broker.start();
         log.info("Cluster broker = MESH (node-to-node TCP {}:{}) — registry/heartbeat remain on Redis",
                 m.getBindAddress(), m.getPort());
@@ -803,7 +828,9 @@ public class NettyWebSocketClusterConfigure {
             @org.springframework.beans.factory.annotation.Autowired(required = false)
             com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.UserIdResolver userIdResolver,
             @org.springframework.beans.factory.annotation.Autowired(required = false)
-            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.PresenceChangeListener presenceChangeListener) {
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.PresenceChangeListener presenceChangeListener,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry meshInterestRegistry) {
         ClusterMessageSender sender = new ClusterMessageSender(
                 localSender, broker, sessionRegistry, nodeManager,
                 properties.getRegistryReadCacheTtlMs(), messagePayloadCodec);
@@ -824,6 +851,10 @@ public class NettyWebSocketClusterConfigure {
         if (roomRegistry != null) {
             sender.setRoomRegistry(roomRegistry);
             sender.setRoomNodeSetCacheTtlMs(properties.getRoom().getNodeSetCacheTtlMs());
+        }
+        // Mesh interest routing (RC4b): the sender WRITES interest per live session (the broker's router reads).
+        if (meshInterestRegistry != null) {
+            sender.setInterestRegistry(meshInterestRegistry);
         }
         // Identity / user-addressed delivery (1.10.0-RC2/RC3): userRegistry is nullable — present when
         // offline.enable OR presence.enable. Always wire the userRegistry dead-node REAPER on the leader path when
