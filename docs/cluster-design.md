@@ -51,6 +51,7 @@
 | **房间维度路由（`ClusterRoomRegistry`，按房间节点定向投递，opt-in）** | ✅ 1.10.0 RC1 | `roomMessage(uri, room, msg)` 只定向承载该房间成员的节点（复用 1.9.0 单播通道），扇出降到 **N/k**（k = 有成员的节点数）——**对有界房间是真实削减，即使随机落点**；**热房间（成员遍布所有节点）无削减**（且发布侧 k≈N 次定向发送 vs 1 次全局发布——此时改用 `topicMessage`）。原子 Lua（join/leave/removeAll）+ 本地索引 + hash-tag 单 slot；envelope v2（`room` 字段 + `ROOM_BROADCAST`，与 v1 滚动升级兼容）；`room.*` 2 个配置项 + `netty.cluster.room.*` 5 个指标（`fanout.target_nodes` 是削减观测点）；默认关闭、行为与 1.9.0 一致。**注意：这是"按房间局部性削减"，不是无条件的全局扇出削减——真正的集群级广播扇出削减仍需 RC4 mesh / 2.0.0 sharded pub/sub。** 设计修正（分片环 → 节点集合）归档于 `docs/superpowers/notes/2026-06-08-room-registry-design-review.json` |
 | **离线队列 + 按用户寻址投递（`UserRegistry`/`OfflineQueueStore`/`UserIdResolver`，opt-in）** | ✅ 1.10.0 RC2 | `sendToUser(userId, msg)`：在线实时单播，离线（集群范围内零会话）则按用户 Redis Stream 存储并在重连时 FIFO 回填；每 userId drain 锁保证多设备精确一次；`sessionsForUser` 永不缓存（杜绝假在线静默丢失）。`offline.*` 6 个配置项 + `netty.cluster.offline.*` 指标；默认关闭、行为与 RC1 逐字节一致。**安全：默认 `HandshakeUserIdResolver` 仅供测试——生产须自备认证解析器**（见 §安全模型）。详见下方设计注记 |
 | **多设备聚合在线状态（`PresenceRegistry`，aggregate ONLINE/AWAY/OFFLINE + 变更事件，opt-in）** | ✅ 1.10.0 RC3 | 按用户聚合在线状态（跨所有连接，原子 Lua 转换检测）+ 专用保留通道上的 `PRESENCE_CHANGE` 事件（不升信封版本）；死节点 leader 选举回收发出权威 `→OFFLINE`，**并顺带闭合潜伏的 RC2 死节点用户绑定泄漏**（`userRegistry.removeAllForNode` 此前从未接入对账，RC3 接到 leader 主路径）。`presence.*` 2 个配置项 + `netty.cluster.presence.*` 6 个指标；身份门控从 `offline.enable` 改为 `offline.enable OR presence.enable`；默认关闭、与 RC1/RC2 逐字节一致。**按设备*寻址*推迟**（需稳定 `DeviceIdResolver`）；事件是广播（~10 节点 Pub/Sub 上限）；`getPresence` 为建议性读取，非存活探针。设计修正（设备键单向门 → 聚合+计数）归档于 `docs/superpowers/notes/2026-06-15-rc3-presence-design-review.json` |
+| **node-to-node mesh 传输地基（`MeshBroker implements ClusterBroker`，直连 Netty TCP，opt-in）** | ✅ 1.10.0 RC4a（**传输地基，无扇出削减**） | `MeshBroker` 把 `ClusterBroker` 跑在节点间直连 Netty TCP 上（`RedisPubSubBroker` 的直接替代）；registry/心跳仍在 Redis，**仅用于节点地址发现，不在消息热路径**；`MeshNodeDirectory` SPI + `RedisMeshNodeDirectory`（`netty:mesh:addr:*` + PX TTL，SCAN 发现）；成员关系 = `live-by-heartbeat ∩ has-address`。**直连 unicast + 朴素广播（发给全部对端，无 per-URI 兴趣路由 → 无扇出削减）——真正的天花板突破是 RC4b**。硬化：M1 出站背压 BLOCKER + M2 帧上限 + M3 分发卸载（监听器不在 I/O loop）+ M4 advertised-host 快速失败 + M5 仅完全孤立降级；impl-review 折叠 MF1 成员∩心跳 + MF2 连接超时 + BL1 出站缓存替换。`mesh.*` 配置项；默认关闭、与 RC1/RC2/RC3 逐字节一致（`NO_MESH` AND 进单机 broker 门控）。RC4c 健壮性（热路径地址快照缓存、传输选择守卫、idle handler、mTLS）/ RC4d 指标（`netty.cluster.mesh.*`）推迟。归档 `docs/superpowers/notes/2026-06-18-rc4a-mesh-impl-review.json` |
 
 ## 目标
 
@@ -382,7 +383,7 @@ public interface SessionRegistry {
 ```
 
 - **1.8.0 实现**：`RedisPubSubBroker` + `RedisSessionRegistry`（Lettuce）。`ClusterMessageSender` 只依赖这两个 SPI，不直接碰 Lettuce。
-- **未来实现（无 API 破坏）**：`MeshBroker`（Netty TCP/gRPC 直连，registry 仍可在 Redis）、`NatsBroker`（兴趣路由）。用户也可混搭（如 mesh broker + Redis registry）。
+- **已实现 / 未来实现（无 API 破坏）**：✅ `MeshBroker`（**1.10.0 RC4a 落地**——Netty TCP 直连，registry/心跳仍在 Redis 做发现；RC4a 是传输地基[直连 unicast + 朴素广播]，扇出削减=RC4b 按兴趣路由）、✅ `NatsClusterBroker`（1.9.0 RC9，兴趣路由）。用户也可混搭（如 mesh broker + Redis registry）。
 - **装配**：两个 SPI 都用 `@ConditionalOnMissingBean`，默认 Redis 实现，高级用户可覆盖。
 - **演进锚点**：§深度瓶颈的"mesh 切换点"（单节点解码 >80k、或房间式 fan-out、或 N≳15 活跃广播）就是上 `MeshBroker` 的触发条件——届时业务代码零改动。
 

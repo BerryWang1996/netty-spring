@@ -882,6 +882,42 @@ When `presence.enable=false`, `setPresence`/`setPresenceForUser`/`getPresence` t
 **Metrics** (`netty.cluster.presence.*`): `changes`, `events_published`, `events_received`,
 `self_delivery_dropped`, `set`, `reap_offline` (the last is the crash-path correction meter).
 
+#### Node-to-Node Mesh Transport (`MeshBroker`)
+
+> **Since V1.10.0-RC4a.** Opt-in (`cluster.mesh.enable=true`, default `false`). Replaces the default
+> `RedisPubSubBroker` with a `ClusterBroker` over **direct node-to-node Netty TCP** — the message payload no longer
+> rides Redis Pub/Sub. Registry + heartbeat **stay on Redis**, used only to discover peer addresses (off the message
+> hot path). Standalone-Redis path only (not `redis.cluster-nodes`, not all-NATS). When disabled the cluster is
+> **byte-identical** to RC1/RC2/RC3.
+
+**Honest scope.** RC4a is the **transport foundation**: direct unicast + **naive broadcast** (publish contacts every
+peer; a peer drops a URI it has no local listener for). It does **not** yet do the *interest-routed* broadcast that
+reduces fan-out and actually breaks the ~10-node Redis ceiling — **that is RC4b**. Use RC4a to move bytes off Redis
+Pub/Sub and prove the discover→connect→deliver path; a 1→N broadcast still contacts all N−1 peers for now.
+
+**How it works.** One TCP server per node (receive) + a lazily-cached outbound connection per peer (send), framed
+length-prefixed and carrying the same HMAC-wrapped envelope as the Redis brokers. Peer addresses come from the new
+`MeshNodeDirectory` SPI (default `RedisMeshNodeDirectory`: `netty:mesh:addr:{nodeId}` with a TTL, discovered via
+SCAN). Membership is `live-by-heartbeat ∩ has-address` — the directory is addresses-only, liveness stays the
+heartbeat's job, so a crashed peer whose address lingers until TTL does not cause a healthy survivor to false-degrade.
+
+**Operational must-knows.**
+- **`advertised-host` is mandatory in containers/NAT/k8s.** A node advertises an address peers will dial; RC4a
+  **fails fast at startup** if it can only resolve a loopback address and `advertised-host` is unset.
+- **Slow-peer safety (M1).** The per-peer outbound buffer is watermark-bounded; past the high mark a peer channel is
+  `!writable` and the frame is dropped+counted, never buffered until OOM.
+- **`connect-timeout-ms`** bounds the blocking dial to a dead/unreachable peer (default 5s) so it can't stall the
+  broadcast path on Netty's 30s default.
+
+**Config** (`server.netty.websocket.cluster.mesh.*`): `enable` (`false`), `port` (`9700`), `advertised-host`
+(auto-detect, fail-fast on loopback-only), `bind-address` (`0.0.0.0`), `connect-timeout-ms` (`5000`),
+`advertise-ttl-ms` (`30000`), `max-frame-bytes` (`0` = message-max ×2), `write-buffer-high-water-mark` (`65536`),
+`write-buffer-low-water-mark` (`32768`), `idle-timeout-ms` (`60000` — **reserved, no effect in RC4a**; proactive idle
+reaping is RC4c).
+
+> Full `netty.cluster.mesh.*` metrics are RC4d. In RC4a the broker counts frames/send-failures/backpressure-drops
+> internally but does not yet surface them to the meter registry.
+
 ---
 
 ### Cluster-Wide Queries
@@ -1148,6 +1184,16 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 | `cluster.offline.drain-lock-ms` | `5000` | *(since V1.10.0-RC2)* Per-userId drain lock TTL (`SET NX PX`); auto-expires so a crashed drainer can't wedge the queue (prevents multi-device double-delivery). |
 | `cluster.presence.enable` | `false` | *(since V1.10.0-RC3)* Enable multi-device aggregate presence + presence-change events. Activates the shared identity path (`UserIdResolver` + `UserRegistry`) even if `offline.enable=false`. `false` = no presence beans, byte-identical to RC1/RC2. Standalone-Redis only. See [§9.6 Multi-Device Presence](#96-multi-device-presence-presenceoperations--多设备在线状态). |
 | `cluster.presence.publish-changes` | `true` | *(since V1.10.0-RC3)* Broadcast aggregate transitions as `PRESENCE_CHANGE` events. `false` = the local `PresenceChangeListener` still fires but no cross-node event is published (query-only deployments). |
+| `cluster.mesh.enable` | `false` | *(since V1.10.0-RC4a)* Replace the Redis Pub/Sub broker with the node-to-node TCP `MeshBroker` (messages ride TCP; registry/heartbeat stay on Redis for discovery). Standalone-Redis only (not `cluster-nodes`, not all-NATS). `false` = byte-identical to RC1/RC2/RC3. **RC4a = transport foundation: direct unicast + naive broadcast, NO fan-out reduction (interest routing = RC4b).** See [§9.7 Node-to-Node Mesh](#node-to-node-mesh-transport-meshbroker). |
+| `cluster.mesh.port` | `9700` | *(since V1.10.0-RC4a)* TCP port this node listens on AND advertises to peers. |
+| `cluster.mesh.advertised-host` | *(auto-detect)* | *(since V1.10.0-RC4a)* Host advertised to peers. Auto-detects a non-loopback site-local IPv4; **fails fast at startup if only loopback resolves** — containers/NAT/k8s **must** set this explicitly. |
+| `cluster.mesh.bind-address` | `0.0.0.0` | *(since V1.10.0-RC4a)* Local bind interface for the inbound TCP server. |
+| `cluster.mesh.connect-timeout-ms` | `5000` | *(since V1.10.0-RC4a)* TCP connect timeout to a peer; bounds the blocking dial on the publish/unicast path (vs Netty's 30s default) so a dead/unreachable peer can't stall the hot path. |
+| `cluster.mesh.advertise-ttl-ms` | `30000` | *(since V1.10.0-RC4a)* Directory advertisement TTL; refreshed every ~ttl/3 by the membership tick. |
+| `cluster.mesh.max-frame-bytes` | `0` | *(since V1.10.0-RC4a)* Max inbound frame bytes (rejects a corrupt length prefix). `0` = `message-max-size-bytes` ×2 headroom. |
+| `cluster.mesh.write-buffer-high-water-mark` | `65536` | *(since V1.10.0-RC4a)* Outbound buffer high mark — past it a peer channel is non-writable and frames are dropped+counted (slow-peer OOM guard). |
+| `cluster.mesh.write-buffer-low-water-mark` | `32768` | *(since V1.10.0-RC4a)* The peer channel becomes writable again below this. |
+| `cluster.mesh.idle-timeout-ms` | `60000` | *(since V1.10.0-RC4a)* **Reserved — no effect in RC4a** (relies on TCP keep-alive). Proactive idle-connection reaping is RC4c. |
 
 ---
 

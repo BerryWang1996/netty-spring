@@ -1,0 +1,46 @@
+{
+  "review": "1.10.0-RC4a MeshBroker adversarial implementation review",
+  "date": "2026-06-18",
+  "method": "3 lenses (transport-correctness, gating-wiring, regression-scope) + skeptic verify + synthesis; 18 agents",
+  "verdict": {
+    "rc4aReadyToCut_atReview": false,
+    "hardBlockers": 0,
+    "byteIdenticalContract": "intact — mesh.enable=false default; NO_MESH ANDed into STANDALONE_REDIS_BROKER; every confirmed defect is mesh-gated",
+    "gatedBy": "2 confirmed MAJORs breaking FOLDED RC4a must-fix contracts inside mesh mode"
+  },
+  "mustFix_folded_before_cut": [
+    {
+      "id": "MF1",
+      "severity": "MAJOR",
+      "title": "Membership ignored heartbeat liveness — violated the MeshNodeDirectory 'live-by-heartbeat ∩ has-address' SPI contract",
+      "detail": "Broker had no heartbeat view and the directory did not intersect, so a crashed peer whose mesh address had not yet TTL-expired (~10-30s window) counted toward shouldReach; a healthy sole-survivor false-degraded, and under on-redis-loss=CLOSE_ALL force-closed every local WS client (code 1011).",
+      "fix": "MeshBroker.setDeadNodeView(Supplier<Set<String>>) wired by auto-config to heartbeat.findExpiredNodes(timeoutMs); membershipTick subtracts dead peers before computing shouldReach; evaluateReachability restores ACTIVE when shouldReach==0 (no sticky DEGRADED for a lone node). Tests: MeshDegradeTest heartbeatDeadPeer_isNotAMembershipObligation_noFalseDegrade + isolationClears_whenNoLivePeersRemain_restores.",
+      "commit": "e8cb6a5"
+    },
+    {
+      "id": "MF2",
+      "severity": "MAJOR (triple-confirmed across all 3 lenses)",
+      "title": "connect-timeout-ms config never wired — connectionTo blocked the caller (WebSocket handler) thread on cf.sync() with Netty's default 30s timeout",
+      "detail": "ClusterProperties.Mesh.connectTimeoutMs was read into the bean but never reached the client bootstrap; ChannelOption.CONNECT_TIMEOUT_MILLIS was unset. A dead/black-holing peer (crashed mid-advertise-TTL) could stall the broadcast hot path ~30s, serially per peer. Contradicts the M1/§4 hot-path-safety intent.",
+      "fix": "MeshBroker takes connectTimeoutMs; start() sets ChannelOption.CONNECT_TIMEOUT_MILLIS; configure passes m.getConnectTimeoutMs(). Test: MeshConnectTimeoutTest asserts the bootstrap option.",
+      "commit": "e8cb6a5"
+    }
+  ],
+  "alsoFolded_bonus": [
+    {
+      "id": "BL1",
+      "severity": "MINOR (skeptic-downgraded from MAJOR; self-healing but a real fd leak)",
+      "title": "Stale outbound-channel entry orphaned the fresh connection under a flapping peer",
+      "detail": "connectionTo used putIfAbsent, which returned a dead-but-still-mapped prev WITHOUT storing the freshly dialed channel — orphaning a live connection and re-dialing per send until the dead entry's async closeFuture-remove fired.",
+      "fix": "putIfAbsent/remove replace loop so the fresh channel is always cached (or a genuinely live prev returned). Test: MeshBrokerTest connectionTo_replacesDeadCachedChannel_noLeak.",
+      "commit": "e8cb6a5"
+    }
+  ],
+  "backlog_deferred_to_RC4c_or_RC4d": [
+    {"id": "BL2", "severity": "MINOR", "title": "mesh.enable=true silently ignored when redis.cluster-nodes or nats.servers set — a different transport wins with no warn/fail-fast", "fix": "symmetric @ConditionalOnExpression fail-fast guard (mirror natsTransportClasspathGuard) before GA"},
+    {"id": "BL3", "severity": "MINOR", "title": "idle-timeout-ms is a published non-zero-default knob but no IdleStateHandler is installed — inert in RC4a", "fix": "wire IdleStateHandler (RC4c) or mark no-effect-in-RC4a in config docs (done in release notes)"},
+    {"id": "BL4", "severity": "MINOR", "title": "membership tick may fire isolation-degrade before ClusterMessageSender wires the transport listener (narrow non-default low advertise-ttl-ms precondition; worst case prevented by the ACTIVE&&ACTIVE publish gate; same pattern pre-exists in RedisPubSubBroker)", "fix": "reconcile broker.state() after wiring the listener (RC4c)"},
+    {"id": "BL5", "severity": "MAJOR-noted-but-backlog", "title": "publish()/unicast() do a synchronous uncached Redis SCAN+GET on the hot path per message", "detail": "latency/scalability robustness regression vs RedisPubSubBroker's fire-and-forget; delivery still works, at-most-once holds, 2-node E2E passes; not a correctness/contract break", "fix": "cache the peer-address snapshot from membershipTick; publish/unicast read the volatile snapshot (RC4c)"},
+    {"id": "BL6", "severity": "MINOR", "title": "mesh counters (incl. M1 mesh.send_dropped_backpressure) write to a throwaway ClusterRuntimeStats the meter binder/health indicator never read", "detail": "latent until RC4d adds netty.cluster.mesh.* meters; the M1 drop BEHAVIOR is correct, only its observability is mis-wired", "fix": "inject sender.getClusterRuntimeStats() into the MeshBroker (RC4d, when folding mesh meters)"}
+  ]
+}

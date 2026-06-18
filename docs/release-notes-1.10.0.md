@@ -482,6 +482,130 @@ auto-away timeout, last-seen timestamps, a server-side watcher/roster graph, and
 
 ---
 
+## 1.10.0-RC4a — MeshBroker: node-to-node TCP transport foundation
+
+**The fourth 1.10.0 feature, first sub-stage.** A `ClusterBroker` over **direct node-to-node Netty TCP** — a drop-in
+replacement for `RedisPubSubBroker`. Registry + heartbeat **stay on Redis** (used only for node-address discovery,
+off the message hot path); the messages themselves ride TCP. Opt-in (`mesh.enable=false` by default); with mesh
+disabled the cluster is **byte-identical to RC1/RC2/RC3** (`NO_MESH` is ANDed into the standalone-Redis broker gate,
+context-tested).
+
+### Honest positioning (read this first)
+
+> RC4a ships the mesh **transport foundation**: direct unicast + **naive broadcast** (publish sends to **every**
+> peer; each peer drops a URI it has no local listener for). It does **NOT** yet ship the fan-out reduction — the
+> *interest-routed* broadcast that actually breaks the ~10-node Redis ceiling. **That is RC4b.** So RC4a moves the
+> bytes off Redis Pub/Sub and proves the discover→connect→deliver path end-to-end, but a 1→N broadcast still
+> contacts all N−1 peers (no per-URI subscription routing). Treat RC4a as the wire/membership layer the ceiling-break
+> is built on, not the ceiling-break itself. (Same kind of recorded scope honesty as RC1's shard-ring → node-set and
+> RC3's aggregate-vs-addressing.)
+
+Two more honesty notes, stated not hidden:
+
+- **`advertised-host` is a footgun by design.** A node advertises an address peers will dial. RC4a **fails fast** at
+  startup if it can only resolve a loopback address and `advertised-host` is unset — containers / NAT / k8s **must**
+  set `server.netty.websocket.cluster.mesh.advertised-host` explicitly, or peers would cache `127.0.0.1` and never
+  connect. Better a clear boot error than a silently broken mesh.
+- **Hot-path directory lookup, for now.** `publish`/`unicast` still resolve peer addresses via a synchronous Redis
+  SCAN per message (the TCP cached connection is reused, but the address set is re-read). This is a known
+  latency/scalability item (the membership tick already has the data to cache) folded to the RC4c robustness pass —
+  see *Deferred* below. The **payload** never touches Redis; discovery does.
+
+### Architecture
+
+- **One TCP server per node** (inbound = receive) + a **lazily-cached outbound connection per peer** (send). Frames
+  are length-prefixed (`MeshFrames`, 4-byte length) carrying the existing HMAC-wrapped `EnvelopeCodec` line — same
+  wire envelope, same `MessageAuthenticator`, as the Redis brokers.
+- **Discovery via `MeshNodeDirectory`** (new SPI): `advertise(nodeId, host, port, ttlMs)` + `peers(self)` →
+  `nodeId → host:port`. Default `RedisMeshNodeDirectory` writes `netty:mesh:addr:{b64nodeId}` with a PX TTL and reads
+  peers via SCAN — **not** a second liveness source: membership is `live-by-heartbeat ∩ has-address` (see MF1 below).
+- **Off the I/O loop:** decode happens on the Netty event loop, then delivery is handed to a dedicated dispatch pool
+  (`cluster-mesh-dispatch-*`) — a listener callback never runs on the I/O thread (M3).
+
+### Reliability folded into the RC4a skeleton (the M-series must-fixes)
+
+The **design review** turned a naive sketch into a hardened skeleton; each item shipped with a regression test:
+
+- **M1 (verified BLOCKER) — outbound backpressure.** `WRITE_BUFFER_WATER_MARK` bounds the per-peer outbound buffer;
+  past the high mark the channel is `!writable` and the frame is **dropped and counted**
+  (`mesh.send_dropped_backpressure`), never buffered until OOM. A slow peer cannot OOM the sender.
+- **M2 — inbound frame cap.** `LengthFieldBasedFrameDecoder` rejects oversized frames (a corrupt length prefix can't
+  allocate unbounded).
+- **M3 — dispatch offload** (above).
+- **M4 — advertised-host fail-fast** (above).
+- **M5 — total-isolation degrade.** The mesh fires `onTransportLost` **only** when it can reach **none** of the peers
+  it should (a single/partial dead peer is per-target drop-counting, not a global degrade), keeping the
+  `on-redis-loss` / grace / `DEGRADED` machinery meaningful in mesh mode.
+- **Derived single-source membership** — the directory is addresses-only; liveness stays the heartbeat's job.
+
+### Implementation-review folds (the cut gate)
+
+The post-impl **adversarial review** (3 lenses + skeptic verify, archived at
+`docs/superpowers/notes/2026-06-18-rc4a-mesh-impl-review.json`) found **0 hard BLOCKERs** but **2 MAJORs breaking the
+folded must-fix contracts** — both fixed before this cut:
+
+- **MF1 — membership ignored heartbeat liveness.** The broker had no heartbeat view and the directory didn't
+  intersect, so a crashed peer whose mesh address hadn't yet TTL-expired (~10–30s window) counted toward "peers I
+  should reach" → a **healthy sole-survivor false-degraded**, and under `on-redis-loss=CLOSE_ALL` force-closed every
+  local WS client. Fixed: the broker now subtracts the heartbeat's expired-node set (`findExpiredNodes`, wired by
+  auto-config) before computing reachability — honoring the documented `live-by-heartbeat ∩ has-address` contract —
+  and restores `ACTIVE` when it has zero live peers (a lone node can't latch `DEGRADED` forever).
+- **MF2 — `connect-timeout-ms` was unwired.** `connectionTo` blocks the publish/unicast caller (a WebSocket handler)
+  thread on `cf.sync()`; the bootstrap never set `CONNECT_TIMEOUT_MILLIS`, so a dead/black-holing peer could stall
+  the broadcast hot path for Netty's **30s** default. Fixed: the configured `connect-timeout-ms` (5s) is now applied.
+- **BL1 (bonus, MINOR)** — a flapping peer's stale cached channel orphaned the freshly dialed one (fd leak +
+  reconnect churn); `connectionTo` now evict-and-replaces so the live channel is always cached.
+
+### Config
+
+| Key | Default | Meaning |
+|---|---|---|
+| `server.netty.websocket.cluster.mesh.enable` | `false` | Master switch — replaces the Redis Pub/Sub broker with the node-to-node TCP `MeshBroker`. **Standalone-Redis only** (not `redis.cluster-nodes`, not all-NATS). |
+| `server.netty.websocket.cluster.mesh.port` | `9700` | TCP port this node listens on AND advertises to peers. |
+| `server.netty.websocket.cluster.mesh.advertised-host` | *(auto)* | Host advertised to peers. Auto-detects a non-loopback site-local IPv4; **fails fast if only loopback** — containers/NAT/k8s must set this. |
+| `server.netty.websocket.cluster.mesh.bind-address` | `0.0.0.0` | Local bind interface for the inbound server. |
+| `server.netty.websocket.cluster.mesh.connect-timeout-ms` | `5000` | TCP connect timeout to a peer (bounds the blocking dial on the publish/unicast path — MF2). |
+| `server.netty.websocket.cluster.mesh.advertise-ttl-ms` | `30000` | Directory advertisement TTL; refreshed every ~ttl/3 by the membership tick. |
+| `server.netty.websocket.cluster.mesh.max-frame-bytes` | `0` | Max inbound frame bytes (`0` = `message-max-size-bytes` ×2 headroom). |
+| `server.netty.websocket.cluster.mesh.write-buffer-high-water-mark` | `65536` | Outbound buffer high watermark — past it a peer channel is `!writable` and frames are dropped+counted (M1 slow-peer OOM guard). |
+| `server.netty.websocket.cluster.mesh.write-buffer-low-water-mark` | `32768` | The channel becomes writable again below this. |
+| `server.netty.websocket.cluster.mesh.idle-timeout-ms` | `60000` | **Reserved — no effect in RC4a.** Proactive idle-connection reaping is RC4c; RC4a relies on TCP keep-alive. |
+
+### Backward compatibility
+
+`mesh.enable=false` (default) → the `ClusterBroker` is the unchanged `RedisPubSubBroker`, **byte-identical to
+RC1/RC2/RC3** (the `NO_MESH` clause + context test prove the Redis path is untouched). New SPI `MeshNodeDirectory`
+and the `MeshBroker` are additive. Same envelope wire (no version bump), same `EnvelopeCodec`/`MessageAuthenticator`
+contract as the Redis brokers — a mesh node and a Redis-Pub/Sub node are not mixed (the transport is a per-cluster
+choice). Redis still required (discovery + registry + heartbeat). Boot 2.7 + Lettuce 6.1.
+
+### Tests + review
+
+**601 tests / 11 modules green** (RC3's 573 + RC4a's mesh suite: `MeshFrames` framing, `MeshAddressResolver`
+fail-fast, `RedisMeshNodeDirectory` advertise/peers IT, the two-node real-TCP-via-real-Redis E2E, M1 backpressure,
+M3 dispatch offload, M5 degrade, plus the impl-review folds — `MeshConnectTimeoutTest` (MF2), the MF1 heartbeat-dead
++ sticky-restore cases, and the BL1 dead-entry-replacement case). 0 failures, 0 skips (Docker + Redis up).
+
+RC4a passed the same two adversarial gates as RC1–RC3. The **design review** hardened the skeleton (M1 BLOCKER + the
+M2–M5 + derived-membership folds). The **implementation review** returned `rc4aReadyToCut=false` on **2 MAJORs
+breaking folded must-fix contracts** (MF1 membership / MF2 connect-timeout) — both fixed and re-verified before this
+cut; remaining findings are RC4a-deferrable robustness/observability items (below).
+
+### Deferred to RC4b / RC4c / RC4d
+
+- **RC4b — interest-routed broadcast (the actual node-ceiling break).** Per-URI subscription routing so a broadcast
+  contacts only peers that host a member, replacing RC4a's naive all-peers fan-out. This is the headline ceiling
+  break; RC4a is only its transport.
+- **RC4c — robustness.** Cache the peer-address snapshot so `publish`/`unicast` stop doing a synchronous Redis SCAN
+  per message (BL5); a symmetric fail-fast guard for `mesh.enable=true` + `cluster-nodes`/`nats.servers` (BL2,
+  mirrors `natsTransportClasspathGuard`); wire `idle-timeout-ms` to an `IdleStateHandler` (BL3); reconcile
+  `broker.state()` after the transport listener is wired (BL4); mTLS, bidirectional-link dedup, bounded reconnect
+  backoff.
+- **RC4d — observability.** Full `netty.cluster.mesh.*` meter set (and fix the mesh counters to write the sender's
+  shared `ClusterRuntimeStats` so `mesh.send_dropped_backpressure` is operator-visible — BL6), docs, config metadata.
+
+---
+
 # 发布说明 — 1.10.0（中文）
 
 > **状态：开发中（RC 周期）。** 1.10.0 是构建在 1.9.0 GA 之上的 IM 平台线。各 RC 在特性分支上累积，直至最终
@@ -830,3 +954,108 @@ userId**，含 `|` 的 userId（如多租户主体 `tenant|alice`）在远端节
 
 稳定的按设备寻址（`DeviceIdResolver` SPI + 按设备映射）、`invisible`/`dnd`/自定义状态、自动 away 超时、
 最后在线时间戳、服务端 watcher/roster 图、`NatsKvPresenceRegistry`（全 NATS 对等）。
+
+---
+
+## 1.10.0-RC4a — MeshBroker：节点间 TCP 传输地基
+
+**1.10.0 的第四个特性、第一个子阶段。** 一个跑在**节点间直连 Netty TCP** 上的 `ClusterBroker`——`RedisPubSubBroker`
+的直接替代。注册表 + 心跳**仍留在 Redis**（仅用于节点地址发现，不在消息热路径上）；消息本身走 TCP。可选开关
+（默认 `mesh.enable=false`）；关闭时整个集群与 RC1/RC2/RC3 **逐字节一致**（`NO_MESH` 被 AND 进单机 Redis 的 broker
+门控，有 context 测试）。
+
+### 诚实定位（务必先读）
+
+> RC4a 交付的是 mesh **传输地基**：直连 unicast + **朴素广播**（publish 发给**每一个**对端;对端对没有本地监听
+> 的 URI 直接丢弃）。它**还没有**交付扇出削减——那个真正打破 ~10 节点 Redis 天花板的*按兴趣路由*广播。**那是
+> RC4b。** 所以 RC4a 把字节从 Redis Pub/Sub 上挪走、端到端跑通了「发现→连接→投递」,但 1→N 广播仍会联系全部
+> N−1 个对端（没有按 URI 的订阅路由）。把 RC4a 当作天花板突破所依赖的线路/成员层,而不是天花板突破本身。
+> （与 RC1 的分片环→节点集合、RC3 的聚合 vs 寻址同类的记录在案的范围诚实。）
+
+另外两条声明而非隐藏的诚实说明：
+
+- **`advertised-host` 是设计上的坑。** 节点广播一个对端将要拨号的地址。RC4a 在启动时若只能解析到回环地址且
+  未设 `advertised-host` 就**快速失败**——容器 / NAT / k8s **必须**显式设置
+  `server.netty.websocket.cluster.mesh.advertised-host`,否则对端会缓存 `127.0.0.1` 永远连不上。清晰的启动报错
+  好过一个静默坏掉的 mesh。
+- **当前热路径上的目录查询。** `publish`/`unicast` 仍按每条消息做一次同步 Redis SCAN 解析对端地址（TCP 缓存连接
+  会复用,但地址集合被重读）。这是已知的延迟/可扩展性项（成员 tick 已经有可缓存的数据）,折叠到 RC4c 健壮性轮次
+  ——见下文*推迟*。**负载**永远不碰 Redis;发现碰。
+
+### 架构
+
+- **每节点一个 TCP 服务端**（入站=接收）+ **按对端惰性缓存的出站连接**（发送）。帧用长度前缀（`MeshFrames`,4 字节
+  长度）承载既有的 HMAC 包裹的 `EnvelopeCodec` 行——与 Redis broker 同一信封线、同一 `MessageAuthenticator`。
+- **通过 `MeshNodeDirectory` 发现**（新 SPI）：`advertise(nodeId, host, port, ttlMs)` + `peers(self)` →
+  `nodeId → host:port`。默认 `RedisMeshNodeDirectory` 用 PX TTL 写 `netty:mesh:addr:{b64nodeId}`、用 SCAN 读对端
+  ——它**不是**第二个活性来源：成员关系是 `live-by-heartbeat ∩ has-address`（见下文 MF1）。
+- **离开 I/O loop：** 解码在 Netty 事件循环上,随后投递交给专用分发池（`cluster-mesh-dispatch-*`）——监听器回调
+  永不在 I/O 线程上跑（M3）。
+
+### 折叠进 RC4a 骨架的可靠性（M 系列 must-fix）
+
+**设计审查**把朴素草图变成了硬化骨架;每项都带回归测试落地：M1（已验证 BLOCKER）出站背压——`WRITE_BUFFER_WATER_MARK`
+限定每对端出站缓冲,越过高水位则通道 `!writable`、帧被**丢弃并计数**（`mesh.send_dropped_backpressure`）,绝不缓冲
+到 OOM;M2 入站帧上限;M3 分发卸载;M4 advertised-host 快速失败;M5 仅在**完全孤立**（能到达的对端为 0）时才
+`onTransportLost`（单个/部分死对端是按目标丢弃计数,而非全局降级）;以及派生的单一来源成员关系（目录只管地址,活性
+归心跳）。
+
+### 实现审查折叠（cut 闸门）
+
+实现后的**对抗式审查**（3 lens + skeptic 验证,归档于 `docs/superpowers/notes/2026-06-18-rc4a-mesh-impl-review.json`）
+发现 **0 个硬 BLOCKER**,但有 **2 个打破已折叠 must-fix 契约的 MAJOR**——均在本次 cut 前修复：
+
+- **MF1——成员关系忽略了心跳活性。** broker 没有心跳视图、目录也不做交集,于是一个 mesh 地址尚未 TTL 过期
+  （~10–30s 窗口）的已崩溃对端会计入「我应当到达的对端」→ **健康的唯一幸存节点误判降级**,且在
+  `on-redis-loss=CLOSE_ALL` 下会强断本机所有 WS 连接。已修复：broker 现在在计算可达性前减去心跳的过期节点集
+  （`findExpiredNodes`,由自动装配接线）——遵守已声明的 `live-by-heartbeat ∩ has-address` 契约——并在没有任何存活
+  对端时恢复 `ACTIVE`（孤狼不会永久 latch 在 `DEGRADED`）。
+- **MF2——`connect-timeout-ms` 没接线。** `connectionTo` 在 publish/unicast 调用方（WS handler）线程上 `cf.sync()`
+  阻塞;bootstrap 从未设 `CONNECT_TIMEOUT_MILLIS`,于是一个死/黑洞对端能把广播热路径卡满 Netty 的 **30s** 默认值。
+  已修复：现在应用配置的 `connect-timeout-ms`（5s）。
+- **BL1（附带,MINOR）**——一个抖动对端的陈旧缓存通道会孤立新拨号的通道（fd 泄漏 + 重连抖动）;`connectionTo`
+  现在「驱逐并替换」,使存活通道总被缓存。
+
+### 配置
+
+| 键 | 默认 | 含义 |
+|---|---|---|
+| `...mesh.enable` | `false` | 总开关——用节点间 TCP `MeshBroker` 替换 Redis Pub/Sub broker。**仅单机 Redis**（非 `redis.cluster-nodes`、非全 NATS）。 |
+| `...mesh.port` | `9700` | 本节点监听**并**向对端广播的 TCP 端口。 |
+| `...mesh.advertised-host` | *（自动）* | 向对端广播的主机。自动探测非回环 site-local IPv4;**仅回环则快速失败**——容器/NAT/k8s 必须显式设置。 |
+| `...mesh.bind-address` | `0.0.0.0` | 入站服务端的本地绑定接口。 |
+| `...mesh.connect-timeout-ms` | `5000` | 到对端的 TCP 连接超时（限定 publish/unicast 路径上的阻塞拨号——MF2）。 |
+| `...mesh.advertise-ttl-ms` | `30000` | 目录广告 TTL;成员 tick 每 ~ttl/3 刷新。 |
+| `...mesh.max-frame-bytes` | `0` | 入站帧最大字节（`0` = `message-max-size-bytes` ×2 余量）。 |
+| `...mesh.write-buffer-high-water-mark` | `65536` | 出站缓冲高水位——越过则对端通道 `!writable`、帧丢弃+计数（M1 慢对端 OOM 守卫）。 |
+| `...mesh.write-buffer-low-water-mark` | `32768` | 低于此值通道恢复可写。 |
+| `...mesh.idle-timeout-ms` | `60000` | **保留——RC4a 无效。** 主动空闲连接回收是 RC4c;RC4a 依赖 TCP keep-alive。 |
+
+### 向后兼容
+
+`mesh.enable=false`（默认）→ `ClusterBroker` 仍是未改动的 `RedisPubSubBroker`,与 RC1/RC2/RC3 **逐字节一致**
+（`NO_MESH` 子句 + context 测试证明 Redis 路径未被触及）。新 SPI `MeshNodeDirectory` 与 `MeshBroker` 均为加性。
+同一信封线（不升版本）、与 Redis broker 同样的 `EnvelopeCodec`/`MessageAuthenticator` 契约——mesh 节点与
+Redis-Pub/Sub 节点不混用（传输是每集群的选择）。仍需 Redis（发现 + 注册表 + 心跳）。Boot 2.7 + Lettuce 6.1。
+
+### 测试 + 审查
+
+**601 个测试 / 11 个模块全绿**（RC3 的 573 + RC4a 的 mesh 套件：`MeshFrames` 帧、`MeshAddressResolver` 快速失败、
+`RedisMeshNodeDirectory` advertise/peers IT、双节点真实 TCP-经真实 Redis 的 E2E、M1 背压、M3 分发卸载、M5 降级,
+加上实现审查的折叠——`MeshConnectTimeoutTest`（MF2）、MF1 心跳死对端 + 粘滞恢复用例、BL1 死 entry 替换用例）。
+0 失败、0 跳过（Docker + Redis 在线）。
+
+RC4a 经过与 RC1–RC3 相同的两道对抗式闸门。**设计审查**硬化了骨架（M1 BLOCKER + M2–M5 + 派生成员关系折叠）。
+**实现审查**因 **2 个打破已折叠 must-fix 契约的 MAJOR**（MF1 成员关系 / MF2 连接超时）返回 `rc4aReadyToCut=false`
+——均在本次 cut 前修复并复验;其余为 RC4a 可推迟的健壮性/可观测性项（下）。
+
+### 推迟到 RC4b / RC4c / RC4d
+
+- **RC4b——按兴趣路由的广播（真正的节点天花板突破）。** 按 URI 的订阅路由,使广播只联系托管成员的对端,取代
+  RC4a 的朴素全对端扇出。这是头号天花板突破;RC4a 只是它的传输层。
+- **RC4c——健壮性。** 缓存对端地址快照,使 `publish`/`unicast` 不再按每条消息做同步 Redis SCAN（BL5）;为
+  `mesh.enable=true` + `cluster-nodes`/`nats.servers` 加对称的快速失败守卫（BL2,仿 `natsTransportClasspathGuard`）;
+  把 `idle-timeout-ms` 接到 `IdleStateHandler`（BL3）;在传输监听器接线后对账 `broker.state()`（BL4）;mTLS、双向链路
+  去重、有界重连退避。
+- **RC4d——可观测性。** 完整 `netty.cluster.mesh.*` 指标集（并修复 mesh 计数器写到 sender 共享的
+  `ClusterRuntimeStats`,使 `mesh.send_dropped_backpressure` 对运维可见——BL6）、文档、配置元数据。
