@@ -19,6 +19,7 @@ package com.github.berrywang1996.netty.spring.web.websocket.cluster.support;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeHeartbeat;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterReaper;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshNodeDirectory;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterRoomRegistry;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.OfflineQueueStore;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.PresenceRegistry;
@@ -100,8 +101,16 @@ public class OnAnyRedisSpiRequired implements ConfigurationCondition {
         // RedisPresenceRegistry — without this clause those default beans would have no nettyClusterRedisConnection.
         boolean presenceEnabled = Boolean.parseBoolean(ctx.getEnvironment()
                 .getProperty("server.netty.websocket.cluster.presence.enable", "false"));
-        return presenceEnabled
-                && (!hasBean(bf, PresenceRegistry.class) || !hasBean(bf, UserRegistry.class));
+        if (presenceEnabled
+                && (!hasBean(bf, PresenceRegistry.class) || !hasBean(bf, UserRegistry.class))) {
+            return true;
+        }
+        // Node-to-node mesh (1.10.0-RC4a): mesh.enable=true keeps registry/heartbeat on Redis AND uses the default
+        // RedisMeshNodeDirectory (node-address discovery). Without this clause, a mesh + all-custom-core-SPI
+        // deployment would gate the Redis connection off and the default directory couldn't autowire it.
+        boolean meshEnabled = Boolean.parseBoolean(ctx.getEnvironment()
+                .getProperty("server.netty.websocket.cluster.mesh.enable", "false"));
+        return meshEnabled && !hasBean(bf, MeshNodeDirectory.class);
     }
 
     private static boolean hasBean(ConfigurableListableBeanFactory bf, Class<?> type) {

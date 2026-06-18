@@ -110,10 +110,16 @@ public class NettyWebSocketClusterConfigure {
     /** SpEL: nats.servers is non-empty → use the NATS broker. */
     static final String NATS_TRANSPORT =
             "!('${server.netty.websocket.cluster.nats.servers:}'.trim().isEmpty())";
-    /** Standalone Redis broker: cluster-nodes empty AND nats.servers empty. */
-    static final String STANDALONE_REDIS_BROKER = STANDALONE_TRANSPORT + " and " + NO_NATS_TRANSPORT;
+    /** SpEL: mesh.enable == true → use the node-to-node mesh TCP broker (1.10.0-RC4a). */
+    static final String MESH_TRANSPORT = "${server.netty.websocket.cluster.mesh.enable:false}";
+    /** SpEL: mesh disabled. */
+    static final String NO_MESH = "!(${server.netty.websocket.cluster.mesh.enable:false})";
+    /** Standalone Redis broker: cluster-nodes empty AND nats.servers empty AND mesh disabled. */
+    static final String STANDALONE_REDIS_BROKER = STANDALONE_TRANSPORT + " and " + NO_NATS_TRANSPORT + " and " + NO_MESH;
     /** Cluster Redis broker: cluster-nodes set AND nats.servers empty. */
     static final String CLUSTER_REDIS_BROKER = CLUSTER_TRANSPORT + " and " + NO_NATS_TRANSPORT;
+    /** Mesh broker: mesh.enable AND standalone Redis path AND no NATS (registry/heartbeat stay on Redis). */
+    static final String STANDALONE_MESH_BROKER = MESH_TRANSPORT + " and " + STANDALONE_TRANSPORT + " and " + NO_NATS_TRANSPORT;
 
     /** SpEL: nats.registry == true. */
     static final String NATS_REGISTRY =
@@ -319,6 +325,47 @@ public class NettyWebSocketClusterConfigure {
         // (Base64 ~+33% + envelope metadata). 0 (unlimited) outbound => unlimited inbound.
         int maxOut = properties.getMessageMaxSizeBytes();
         broker.setInboundMaxBytes(maxOut > 0 ? (int) Math.min((long) maxOut * 2L, Integer.MAX_VALUE) : 0);
+        return broker;
+    }
+
+    // ---- Mesh broker (node-to-node TCP; active when mesh.enable=true on the standalone Redis path) — 1.10.0-RC4a ----
+
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnExpression(STANDALONE_MESH_BROKER)
+    @ConditionalOnMissingBean(com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshNodeDirectory.class)
+    public com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshNodeDirectory meshNodeDirectory(
+            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterRedisConnection")
+            StatefulRedisConnection<String, String> connection) {
+        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.mesh.RedisMeshNodeDirectory(connection);
+    }
+
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnExpression(STANDALONE_MESH_BROKER)
+    @ConditionalOnMissingBean(ClusterBroker.class)
+    public ClusterBroker clusterBrokerMesh(ClusterProperties properties, ClusterNodeManager nodeManager,
+            EnvelopeCodec envelopeCodec, MessageAuthenticator messageAuthenticator,
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshNodeDirectory meshNodeDirectory)
+            throws Exception {
+        ClusterProperties.Mesh m = properties.getMesh();
+        // M4: fail fast rather than silently advertise a wrong/unreachable (e.g. loopback) host.
+        String advertisedHost = com.github.berrywang1996.netty.spring.web.websocket.cluster.mesh.MeshAddressResolver
+                .resolve(m.getAdvertisedHost());
+        if (!properties.getAuth().isEnable()) {
+            log.warn("Mesh transport listens on {}:{} with NO envelope auth (HMAC) — ensure the mesh network is "
+                    + "isolated, or set server.netty.websocket.cluster.auth.enable=true", m.getBindAddress(), m.getPort());
+        }
+        int maxOut = properties.getMessageMaxSizeBytes();
+        int maxFrame = m.getMaxFrameBytes() > 0 ? m.getMaxFrameBytes()
+                : (maxOut > 0 ? (int) Math.min((long) maxOut * 2L, Integer.MAX_VALUE) : 1_048_576);
+        com.github.berrywang1996.netty.spring.web.websocket.cluster.mesh.MeshBroker broker =
+                new com.github.berrywang1996.netty.spring.web.websocket.cluster.mesh.MeshBroker(
+                        nodeManager.getNodeId(), meshNodeDirectory, envelopeCodec, messageAuthenticator,
+                        new com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterRuntimeStats(),
+                        m.getBindAddress(), m.getPort(), advertisedHost, maxFrame, m.getAdvertiseTtlMs(),
+                        m.getWriteBufferLowWaterMark(), m.getWriteBufferHighWaterMark());
+        broker.start();
+        log.info("Cluster broker = MESH (node-to-node TCP {}:{}) — registry/heartbeat remain on Redis",
+                m.getBindAddress(), m.getPort());
         return broker;
     }
 

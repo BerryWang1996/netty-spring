@@ -139,6 +139,9 @@ public class ClusterProperties {
     /** Opt-in multi-device aggregate presence + presence-change events (1.10.0-RC3). Disabled by default. */
     private Presence presence = new Presence();
 
+    /** Opt-in node-to-node mesh TCP transport (1.10.0-RC4a). Disabled by default; Redis registry retained. */
+    private Mesh mesh = new Mesh();
+
     // ---- Getters / Setters ----
 
     public boolean isEnable() { return enable; }
@@ -209,6 +212,9 @@ public class ClusterProperties {
 
     public Offline getOffline() { return offline; }
     public void setOffline(Offline offline) { this.offline = offline; }
+
+    public Mesh getMesh() { return mesh; }
+    public void setMesh(Mesh mesh) { this.mesh = mesh; }
 
     public Presence getPresence() { return presence; }
     public void setPresence(Presence presence) { this.presence = presence; }
@@ -425,6 +431,58 @@ public class ClusterProperties {
 
         public boolean isRegistry() { return registry; }
         public void setRegistry(boolean registry) { this.registry = registry; }
+    }
+
+    /**
+     * Node-to-node mesh TCP transport (1.10.0-RC4a). When {@code enable=true} the {@code MeshBroker} replaces the
+     * Redis Pub/Sub broker (registry/heartbeat stay on Redis — discovery off the message hot path). Requires the
+     * standalone Redis path (not Redis-Cluster mode, not all-NATS).
+     */
+    public static class Mesh {
+        /** Master switch. Default false — opt-in only. */
+        private boolean enable = false;
+        /** TCP port this node listens on AND advertises to peers. */
+        private int port = 9700;
+        /** Host advertised to peers. Null/empty = auto-detect a non-loopback site-local IP (fail-fast if only
+         *  loopback — containers/NAT/k8s MUST set this explicitly). */
+        private String advertisedHost;
+        /** Local bind interface for the inbound server. */
+        private String bindAddress = "0.0.0.0";
+        /** TCP connect timeout (ms) to a peer. */
+        private long connectTimeoutMs = 5000;
+        /** Idle timeout (ms) on a peer connection. */
+        private long idleTimeoutMs = 60000;
+        /** Max inbound frame bytes (reject larger — prevents OOM from a corrupt length prefix). 0 = use
+         *  {@code message-max-size-bytes} (×2 headroom). */
+        private int maxFrameBytes = 0;
+        /** Outbound write-buffer HIGH watermark (bytes): past this a peer channel is !writable and frames are
+         *  dropped+counted, never buffered unboundedly (the slow-peer OOM guard). */
+        private int writeBufferHighWaterMark = 65536;
+        /** Outbound write-buffer LOW watermark (bytes): the channel becomes writable again below this. */
+        private int writeBufferLowWaterMark = 32768;
+        /** Directory advertisement TTL (ms); refreshed every ~ttl/3 by the membership tick. */
+        private long advertiseTtlMs = 30000;
+
+        public boolean isEnable() { return enable; }
+        public void setEnable(boolean enable) { this.enable = enable; }
+        public int getPort() { return port; }
+        public void setPort(int port) { this.port = port; }
+        public String getAdvertisedHost() { return advertisedHost; }
+        public void setAdvertisedHost(String advertisedHost) { this.advertisedHost = advertisedHost; }
+        public String getBindAddress() { return bindAddress; }
+        public void setBindAddress(String bindAddress) { this.bindAddress = bindAddress; }
+        public long getConnectTimeoutMs() { return connectTimeoutMs; }
+        public void setConnectTimeoutMs(long connectTimeoutMs) { this.connectTimeoutMs = connectTimeoutMs; }
+        public long getIdleTimeoutMs() { return idleTimeoutMs; }
+        public void setIdleTimeoutMs(long idleTimeoutMs) { this.idleTimeoutMs = idleTimeoutMs; }
+        public int getMaxFrameBytes() { return maxFrameBytes; }
+        public void setMaxFrameBytes(int maxFrameBytes) { this.maxFrameBytes = maxFrameBytes; }
+        public int getWriteBufferHighWaterMark() { return writeBufferHighWaterMark; }
+        public void setWriteBufferHighWaterMark(int v) { this.writeBufferHighWaterMark = v; }
+        public int getWriteBufferLowWaterMark() { return writeBufferLowWaterMark; }
+        public void setWriteBufferLowWaterMark(int v) { this.writeBufferLowWaterMark = v; }
+        public long getAdvertiseTtlMs() { return advertiseTtlMs; }
+        public void setAdvertiseTtlMs(long advertiseTtlMs) { this.advertiseTtlMs = advertiseTtlMs; }
     }
 
     /** Behavior when the cluster transport (Redis) is lost. */

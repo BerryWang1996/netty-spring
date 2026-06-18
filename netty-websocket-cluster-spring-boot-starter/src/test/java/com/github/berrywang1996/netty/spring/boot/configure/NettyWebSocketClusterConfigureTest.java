@@ -135,6 +135,55 @@ class NettyWebSocketClusterConfigureTest {
     }
 
     @Test
+    void meshEnabled_clusterBrokerIsMesh_notRedis_andDirectoryPresent() throws Exception {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        int meshPort;
+        try (java.net.ServerSocket s = new java.net.ServerSocket(0)) {
+            meshPort = s.getLocalPort();
+        }
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-mesh-node",
+                        "server.netty.websocket.cluster.mesh.enable=true",
+                        "server.netty.websocket.cluster.mesh.bind-address=127.0.0.1",
+                        "server.netty.websocket.cluster.mesh.advertised-host=127.0.0.1",
+                        "server.netty.websocket.cluster.mesh.port=" + meshPort,
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    // mesh.enable=true → the ClusterBroker is the MeshBroker, NOT the Redis Pub/Sub broker.
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.mesh.MeshBroker.class);
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisPubSubBroker.class);
+                    // the node-address directory is wired (registry/heartbeat stay on Redis).
+                    assertThat(context).hasSingleBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshNodeDirectory.class);
+                    assertThat(context.getBean(MessageSender.class)).isInstanceOf(ClusterMessageSender.class);
+                });
+    }
+
+    @Test
+    void meshDisabled_clusterBrokerIsRedis_noMeshBeans() {
+        Assumptions.assumeTrue(redisAvailable, "Redis not available on " + REDIS_URI);
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.redis.uri=" + REDIS_URI,
+                        "server.netty.websocket.cluster.node-id=ctx-nomesh-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker.class))
+                            .isInstanceOf(com.github.berrywang1996.netty.spring.web.websocket.cluster.redis.RedisPubSubBroker.class);
+                    assertThat(context).doesNotHaveBean(
+                            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshNodeDirectory.class);
+                });
+    }
+
+    @Test
     void clusterNodesSet_usesRedisClusterTransport_notStandalone() {
         Assumptions.assumeTrue(ClusterTestRedisCluster.available(),
                 "no single-node Redis Cluster (no env cluster + no Docker)");
