@@ -38,14 +38,19 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class MeshDegradeTest {
 
     private MeshBroker broker;
+    private InMemoryMeshNodeDirectory dir;
+    /** Mutable heartbeat-dead view fed to the broker (RC4a MF1) — tests toggle membership liveness through it. */
+    private final java.util.Set<String> deadNodes = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final AtomicInteger lost = new AtomicInteger();
     private final AtomicInteger restored = new AtomicInteger();
 
     @BeforeEach
     void setUp() throws Exception {
-        broker = new MeshBroker("node-A", new InMemoryMeshNodeDirectory(), new SimpleTextEnvelopeCodec(),
+        dir = new InMemoryMeshNodeDirectory();
+        broker = new MeshBroker("node-A", dir, new SimpleTextEnvelopeCodec(),
                 new NoOpMessageAuthenticator(), new ClusterRuntimeStats(),
-                "127.0.0.1", 0, "127.0.0.1", 1_048_576, 30000, 32768, 65536);
+                "127.0.0.1", 0, "127.0.0.1", 1_048_576, 30000, 32768, 65536, 300);
+        broker.setDeadNodeView(() -> deadNodes);
         broker.setTransportStateListener(new ClusterBroker.TransportStateListener() {
             @Override
             public void onTransportLost() {
@@ -95,5 +100,41 @@ class MeshDegradeTest {
         broker.evaluateReachability(0, 0); // single-node cluster — isolation needs peers-it-should-reach
         assertEquals(BrokerState.ACTIVE, broker.state());
         assertEquals(0, lost.get());
+    }
+
+    @Test
+    void isolationClears_whenNoLivePeersRemain_restores() {
+        // RC4a MF1: a degraded sole-survivor whose peers all become heartbeat-dead (shouldReach drops to 0) must
+        // recover — otherwise it latches DEGRADED forever, since recovery never sees reachable > 0 on a lone node.
+        broker.evaluateReachability(2, 0); // total isolation → DEGRADED
+        assertEquals(BrokerState.DEGRADED, broker.state());
+        broker.evaluateReachability(0, 0); // every advertised peer now gone/heartbeat-dead → not isolated → restore
+        assertEquals(BrokerState.ACTIVE, broker.state());
+        assertEquals(1, restored.get());
+    }
+
+    @Test
+    void heartbeatDeadPeer_isNotAMembershipObligation_noFalseDegrade() throws Exception {
+        // RC4a MF1: a peer is advertised (mesh address still present) but UNREACHABLE, and the heartbeat already
+        // declared it DEAD. It must NOT count toward "peers I should reach", so a healthy sole-survivor stays ACTIVE.
+        int deadPort = freePort(); // nothing listens here → connect refused immediately
+        dir.advertise("dead-peer", "127.0.0.1", deadPort, 30000).toCompletableFuture().join();
+        deadNodes.add("dead-peer");
+        broker.membershipTick(); // peers={dead-peer} but heartbeat-dead → shouldReach=0 → NOT isolated
+        assertEquals(BrokerState.ACTIVE, broker.state());
+        assertEquals(0, lost.get());
+
+        // Now the heartbeat says the peer is alive again, yet it is still unreachable → genuine TOTAL isolation.
+        deadNodes.clear();
+        broker.membershipTick(); // peers={dead-peer}, live, unreachable → shouldReach=1, reachable=0 → degrade
+        assertEquals(BrokerState.DEGRADED, broker.state());
+        assertEquals(1, lost.get());
+    }
+
+    /** A momentarily-free localhost port (nothing listening) so an outbound connect is refused fast. */
+    private static int freePort() throws Exception {
+        try (java.net.ServerSocket s = new java.net.ServerSocket(0)) {
+            return s.getLocalPort();
+        }
     }
 }

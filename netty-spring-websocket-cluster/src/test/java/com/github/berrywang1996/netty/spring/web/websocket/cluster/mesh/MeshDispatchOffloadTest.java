@@ -53,7 +53,7 @@ class MeshDispatchOffloadTest {
         EnvelopeCodec codec = new SimpleTextEnvelopeCodec();
         MessageAuthenticator auth = new NoOpMessageAuthenticator();
         broker = new MeshBroker("node-A", new InMemoryMeshNodeDirectory(), codec, auth, new ClusterRuntimeStats(),
-                "127.0.0.1", 0, "127.0.0.1", 1_048_576, 30000, 32768, 65536);
+                "127.0.0.1", 0, "127.0.0.1", 1_048_576, 30000, 32768, 65536, 5000);
 
         CompletableFuture<String> listenerThread = new CompletableFuture<>();
         broker.subscribe("/ws/chat", env -> listenerThread.complete(Thread.currentThread().getName()));

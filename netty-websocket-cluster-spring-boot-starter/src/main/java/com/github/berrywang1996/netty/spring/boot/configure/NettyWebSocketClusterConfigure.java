@@ -344,6 +344,7 @@ public class NettyWebSocketClusterConfigure {
     @ConditionalOnMissingBean(ClusterBroker.class)
     public ClusterBroker clusterBrokerMesh(ClusterProperties properties, ClusterNodeManager nodeManager,
             EnvelopeCodec envelopeCodec, MessageAuthenticator messageAuthenticator,
+            ClusterNodeHeartbeat clusterNodeHeartbeat,
             com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshNodeDirectory meshNodeDirectory)
             throws Exception {
         ClusterProperties.Mesh m = properties.getMesh();
@@ -362,7 +363,12 @@ public class NettyWebSocketClusterConfigure {
                         nodeManager.getNodeId(), meshNodeDirectory, envelopeCodec, messageAuthenticator,
                         new com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterRuntimeStats(),
                         m.getBindAddress(), m.getPort(), advertisedHost, maxFrame, m.getAdvertiseTtlMs(),
-                        m.getWriteBufferLowWaterMark(), m.getWriteBufferHighWaterMark());
+                        m.getWriteBufferLowWaterMark(), m.getWriteBufferHighWaterMark(), m.getConnectTimeoutMs());
+        // MF1: membership = live-by-heartbeat ∩ has-address. Subtract heartbeat-expired peers from the directory so a
+        // crashed peer whose mesh address has not yet TTL-expired never counts as "a peer I should reach" — otherwise a
+        // healthy sole-survivor false-degrades (and under on-redis-loss=CLOSE_ALL force-closes all local clients).
+        long hbTimeoutMs = properties.getHeartbeatTimeoutSeconds() * 1000L;
+        broker.setDeadNodeView(() -> new java.util.HashSet<>(clusterNodeHeartbeat.findExpiredNodes(hbTimeoutMs)));
         broker.start();
         log.info("Cluster broker = MESH (node-to-node TCP {}:{}) — registry/heartbeat remain on Redis",
                 m.getBindAddress(), m.getPort());

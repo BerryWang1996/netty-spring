@@ -42,7 +42,7 @@ class MeshBackpressureTest {
     private MeshBroker broker() {
         return new MeshBroker("node-A", new InMemoryMeshNodeDirectory(), new SimpleTextEnvelopeCodec(),
                 new NoOpMessageAuthenticator(), stats,
-                "127.0.0.1", 0, "127.0.0.1", 1_048_576, 30000, 32768, 65536);
+                "127.0.0.1", 0, "127.0.0.1", 1_048_576, 30000, 32768, 65536, 5000);
     }
 
     @Test

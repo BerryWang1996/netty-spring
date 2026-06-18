@@ -42,11 +42,14 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.Collections;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /**
  * {@link ClusterBroker} over direct node-to-node Netty TCP (1.10.0-RC4a) — a drop-in for {@code RedisPubSubBroker}
@@ -79,6 +82,9 @@ public class MeshBroker implements ClusterBroker {
     private final long advertiseTtlMs;
     private final int writeBufferLowWaterMark;
     private final int writeBufferHighWaterMark;
+    /** RC4a MF2: TCP connect timeout (ms) applied to the outbound bootstrap (ChannelOption.CONNECT_TIMEOUT_MILLIS) so a
+     *  dead/black-holing peer can't block the publish/unicast caller thread for Netty's 30s default. */
+    private final long connectTimeoutMs;
 
     private final ConcurrentHashMap<String, ClusterMessageListener> broadcastListeners = new ConcurrentHashMap<>();
     private final AtomicReference<ClusterMessageListener> unicastListener = new AtomicReference<>();
@@ -87,6 +93,17 @@ public class MeshBroker implements ClusterBroker {
 
     private final AtomicReference<BrokerState> state = new AtomicReference<>(BrokerState.RESYNC);
     private volatile TransportStateListener transportStateListener;
+
+    /**
+     * RC4a MF1: heartbeat-liveness view for membership intersection. Supplies the node IDs the cluster heartbeat
+     * currently considers DEAD (expired). {@link #membershipTick()} subtracts these from the directory's advertised
+     * peers so mesh membership is the spec-mandated {@code live-by-heartbeat ∩ has-address} ({@link MeshNodeDirectory}
+     * contract): a crashed peer whose mesh address has not yet TTL-expired never counts toward "peers I should reach",
+     * so a healthy sole-survivor can't false-degrade (and, under {@code on-redis-loss=CLOSE_ALL}, force-close every
+     * local client). Default (unset) = empty set = trust the directory verbatim (legacy behavior / tests with no
+     * heartbeat). Wired by auto-config to {@code () -> heartbeat.findExpiredNodes(timeoutMs)}.
+     */
+    private volatile Supplier<Set<String>> deadNodeView = Collections::emptySet;
 
     /** Dispatch pool (RC4a M3): the listener callback (local fan-out / app work) runs HERE, never on the Netty I/O
      *  event loop — decode happens on the loop, delivery is handed off. Mirrors the other Redis SPIs' dedicated pools. */
@@ -102,7 +119,7 @@ public class MeshBroker implements ClusterBroker {
     public MeshBroker(String nodeId, MeshNodeDirectory directory, EnvelopeCodec codec,
                       MessageAuthenticator authenticator, ClusterRuntimeStats stats,
                       String bindAddress, int port, String advertisedHost, int maxFrameBytes, long advertiseTtlMs,
-                      int writeBufferLowWaterMark, int writeBufferHighWaterMark) {
+                      int writeBufferLowWaterMark, int writeBufferHighWaterMark, long connectTimeoutMs) {
         this.nodeId = nodeId;
         this.directory = directory;
         this.codec = codec;
@@ -115,6 +132,7 @@ public class MeshBroker implements ClusterBroker {
         this.advertiseTtlMs = advertiseTtlMs;
         this.writeBufferLowWaterMark = writeBufferLowWaterMark;
         this.writeBufferHighWaterMark = writeBufferHighWaterMark;
+        this.connectTimeoutMs = connectTimeoutMs;
         this.dispatchExecutor = java.util.concurrent.Executors.newFixedThreadPool(2, namedThreads("cluster-mesh-dispatch"));
     }
 
@@ -140,6 +158,11 @@ public class MeshBroker implements ClusterBroker {
         clientBootstrap.group(workerGroup)
                 .channel(NioSocketChannel.class)
                 .option(ChannelOption.SO_KEEPALIVE, true)
+                // RC4a MF2: bound the blocking connect (connectionTo does cf.sync() on the publish/unicast caller
+                // thread) so a dead/black-holing peer can't stall the hot path for Netty's 30s default. Honors the
+                // documented server.netty.websocket.cluster.mesh.connect-timeout-ms knob.
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS,
+                        (int) Math.min(Math.max(connectTimeoutMs, 1L), Integer.MAX_VALUE))
                 // RC4a M1 (the verified BLOCKER): bound the outbound buffer so a SLOW peer can't accumulate
                 // unflushed writes and OOM the sender. Past the high mark the channel goes !writable and sendTo drops.
                 .option(ChannelOption.WRITE_BUFFER_WATER_MARK,
@@ -166,19 +189,29 @@ public class MeshBroker implements ClusterBroker {
     }
 
     /** Re-advertise this node, proactively (re)connect to known peers so broadcast doesn't pay connect latency, and
-     *  evaluate isolation. Best-effort; never throws out of the scheduler. */
-    private void membershipTick() {
+     *  evaluate isolation. Best-effort; never throws out of the scheduler. Package-visible for the regression test. */
+    void membershipTick() {
         try {
             directory.advertise(nodeId, advertisedHost, port, advertiseTtlMs);
             Map<String, String> peers = directory.peers(nodeId).toCompletableFuture().join();
+            // RC4a MF1: membership = live-by-heartbeat ∩ has-address. A peer the cluster heartbeat already declared
+            // DEAD is not a membership obligation even if its advertised mesh address still lingers until TTL — so it
+            // must not count toward shouldReach (else a healthy sole-survivor false-degrades on stale dead-peer
+            // addresses). deadNodeView defaults to empty (trust the directory) when no heartbeat is wired.
+            Set<String> dead = deadNodeView.get();
+            int shouldReach = 0;
             int reachable = 0;
             for (Map.Entry<String, String> e : peers.entrySet()) {
+                if (dead != null && dead.contains(e.getKey())) {
+                    continue; // heartbeat-dead peer — drop its lingering address from the membership view
+                }
+                shouldReach++;
                 Channel ch = connectionTo(e.getKey(), e.getValue());
                 if (ch != null && ch.isActive()) {
                     reachable++;
                 }
             }
-            evaluateReachability(peers.size(), reachable);
+            evaluateReachability(shouldReach, reachable);
         } catch (Exception e) {
             log.debug("mesh membership tick failed", e);
         }
@@ -203,7 +236,12 @@ public class MeshBroker implements ClusterBroker {
                     l.onTransportLost();
                 }
             }
-        } else if (reachable > 0) {
+        } else {
+            // NOT isolated — either a peer is reachable (reachable > 0), OR there are no live peers to reach at all
+            // (shouldReach == 0: I'm alone, or every advertised peer is heartbeat-dead). Both mean "not cut off from
+            // the mesh", so clear any prior mesh-degrade. The shouldReach == 0 case is load-bearing (RC4a MF1): without
+            // it a true sole-survivor that briefly degraded on a stale dead-peer address would latch DEGRADED forever,
+            // since recovery only ever fires on reachable > 0 — which a lone node never sees.
             if (state.compareAndSet(BrokerState.DEGRADED, BrokerState.ACTIVE)) {
                 log.info("MeshBroker node {} recovered — {} of {} peers reachable", nodeId, reachable, shouldReach);
                 TransportStateListener l = transportStateListener;
@@ -337,7 +375,9 @@ public class MeshBroker implements ClusterBroker {
         });
     }
 
-    private Channel connectionTo(String peerNodeId, String addr) {
+    /** Returns a live outbound channel to a peer, dialing (and caching) one if needed. Package-visible for the
+     *  regression test. */
+    Channel connectionTo(String peerNodeId, String addr) {
         Channel existing = outbound.get(peerNodeId);
         if (existing != null && existing.isActive()) {
             return existing;
@@ -357,12 +397,22 @@ public class MeshBroker implements ClusterBroker {
             return null;
         }
         ch.closeFuture().addListener(f -> outbound.remove(peerNodeId, ch));
-        Channel prev = outbound.putIfAbsent(peerNodeId, ch);
-        if (prev != null && prev.isActive()) {
-            ch.close();
-            return prev;
+        // RC4a BL1: cache the fresh channel, REPLACING any dead-but-still-mapped entry. A plain putIfAbsent would
+        // return a dead prev (its async closeFuture-remove hasn't fired yet) WITHOUT storing ch — orphaning a live
+        // connection (fd leak) and re-dialing on every send to a flapping peer. The CAS loop evicts the dead entry and
+        // retries, so we either store ch or hand back a genuinely live prev (the legitimate double-connect race).
+        for (;;) {
+            Channel prev = outbound.putIfAbsent(peerNodeId, ch);
+            if (prev == null) {
+                return ch; // cached fresh
+            }
+            if (prev.isActive()) {
+                ch.close(); // another thread already cached a live channel — drop ours
+                return prev;
+            }
+            // prev is dead but still mapped — evict it, then loop to retry the insert (so ch actually gets cached).
+            outbound.remove(peerNodeId, prev);
         }
-        return ch;
     }
 
     /** Decodes one inbound frame and dispatches to the registered local listener by kind/URI. */
@@ -411,9 +461,30 @@ public class MeshBroker implements ClusterBroker {
         }
     }
 
+    /**
+     * RC4a MF1: sets the heartbeat-liveness view used to intersect the directory's advertised peers down to
+     * {@code live-by-heartbeat ∩ has-address} (see {@link #deadNodeView}). Wired by auto-config to the cluster
+     * heartbeat's expired-node set. Null = keep the default (empty = trust the directory verbatim).
+     */
+    public void setDeadNodeView(Supplier<Set<String>> deadNodeView) {
+        if (deadNodeView != null) {
+            this.deadNodeView = deadNodeView;
+        }
+    }
+
     /** Test hook: the node-address directory (package-visible). */
     MeshNodeDirectory directoryForTest() {
         return directory;
+    }
+
+    /** Test hook: the outbound channel cache (package-visible) — for the dead-entry-replacement regression test. */
+    Map<String, Channel> outboundForTest() {
+        return outbound;
+    }
+
+    /** Test hook: the outbound client bootstrap (package-visible) — to assert ChannelOptions (e.g. connect timeout). */
+    Bootstrap clientBootstrapForTest() {
+        return clientBootstrap;
     }
 
     private void checkActive() {

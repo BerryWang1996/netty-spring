@@ -24,6 +24,7 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.BrokerSta
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterSubscription;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshNodeDirectory;
+import io.netty.channel.Channel;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,7 +37,11 @@ import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /** Two real MeshBrokers on ephemeral localhost ports (in-JVM, no Redis): direct unicast + naive broadcast over TCP,
  *  self-suppression (no loopback to the publisher), state, and subscribe/unsubscribe. */
@@ -67,7 +72,7 @@ class MeshBrokerTest {
 
     private MeshBroker newBroker(String nodeId, int port) {
         return new MeshBroker(nodeId, dir, new SimpleTextEnvelopeCodec(), new NoOpMessageAuthenticator(),
-                new ClusterRuntimeStats(), "127.0.0.1", port, "127.0.0.1", 1_048_576, 30000, 32768, 65536);
+                new ClusterRuntimeStats(), "127.0.0.1", port, "127.0.0.1", 1_048_576, 30000, 32768, 65536, 5000);
     }
 
     @AfterEach
@@ -143,5 +148,22 @@ class MeshBrokerTest {
         assertTrue(sub.isActive());
         sub.unsubscribe();
         assertFalse(sub.isActive());
+    }
+
+    @Test
+    void connectionTo_replacesDeadCachedChannel_noLeak() throws Exception {
+        // RC4a BL1: a dead-but-still-mapped outbound entry (its async closeFuture-remove hasn't fired yet) must be
+        // EVICTED and replaced by the freshly dialed live channel — not left in the map while the new channel is
+        // returned-but-never-cached (a connection/fd leak + per-send reconnect storm on a flapping peer).
+        Channel dead = mock(Channel.class);
+        when(dead.isActive()).thenReturn(false);
+        a.outboundForTest().put("node-B", dead);
+
+        String addrB = a.directoryForTest().peers("node-A").toCompletableFuture().join().get("node-B");
+        Channel live = a.connectionTo("node-B", addrB);
+
+        assertNotNull(live, "a live channel to node-B was dialed");
+        assertTrue(live.isActive(), "the returned channel is live");
+        assertSame(live, a.outboundForTest().get("node-B"), "the dead entry was replaced by the live channel (no leak)");
     }
 }
