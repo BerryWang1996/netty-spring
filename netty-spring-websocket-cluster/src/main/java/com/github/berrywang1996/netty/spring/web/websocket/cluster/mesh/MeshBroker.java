@@ -105,6 +105,9 @@ public class MeshBroker implements ClusterBroker {
      */
     private volatile Supplier<Set<String>> deadNodeView = Collections::emptySet;
 
+    /** RC4b: send-side interest routing (null = no routing → all-peers, RC4a behavior). */
+    private volatile MeshInterestRouter interestRouter;
+
     /** Dispatch pool (RC4a M3): the listener callback (local fan-out / app work) runs HERE, never on the Netty I/O
      *  event loop — decode happens on the loop, delivery is handed off. Mirrors the other Redis SPIs' dedicated pools. */
     private final java.util.concurrent.ExecutorService dispatchExecutor;
@@ -259,8 +262,23 @@ public class MeshBroker implements ClusterBroker {
         checkActive();
         String wrapped = authenticator.wrap(codec.encode(envelope));
         Map<String, String> peers = directory.peers(nodeId).toCompletableFuture().join();
+        MeshInterestRouter router = this.interestRouter;
+        // RC4b: null => no routing / reserved channel / read failure => all-peers (RC4a). A non-null set (possibly
+        // empty) is authoritative => skip peers with no live session for this uri.
+        Set<String> interested = (router == null) ? null : router.nodesForUriCached(uri);
         for (Map.Entry<String, String> e : peers.entrySet()) {
+            if (interested != null && !interested.contains(e.getKey())) {
+                continue; // peer has no live audience for this uri
+            }
             sendTo(e.getKey(), e.getValue(), wrapped);
+        }
+    }
+
+    @Override
+    public void onNodeLeft(String nodeId) {
+        MeshInterestRouter router = this.interestRouter;
+        if (router != null) {
+            router.onNodeLeft(nodeId);
         }
     }
 
@@ -470,6 +488,12 @@ public class MeshBroker implements ClusterBroker {
         if (deadNodeView != null) {
             this.deadNodeView = deadNodeView;
         }
+    }
+
+    /** RC4b: sets the interest router so {@link #publish} targets only peers hosting a live session for the URI.
+     *  Null keeps RC4a all-peers. */
+    public void setInterestRouter(MeshInterestRouter interestRouter) {
+        this.interestRouter = interestRouter;
     }
 
     /** Test hook: the node-address directory (package-visible). */
