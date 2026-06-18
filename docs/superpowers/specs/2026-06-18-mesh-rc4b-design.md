@@ -1,14 +1,17 @@
 # RC4b — Interest-routed mesh broadcast (design)
 
-**Status:** design — **design-review + re-review folded** (v3). **Branch:** `feature/1.10.0-mesh-rc4b` (off `v1.10.0-RC4a`).
+**Status:** design — **three adversarial review rounds folded; plan-ready** (v3.1). **Branch:** `feature/1.10.0-mesh-rc4b` (off `v1.10.0-RC4a`).
 **Module:** `netty-spring-websocket-cluster`. **Stack:** Boot 2.7 + Netty 4.1 + Lettuce 6.1, JDK 17.
 
 > **Design-review corrections (recorded — this project's honest-engineering bar, like RC1's shard-ring→node-set).**
-> Two adversarial review rounds shaped this spec (archived under `docs/superpowers/notes/`):
+> Three adversarial review rounds shaped this spec (archived under `docs/superpowers/notes/`):
 > **Round 1** (`2026-06-18-rc4b-mesh-design-review.json`, 31 agents, `fixDesignFirst`) killed v1's
 > registered-`@MessageMapping`-grained interest (zero reduction on a homogeneous fleet). **Round 2**
 > (`2026-06-18-rc4b-mesh-rereview.json`, 20 agents) confirmed v2's session-grained pivot resolved 5/6 root flaws but
-> caught **3 new flaws v2 introduced** plus an unsound flaw-F resolution. v3 folds all of them:
+> caught **3 new flaws v2 introduced** plus an unsound flaw-F resolution. **Round 3**
+> (`2026-06-18-rc4b-mesh-v3-verify.json`, 10 agents) confirmed all four round-2 must-fixes genuinely resolved against
+> the real RC1 code and caught **one new MAJOR** — the interest send-cache had two named owners (broker router vs
+> sender) — folded as v3.1 (§4.5 broker `onNodeLeft` hook; §12 R6). The cumulative folds:
 > - **Interest is session-grained AND the node-set flip is decided atomically in Redis (RC1-exact).** A node is
 >   interested in `uri` iff it currently has ≥1 live local session. v2 put the per-URI session count in a JVM map and
 >   fired two *independent, unordered* Redis writes (`SADD` on first / `SREM`-Lua on last) — a same-node
@@ -72,8 +75,10 @@ that URI. The honest scope, stated up front:
   topics also stop paying all-peers fan-out.
 
 - **Use rooms, not per-entity URIs, for high-cardinality topics.** Session-grained interest creates Redis keys per
-  *distinct URI*. That is the right tool for a **moderate** number of partitioned topics (per-feature, support/admin,
-  a handful of large tenants) — tens to low-hundreds. A per-conversation `/ws/conv-{id}` design (millions of URIs)
+  *distinct URI*. This is a **URI-cardinality** bound (keep it to a **moderate** number of partitioned topics —
+  per-feature, support/admin, a handful of tenant/region topics — tens to low-hundreds), independent of the
+  *reduction-efficacy* precondition above (a topic can be cheap on key count yet still reduce poorly if its live
+  population saturates nodes). A per-conversation `/ws/conv-{id}` design (millions of URIs)
   must use **RC1 rooms** (one `/ws/chat` URI + many rooms), which are built for exactly that cardinality.
 
 **One-line scope:** RC4b makes `MeshBroker.publish(uri)` route to `interestedNodes(uri) ∩ live-mesh-membership` (via a
@@ -201,6 +206,14 @@ This is `RedisRoomRegistry` with the room dimension collapsed away: the per-node
 instead of `(uri,room,node)`, and `nodesForUri` is `nodesForRoom` without the room. The atomic in-EVAL 0↔1 decision —
 the property the v2 JVM-count approach lost — is restored verbatim. Dedicated executor like the other Redis SPIs.
 
+Implementation notes (follow `RedisRoomRegistry` verbatim): the `:n:` node token is **appended raw** like RC1
+(`PREFIX + tag + ":n:" + b64node`), *not* literally brace-wrapped — only the leading `{b64uri}` is the hash-tag
+(Redis hashes the first brace-pair, so even a stray second pair is harmless, but append raw to match RC1).
+`removeAllForNode` derives the node-set key by **substring-stripping** the `:n:{node}` suffix and appending `:nodes`
+(RC1 lines 264-265), no `b64uri` re-parsing needed. The room dimension's per-session reverse index
+(`roomsBySession`) is **not** needed here: `subscribe`/`unsubscribe` receive `(uri, sessionId, nodeId)` directly, so
+there is no reverse lookup to maintain.
+
 ### 4.3 Interest wiring (`ClusterMessageSender` / `ClusterSessionHookImpl`) — per-session, no JVM counter
 
 The hooks already fire per session: `ClusterSessionHookImpl.onSessionRegistered` → `clusterSender.onLocalUriActive(uri, sessionId)`
@@ -279,18 +292,38 @@ This null⇒fallback / empty⇒authoritative split is the load-bearing safety co
 would silently drop a whole broadcast on a transient Redis error). Three tests pin it (§9): read-timeout ⇒ all-peers
 (not cached); authoritative-empty ⇒ no peers; reserved channel ⇒ all-peers.
 
-The cache + registry live in a small `MeshInterestRouter` collaborator injected into `MeshBroker` (mirrors how
-`ClusterMessageSender` owns `nodesForRoomCached`). `nodesForUriCached` reuses RC1's `CachedNodeSet` 5s-TTL +
-lookup-timeout-bounded + `NODE_LEFT`-clear shape, with the null-on-failure (uncached) sentinel above. When the
-registry bean is absent (custom mesh without interest), the router returns `null` ⇒ all-peers.
+The cache **and** the registry handle live in a small `MeshInterestRouter` collaborator **owned by `MeshBroker`**
+(not by `ClusterMessageSender` — unlike rooms, the publish/route path is in the broker, so its cache must be too).
+`nodesForUriCached` reuses RC1's `CachedNodeSet` 5s-TTL + lookup-timeout-bounded shape, with the null-on-failure
+(uncached) sentinel above. When the registry bean is absent (custom mesh without interest), the router returns `null`
+⇒ all-peers. Because the cache lives in the broker, the dead-node cache-clear is reached through a broker hook, not an
+in-place `clear()` on the sender (§4.5).
 
-### 4.5 Dead-node + cache wiring
+### 4.5 Dead-node + cache wiring (via a broker hook — cache ownership reconciled)
 
-`invalidateCacheForNode(deadNodeId)` already clears the room cache + calls `roomRegistry.removeAllForNode` on the
-leader-elected reaped path (verified: the sole production caller of the dead-node callback is inside
-`ClusterNodeManager`'s `reaper.tryClaim` guard). RC4b adds the symmetric `interestRegistry.removeAllForNode(deadNodeId)`
-+ `interestNodeSetCache.clear()` on that **same** path. No boot-time blanket announce: a node announces interest in
-`uri` only when its first live session for `uri` connects.
+`ClusterMessageSender.invalidateCacheForNode(deadNodeId)` already clears the room cache + calls
+`roomRegistry.removeAllForNode` on the leader-elected reaped path (verified: the sole production caller of the
+dead-node callback is inside `ClusterNodeManager`'s `reaper.tryClaim` guard). The sender holds only a `ClusterBroker`
+SPI reference and the interest cache lives inside `MeshBroker`'s router (§4.4), so the sender **cannot** clear that
+cache in place. RC4b therefore adds a small **additive default method to the `ClusterBroker` SPI** (mirroring RC4a's
+`setTransportStateListener` default-method precedent — backward-compatible, existing impls inherit the no-op):
+
+```java
+/** Invoked on the leader-elected dead-node reap so an interest-routing transport can drop the dead node from its
+ *  routing state. Default no-op (Redis Pub/Sub / NATS need nothing here). @since V1.10.0-RC4b */
+default void onNodeLeft(String nodeId) { }
+```
+
+`MeshBroker.onNodeLeft(deadNodeId)` delegates to its router: **clear the interest send-cache + call
+`interestRegistry.removeAllForNode(deadNodeId)`** (both interest-state owners live in the broker/router, so the clear
+and the registry reap are co-located and reachable). `ClusterMessageSender.invalidateCacheForNode` simply adds one
+call — `broker.onNodeLeft(deadNodeId)` — alongside its existing room-cache/node-lookup-cache clears; it is a no-op for
+the Redis/NATS brokers. This removes the v3 ownership contradiction (the cache had two named owners) while keeping
+interest state fully encapsulated in the broker.
+
+The per-session subscribe/unsubscribe writes (§4.3) still call the **shared** `interestRegistry` bean directly from the
+sender — that handle is reachable; only the broker-owned *cache* needs the hook. No boot-time blanket announce: a node
+announces interest in `uri` only when its first live session for `uri` connects.
 
 ### 4.6 Reserved channels — pruning bypass (not registration)
 
@@ -313,9 +346,12 @@ leader-elected reaped path (verified: the sole production caller of the dead-nod
 | `server.netty.websocket.cluster.mesh.interest-routing.node-set-cache-ttl-ms` | `5000` | Local send-cache TTL for `nodesForUri` (mirrors `room.node-set-cache-ttl-ms`). Lower = fresher interest, more Redis reads. |
 
 Auto-config (`NettyWebSocketClusterConfigure`): a `RedisMeshInterestRegistry` bean gated on
-`STANDALONE_MESH_BROKER and interest-routing.enable` + `@ConditionalOnMissingBean(MeshInterestRegistry.class)`, wired
-into the `MeshBroker`/router (with the reserved-channel set) and into `ClusterMessageSender`'s per-session interest
-hooks. When `mesh.enable=false` the bean never exists — byte-identical to RC1/RC2/RC3/RC4a.
+`STANDALONE_MESH_BROKER and interest-routing.enable` + `@ConditionalOnMissingBean(MeshInterestRegistry.class)`. The
+**shared** registry bean is injected (a) into `MeshBroker`, which wraps it in its `MeshInterestRouter` (cache + reads +
+the dead-node reap via `onNodeLeft`, with the reserved-channel set), and (b) into `ClusterMessageSender` for the
+per-session `subscribe`/`unsubscribe` writes (§4.3). The cache itself lives only in the broker's router; the sender
+reaches the broker's dead-node path through `broker.onNodeLeft` (§4.5). When `mesh.enable=false` the bean never exists
+— byte-identical to RC1/RC2/RC3/RC4a.
 
 **`OnAnyRedisSpiRequired` gains an interest clause (resolved — v2's "no clause" was unsound).** The default
 `RedisMeshInterestRegistry` autowires `nettyClusterRedisConnection`, and its gate (`STANDALONE_MESH_BROKER and
@@ -458,3 +494,9 @@ Internal counters now (surfaced to `netty.cluster.mesh.*` in RC4d, consistent wi
 | R3 | **BLOCKER/MAJOR** — `OnAnyRedisSpiRequired` "no clause" was unsound (custom directory + default interest registry orphans the Redis connection) | Add the **interest clause** + asymmetric context test (§5, §9) |
 | R4 | **MAJOR** — §1 over-claimed partitioned reduction; omitted the random-LB / population-saturation precondition (the RC1 shard-ring lesson) | Add the **§1 precondition** + reframe examples (small population / session-sticky / tenant-affine) |
 | R5 | **MINOR** — `removeAllForNode` cost label / null-not-cached not explicit / hook named `onSessionAdded` | Honest `O(total-keys)` cursor cost note (§4.2); null-not-cached stated + tested (§4.4, §9); hook named `onSessionRegistered` (§4.3) |
+
+**Round 3 (v3 verify → v3.1): R1–R4 confirmed resolved against the real RC1 code; one new MAJOR folded.**
+
+| # | Round-3 finding | Resolution |
+|---|---|---|
+| R6 | **MAJOR** — interest send-cache had two named owners: §4.4 placed it in `MeshBroker`'s router, but §4.5 cleared it from `ClusterMessageSender.invalidateCacheForNode`, which holds only a `ClusterBroker` SPI with no hook to a broker-owned cache (the cache-clear was unwriteable as stated; delivery-correctness was unaffected — a stale entry is masked by the live∩has-address filter and self-heals at TTL) | Add an **additive `ClusterBroker.onNodeLeft(String)` default no-op** (RC4a `setTransportStateListener` precedent); `MeshBroker.onNodeLeft` clears its router cache + calls `removeAllForNode`; the sender's dead-node hook calls `broker.onNodeLeft` (§4.4, §4.5, §5). Cache ownership now single + reachable. |

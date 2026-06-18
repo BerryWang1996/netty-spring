@@ -1,0 +1,28 @@
+{
+  "review": "1.10.0-RC4b interest-routed mesh broadcast — focused round-3 verification of spec v3",
+  "date": "2026-06-18",
+  "method": "4 resolve-checks (R1-R4 vs v3 spec + real RC1 code) + 2 new-flaw probes + skeptic verify; 10 agents",
+  "verdict": {
+    "rc4bReadyToPlan_atRound3": false,
+    "round2MustFixes": "R1-R4 ALL genuinely resolved + verified faithfully implementable against the real RedisRoomRegistry/RC4a code (not just §12 claims); only cosmetic residuals",
+    "newFinding": "1 MAJOR (flagged by both probes — same contradiction): interest send-cache ownership split",
+    "outcome": "folded as v3.1; spec now plan-ready"
+  },
+  "round2MustFixesConfirmed": [
+    {"id": "R1", "status": "resolved+verified", "note": "v3 JOIN_LUA/LEAVE_LUA faithfully collapse RedisRoomRegistry's room dimension; node-set 0↔1 decided in-EVAL over the per-(uri,node) session set (RC1 tests before-add==0, v3 tests after-add==1 — equivalent edge); same-node connect/disconnect race race-free at both layers (no JVM counter); removeAllForNode genuinely node-scoped (nodeId in key suffix); hash-tag co-location correct + Redis-Cluster-safe"},
+    {"id": "R2", "status": "resolved+verified", "note": "reserved-channel bypass structurally eliminates the presence failure class; exhaustive sweep confirms ClusterBroker.publish has exactly two callers (app uri:448, PRESENCE_CHANNEL:1028) so the reserved set {PRESENCE_CHANNEL} is complete; reserved⇒null⇒all-peers composes with the null-vs-empty sentinel"},
+    {"id": "R3", "status": "resolved+verified", "note": "OnAnyRedisSpiRequired interest clause fires only in the asymmetric custom-directory+default-interest case, no over-retain; no other orphan combo missed"},
+    {"id": "R4", "status": "resolved+verified", "note": "§1 random-LB/population-saturation precondition stated plainly + examples reframed; doc-mirroring to cluster-design/release-notes is correctly an implementation-time obligation, not a spec gap"}
+  ],
+  "newMajorFolded": {
+    "id": "R6",
+    "severity": "MAJOR (spec-contract break; delivery-correctness intact)",
+    "title": "Interest send-cache had two named owners — §4.4 (MeshBroker router) vs §4.5 (cleared from ClusterMessageSender)",
+    "detail": "§4.4 places interestNodeSetCache inside MeshBroker's MeshInterestRouter and reads it on the publish path; §4.5 cleared it via interestNodeSetCache.clear() inside ClusterMessageSender.invalidateCacheForNode — but the sender holds only a ClusterBroker SPI (ClusterMessageSender.java:68) with no interest/dead-node/onNodeLeft method (spi/ClusterBroker.java full read), and the mesh bean is typed ClusterBroker (NettyWebSocketClusterConfigure.java:345), wired unconditionally for all broker impls. So the cache-clear half of §4.5 is unwriteable as stated without an unspecified downcast. The companion interestRegistry.removeAllForNode IS reachable (registry shared into the sender). Delivery-correctness unaffected: a stale dead-node interest entry is masked by the publish loop's live∩has-address membership intersection (§6) and self-heals at node-set-cache-ttl-ms.",
+    "fix": "Add an additive ClusterBroker.onNodeLeft(String) default no-op (RC4a setTransportStateListener precedent); MeshBroker.onNodeLeft clears its router cache + calls interestRegistry.removeAllForNode; ClusterMessageSender.invalidateCacheForNode calls broker.onNodeLeft(deadNodeId) (no-op for Redis/NATS). Single cache owner (broker), reachable. Folded v3.1 §4.4/§4.5/§5/§12-R6."
+  },
+  "cosmeticResidualsFolded": [
+    "§4.2: :n: node token appended raw like RC1 (not literally brace-wrapped); removeAllForNode substring-strips the suffix (no b64uri re-parse); no roomsBySession reverse index needed (subscribe/unsubscribe carry sessionId+uri+nodeId)",
+    "§1: 'a handful of large tenants' reframed — the rooms-for-high-cardinality bullet is a URI-cardinality bound, separate from the reduction-efficacy (population-saturation) precondition"
+  ]
+}
