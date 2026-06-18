@@ -76,6 +76,42 @@ class ClusterMessageSenderTest {
         nodeManager.shutdown();
     }
 
+    /** RC4b: the sender forwards every local session connect/disconnect to the interest registry (the registry's
+     *  atomic op decides the node-set 0↔1); the held broker subscription is independent of interest. */
+    @Test
+    void interestRegisteredPerSession_subscribeAndUnsubscribeForwarded() {
+        RecordingInterest rec = new RecordingInterest();
+        clusterSender.setInterestRegistry(rec);
+
+        clusterSender.onLocalUriActive("/ws/a", "s1");   // first session
+        clusterSender.onLocalUriActive("/ws/a", "s2");   // second session
+        clusterSender.onLocalUriInactive("/ws/a", "s1");
+        clusterSender.onLocalUriInactive("/ws/a", "s2");
+
+        assertEquals(List.of("sub /ws/a s1", "sub /ws/a s2", "unsub /ws/a s1", "unsub /ws/a s2"), rec.calls);
+    }
+
+    /** Records subscribe/unsubscribe forwarding from the sender; returns empty node-sets. */
+    static final class RecordingInterest
+            implements com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry {
+        final List<String> calls = new java.util.concurrent.CopyOnWriteArrayList<>();
+        public java.util.concurrent.CompletionStage<Void> subscribe(String u, String s, String n) {
+            calls.add("sub " + u + " " + s);
+            return java.util.concurrent.CompletableFuture.completedFuture(null);
+        }
+        public java.util.concurrent.CompletionStage<Void> unsubscribe(String u, String s, String n) {
+            calls.add("unsub " + u + " " + s);
+            return java.util.concurrent.CompletableFuture.completedFuture(null);
+        }
+        public java.util.concurrent.CompletionStage<Void> removeAllForNode(String n) {
+            return java.util.concurrent.CompletableFuture.completedFuture(null);
+        }
+        public java.util.concurrent.CompletionStage<Set<String>> nodesForUri(String u) {
+            return java.util.concurrent.CompletableFuture.completedFuture(java.util.Collections.emptySet());
+        }
+        public void shutdown() { }
+    }
+
     @Test
     void broadcastPublishesToBrokerAndDoesLocalFanOut() {
         localSender.addUri("/ws/test");

@@ -66,6 +66,9 @@ public class ClusterMessageSender implements MessageSender, RoomOperations, User
 
     private final MessageSender localSender;
     private final ClusterBroker broker;
+    /** RC4b: per-URI interest registry (null = interest routing disabled). The sender WRITES (subscribe/unsubscribe
+     *  per live session); the broker's MeshInterestRouter READS + reaps. */
+    private volatile com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry interestRegistry;
     private final SessionRegistry registry;
     private final ClusterNodeManager nodeManager;
     private final MessagePayloadCodec payloadCodec;
@@ -237,6 +240,11 @@ public class ClusterMessageSender implements MessageSender, RoomOperations, User
     /** Injects the room registry (enables {@link RoomOperations}). Null = room routing disabled
      *  ({@code room.enable=false} — no room path; runtime behavior identical to 1.9.0, though the
      *  envelope wire is globally v2 since 1.10.0 and 1.9.0 nodes discard v2 on the version gate). */
+    public void setInterestRegistry(
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry interestRegistry) {
+        this.interestRegistry = interestRegistry;
+    }
+
     public void setRoomRegistry(ClusterRoomRegistry roomRegistry) {
         this.roomRegistry = roomRegistry;
     }
@@ -1226,23 +1234,39 @@ public class ClusterMessageSender implements MessageSender, RoomOperations, User
     }
 
     /**
-     * Notifies the cluster sender that a new URI has local sessions — triggers
-     * a broadcast subscription if not already active.
+     * Notifies the cluster sender that a local session for {@code uri} connected — holds the broadcast subscription
+     * (receive capability) and, when interest routing is on, announces this session to the interest registry (the
+     * registry's atomic op decides the node-set 0→1 transition). RC4b.
      */
-    public void onLocalUriActive(String uri) {
+    public void onLocalUriActive(String uri, String sessionId) {
         subscribeBroadcast(uri);
         if (reliableBroker != null) {
             subscribeReliable(uri);
         }
+        com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry ir = this.interestRegistry;
+        if (ir != null) {
+            ir.subscribe(uri, sessionId, nodeManager.getNodeId()).exceptionally(ex -> {
+                log.warn("interest subscribe({}) for session {} failed — publishers may miss this node "
+                        + "until a later session re-asserts", uri, sessionId, ex);
+                return null;
+            });
+        }
     }
 
     /**
-     * Notifies the cluster sender that a URI no longer has local sessions.
-     * The subscription is kept alive for the hold duration (configured in broker).
+     * Notifies the cluster sender that a local session for {@code uri} disconnected. The broadcast subscription is
+     * kept (receive capability); when interest routing is on, this session is retracted from the interest registry
+     * (the registry's atomic op decides the node-set 1→0 transition). RC4b.
      */
-    public void onLocalUriInactive(String uri) {
-        // Subscription hold is handled by the broker implementation, not here.
-        // We could unsubscribe after hold, but for now keep it simple.
+    public void onLocalUriInactive(String uri, String sessionId) {
+        com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry ir = this.interestRegistry;
+        if (ir != null) {
+            ir.unsubscribe(uri, sessionId, nodeManager.getNodeId()).exceptionally(ex -> {
+                log.warn("interest unsubscribe({}) for session {} failed — stale interest until dead-node reap",
+                        uri, sessionId, ex);
+                return null;
+            });
+        }
     }
 
     /** Invalidates the node lookup cache for a specific node (called on NODE_LEFT). */
@@ -1268,6 +1292,9 @@ public class ClusterMessageSender implements MessageSender, RoomOperations, User
             try { rr.removeAllForNode(nodeId); }
             catch (Exception e) { log.debug("room registry cleanup for dead node {} failed", nodeId, e); }
         }
+        // RC4b: let an interest-routing broker drop the dead node from its routing state (clear the interest send
+        // cache + reap the interest registry). No-op for Redis/NATS brokers.
+        broker.onNodeLeft(nodeId);
     }
 
     private String lookupNodeCached(String uri, String sessionId) {

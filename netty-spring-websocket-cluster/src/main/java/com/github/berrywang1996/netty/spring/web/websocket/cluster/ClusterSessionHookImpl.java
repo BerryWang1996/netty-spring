@@ -185,8 +185,8 @@ public class ClusterSessionHookImpl implements ClusterSessionHook {
             registryWriter.register(uri, sessionId, nodeId, Collections.emptyMap());
         }
 
-        // Ensure the URI's broadcast subscription is active
-        clusterSender.onLocalUriActive(uri);
+        // Ensure the URI's broadcast subscription is active + announce session-grained interest (RC4b)
+        clusterSender.onLocalUriActive(uri, sessionId);
 
         log.debug("Cluster: session {} registered on node {} for URI {} (userId={})",
                 sessionId, nodeId, uri, userId);
@@ -258,8 +258,8 @@ public class ClusterSessionHookImpl implements ClusterSessionHook {
         // Deregister from distributed session registry (rate-limited/coalesced)
         registryWriter.deregister(uri, sessionId);
 
-        // Notify cluster sender (it manages subscription hold logic)
-        clusterSender.onLocalUriInactive(uri);
+        // Notify cluster sender (subscription hold + session-grained interest retract, RC4b)
+        clusterSender.onLocalUriInactive(uri, sessionId);
 
         log.debug("Cluster: session {} removed for URI {}", sessionId, uri);
     }
