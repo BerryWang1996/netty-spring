@@ -483,6 +483,25 @@ public class ClusterProperties {
         public void setWriteBufferLowWaterMark(int v) { this.writeBufferLowWaterMark = v; }
         public long getAdvertiseTtlMs() { return advertiseTtlMs; }
         public void setAdvertiseTtlMs(long advertiseTtlMs) { this.advertiseTtlMs = advertiseTtlMs; }
+
+        /** RC4b interest-routed broadcast (sub-knob of the opt-in mesh). */
+        private InterestRouting interestRouting = new InterestRouting();
+
+        public InterestRouting getInterestRouting() { return interestRouting; }
+        public void setInterestRouting(InterestRouting interestRouting) { this.interestRouting = interestRouting; }
+
+        /** Interest-routed broadcast config (RC4b). */
+        public static class InterestRouting {
+            /** When true (and mesh.enable=true), publish routes to interested peers; false forces RC4a all-peers. */
+            private boolean enable = true;
+            /** Local send-cache TTL (ms) for the interest node-set (mirrors room.node-set-cache-ttl-ms). */
+            private long nodeSetCacheTtlMs = 5000;
+
+            public boolean isEnable() { return enable; }
+            public void setEnable(boolean enable) { this.enable = enable; }
+            public long getNodeSetCacheTtlMs() { return nodeSetCacheTtlMs; }
+            public void setNodeSetCacheTtlMs(long nodeSetCacheTtlMs) { this.nodeSetCacheTtlMs = nodeSetCacheTtlMs; }
+        }
     }
 
     /** Behavior when the cluster transport (Redis) is lost. */
