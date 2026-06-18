@@ -1,21 +1,36 @@
 # RC4b — Interest-routed mesh broadcast (design)
 
-**Status:** design — **design-review folded** (v2). **Branch:** `feature/1.10.0-mesh-rc4b` (off `v1.10.0-RC4a`).
+**Status:** design — **design-review + re-review folded** (v3). **Branch:** `feature/1.10.0-mesh-rc4b` (off `v1.10.0-RC4a`).
 **Module:** `netty-spring-websocket-cluster`. **Stack:** Boot 2.7 + Netty 4.1 + Lettuce 6.1, JDK 17.
 
-> **Design-review correction (recorded — this project's honest-engineering bar, like RC1's shard-ring→node-set).**
-> The v1 spec routed interest at the **registered-`@MessageMapping` grain** (announce once at boot per mapped URI,
-> never retract). A 31-agent adversarial design-review (`docs/superpowers/notes/2026-06-18-rc4b-mesh-design-review.json`)
-> proved that grain delivers **ZERO reduction on a homogeneous fleet** (every node maps every URI ⇒ interest = all
-> nodes, forever) — the reduction would have required a *heterogeneous build* (mappings absent from some nodes' jars),
-> an unstated precondition contradicting "same app on every node." The fix folded here: **interest is now
-> session-grained** — a node is interested in `uri` iff it currently has **≥1 live local session** for `uri` — so the
-> reduction is genuine for partitioned live audiences **even on a homogeneous build**, the `unsubscribe` path becomes
-> real (it was dead code), and the v1 "zero-session-but-subscribed" claim becomes true. Also folded: presence
-> reserved-channel interest (was never registered ⇒ would have silently dropped all cross-node presence), the
-> null-vs-empty failure sentinel (v1 would have dropped a whole broadcast on a Redis blip), atomic-Lua unsubscribe, an
-> honest `removeAllForNode` cost statement, and the redundant `OnAnyRedisSpiRequired` clause. See §12 for the
-> finding-by-finding resolution.
+> **Design-review corrections (recorded — this project's honest-engineering bar, like RC1's shard-ring→node-set).**
+> Two adversarial review rounds shaped this spec (archived under `docs/superpowers/notes/`):
+> **Round 1** (`2026-06-18-rc4b-mesh-design-review.json`, 31 agents, `fixDesignFirst`) killed v1's
+> registered-`@MessageMapping`-grained interest (zero reduction on a homogeneous fleet). **Round 2**
+> (`2026-06-18-rc4b-mesh-rereview.json`, 20 agents) confirmed v2's session-grained pivot resolved 5/6 root flaws but
+> caught **3 new flaws v2 introduced** plus an unsound flaw-F resolution. v3 folds all of them:
+> - **Interest is session-grained AND the node-set flip is decided atomically in Redis (RC1-exact).** A node is
+>   interested in `uri` iff it currently has ≥1 live local session. v2 put the per-URI session count in a JVM map and
+>   fired two *independent, unordered* Redis writes (`SADD` on first / `SREM`-Lua on last) — a same-node
+>   connect/disconnect race could land the `SADD` before the `SREM`-Lua and **permanently wipe a live node's
+>   membership** (silent under-interest, unbounded). v3 **mirrors `RedisRoomRegistry` exactly**: a Redis-side per-node
+>   session set, with the node-set add-on-first / remove-on-last decided *inside* a JOIN/LEAVE Lua (per-session
+>   writes, like rooms). This also makes `removeAllForNode` node-scoped (fixes the v2 cost flaw) and makes the
+>   "mirrors RC1" claim genuinely true.
+> - **Reserved/control channels bypass interest pruning entirely** (always all-peers). v2 registered *permanent*
+>   `PRESENCE_CHANNEL` interest via a one-shot boot `SADD` — a transient Redis blip on that single write would
+>   permanently, silently prune the node from presence for its whole lifetime (no session re-fire). v3 removes the
+>   presence SADD altogether: `publish` to a reserved channel never consults interest, so presence is never pruned,
+>   has no new failure mode, and loses nothing (its audience is all presence-enabled nodes anyway).
+> - **`OnAnyRedisSpiRequired` gains a real interest clause** (v2's "no clause needed" was unsound — the default
+>   interest registry is gated independently of the directory, so a custom-directory + default-interest deployment
+>   would orphan the Redis connection).
+> - **§1 discloses the random-LB / population-saturation precondition** — the exact lesson that retired RC1's shard
+>   ring: a *logically* partitioned topic whose live population is large relative to node count saturates (nearly) all
+>   nodes under random load-balancing, so reduction is real only for small populations or session-sticky/tenant-affine
+>   routing. Plus minor: the router must NOT cache a null/failure read; the connect hook is `onSessionRegistered`.
+>
+> See §12 for the finding-by-finding resolution across both rounds.
 
 ---
 
@@ -32,14 +47,23 @@ that URI. The honest scope, stated up front:
   ~80k-decode / central-egress wall that caps Redis at ~10 nodes). RC4a is the structural ceiling-break for global
   broadcast; RC4b does not add to it there.
 
-- **Where RC4b's reduction is real (and now genuine on a homogeneous fleet): _partitioned live audiences_.** Because
-  interest is **session-grained**, a node that has the `@MessageMapping` for `/ws/support` but **no live support
-  session right now** is **not** in the interest set and is **not** contacted. So a support topic whose agents are
-  connected to 4 of 100 nodes routes `99 → 3` peer sends (~25×) **even though all 100 nodes run the same jar** — the
-  reduction tracks where the *live audience* actually is, not where the code is deployed. Same applies to per-tenant
-  topics (sessions for tenant X land on a subset of nodes), admin/ops channels (few operators), and the transient
-  case of a node whose last session for a URI just left. Reduction is proportional to how *partitioned the live
-  audience* is — the same locality honesty as RC1's per-room node-set, now for plain topics.
+- **Where RC4b's reduction is real: _physically-partitioned live audiences_.** Because interest is session-grained, a
+  node that has the `@MessageMapping` for `/ws/support` but **no live support session right now** is **not** in the
+  interest set and is **not** contacted. So a support topic whose agents are connected to 4 of 100 nodes routes
+  `99 → 3` peer sends (~25×) **even though all 100 nodes run the same jar**. Same applies to admin/ops channels (few
+  operators) and the transient case of a node whose last session for a URI just left. Reduction is proportional to how
+  *physically partitioned the live audience* is across nodes — the same locality honesty as RC1's per-room node-set.
+
+- **⚠️ Precondition (the RC1 shard-ring lesson — do not skip).** Reduction requires the live audience to land on a
+  **subset** of nodes. Under random / round-robin load-balancing (the WebSocket-fleet default), a topic whose
+  *concurrent live population* is comparable to or larger than the node count **saturates (nearly) all nodes** by
+  coupon-collector — so a *logically* partitioned topic (e.g. `/ws/region-us` with 50k users across 100 nodes, or a
+  large tenant) has interest = all nodes → **~0 reduction despite being "partitioned."** RC4b helps when **either**
+  the topic's live population is small relative to node count (support/admin/ops, small tenants) **or** the LB is
+  **session-sticky / tenant-affine** so a topic's sessions cluster on few nodes. This is exactly why RC1's
+  consistent-hashing shard ring was retired (shards collapsed to global broadcast under random LB) and why RC1's docs
+  ship the "hot room on every node → 1.0× (no reduction)" benchmark row. RC4b inherits that honesty, not an
+  unconditional claim.
 
 - **The IM ceiling-break is composed across RCs, not delivered solely by RC4b.** RC1 `roomMessage(uri, room, ...)`
   already targets only member-hosting nodes via `broker.unicast(...)`, which over the RC4a mesh is **already a direct
@@ -47,42 +71,41 @@ that URI. The honest scope, stated up front:
   touch the room path. RC4b's job is the remaining plain `topicMessage` / `publish` path, so *non-room* partitioned
   topics also stop paying all-peers fan-out.
 
-- **Use rooms, not per-entity URIs, for high-cardinality topics.** Session-grained interest creates one Redis set
-  per *distinct URI*. That is the right tool for a **moderate** number of partitioned topics (per-tenant, per-feature,
-  support/admin) — tens to low-hundreds. A per-conversation `/ws/conv-{id}` design (millions of URIs) must use **RC1
-  rooms** (one `/ws/chat` URI + many rooms), which are built for exactly that cardinality. Stated so operators don't
-  explode the interest keyspace.
+- **Use rooms, not per-entity URIs, for high-cardinality topics.** Session-grained interest creates Redis keys per
+  *distinct URI*. That is the right tool for a **moderate** number of partitioned topics (per-feature, support/admin,
+  a handful of large tenants) — tens to low-hundreds. A per-conversation `/ws/conv-{id}` design (millions of URIs)
+  must use **RC1 rooms** (one `/ws/chat` URI + many rooms), which are built for exactly that cardinality.
 
 **One-line scope:** RC4b makes `MeshBroker.publish(uri)` route to `interestedNodes(uri) ∩ live-mesh-membership` (via a
-new `MeshInterestRegistry`, mirroring `ClusterRoomRegistry`), where interest tracks **live local sessions**. It is a
-strict optimization that never loses delivery relative to RC4a except the inherent ≤cache-TTL freshly-subscribed
-window (RC1 parity), and degrades to RC4a all-peers on any registry uncertainty.
+new `MeshInterestRegistry` that **mirrors `ClusterRoomRegistry` minus the room dimension**), where interest tracks
+**live local sessions**. It is a strict optimization that never loses delivery relative to RC4a except the inherent
+≤cache-TTL freshly-subscribed window (RC1 parity), degrades to RC4a all-peers on any registry uncertainty, and never
+prunes reserved/control channels.
 
 ---
 
 ## 2. Goal & non-goals
 
 **Goal.** When `mesh.enable=true` and `interest-routing.enable=true`, `publish(uri, env)` sends the framed envelope
-only to peers in `interestedNodes(uri) ∩ live-mesh-membership`, instead of all peers. Interest is **node-grained but
-session-driven**: a node is "interested in `uri`" iff it currently has **≥1 live local session** for `uri`. The
-interested-node set is an authoritative, Redis-backed registry with a short local send-cache (Redis off the message
-hot path in steady state), mirroring RC1's `RedisRoomRegistry` + `nodesForRoomCached`.
+only to peers in `interestedNodes(uri) ∩ live-mesh-membership`, instead of all peers. Interest is **node-grained,
+session-driven, and Redis-authoritative**: a node is "interested in `uri`" iff it currently has **≥1 live local
+session** for `uri`, and the node-set add-on-first / remove-on-last transition is decided **atomically inside a Redis
+Lua** over a per-node session set — exactly like `RedisRoomRegistry`'s JOIN/LEAVE. A short local send-cache keeps
+Redis off the message hot path in steady state.
 
 **Receive vs. send — the load-bearing separation.** A node's **broker subscription** (`broadcastListeners`, populated
 at boot for every registered `@MessageMapping` URI and **held for the node lifetime**) is its *receive capability* —
-it is unchanged from RC4a and is what processes a delivered broadcast into local fan-out. The **interest registry** is
-the *send-side targeting* other nodes consult to decide whom to contact. They are deliberately decoupled: interest can
-be briefly wrong without losing correctness, because (a) a node pruned in error still has a held subscription, so a
-fallback/all-peers or slightly-stale send that *does* arrive is still delivered locally; and (b) a node over-included
-in error (drift) just receives a broadcast it fans out to zero local sessions — a wasted send, never a wrong delivery.
-Interest never gates local receive.
+unchanged from RC4a; it is what processes a delivered broadcast into local fan-out. The **interest registry** is the
+*send-side targeting* other nodes consult. They are decoupled: interest can be briefly wrong without losing
+correctness — (a) a node pruned in error still has a held subscription, so a fallback/all-peers or slightly-stale send
+that *does* arrive is still delivered locally; (b) a node over-included in error just receives a broadcast it fans out
+to zero local sessions — a wasted send, never a wrong delivery. Interest never gates local receive.
 
 **Non-goals (RC4b).**
-- No change to `roomMessage` (already mesh-native via unicast), `unicast`, `sendToUser`/offline, or presence's
-  *delivery* wiring. (RC4b **does** add presence's *interest registration* — see §4.6 — because without it interest
-  routing would drop presence events; that is a fix, not a feature change.)
-- No interest *gossip* over the mesh (considered + rejected below — staleness/correctness). Redis stays the interest
-  source of truth.
+- No change to `roomMessage` (already mesh-native via unicast), `unicast`, `sendToUser`/offline, or presence wiring
+  (presence is handled by the reserved-channel pruning *bypass*, §4.6 — a routing rule, not a presence-code change).
+- No interest *gossip* over the mesh (considered + rejected below — staleness/correctness). Redis stays the source of
+  truth.
 - No hierarchical / relay-tree fan-out for genuinely-global topics (future / sharded-pub-sub; the honest answer for a
   global all-audience topic remains "decentralized N−1 fan-out", delivered by RC4a).
 - No change to at-most-once delivery semantics.
@@ -91,31 +114,36 @@ Interest never gates local receive.
 
 ## 3. Approaches considered
 
-**A. Redis-backed, session-grained interest registry + local send-cache (RECOMMENDED).** A new SPI
-`MeshInterestRegistry` with a default `RedisMeshInterestRegistry` mirroring `RedisRoomRegistry`: `SADD nodeId` to
-`netty:interest:{b64uri}:nodes` on a node's **first live session** for `uri` (the genuine 0→1 transition), atomic-Lua
-`SREM`(+conditional `DEL`) on its **last session leaving** (1→0), `removeAllForNode` on dead-node reap;
-`nodesForUri(uri)` read on publish, wrapped in a 5s local send-cache (`nodesForUriCached`, mirroring
-`nodesForRoomCached`) with wholesale invalidation on `NODE_LEFT`.
-- **Pro:** authoritative + atomic; identical idiom to the proven RC1 path; Redis off the message hot path via the
-  cache; correctness equals Redis Pub/Sub's subscription model. Reuses the existing dead-node-callback invalidation.
-- **Con:** keeps Redis as the interest control plane (but *not* the message hot path — same as discovery/registry,
-  consistent with the mesh thesis "Redis for control, off the message path").
-- **Requires** a per-URI live-session refcount in `ClusterMessageSender` (§4.3) so the 0↔1 transitions actually fire —
-  net-new machinery the v1 spec wrongly assumed already existed.
+**A. Redis-backed, session-grained interest registry that mirrors `RedisRoomRegistry` exactly (RECOMMENDED).** A new
+SPI `MeshInterestRegistry` with a default `RedisMeshInterestRegistry` that copies `RedisRoomRegistry`'s structure
+**minus the room dimension**: a per-(uri,node) **session set** plus a per-uri **node-set**, with a `JOIN_LUA`
+(`SADD sessionId` to the node's session set; if it became the first, `SADD nodeId` to the node-set) and a `LEAVE_LUA`
+(`SREM sessionId`; if the session set is now empty, `SREM nodeId` from the node-set + `DEL` the session set), each a
+single atomic `EVAL`. `nodesForUri(uri)` reads the node-set; `removeAllForNode` SCANs this node's session-set keys
+(node-scoped). Wrapped in a 5s local send-cache (`nodesForUriCached`) with wholesale invalidation on `NODE_LEFT`.
+- **Pro:** authoritative + **atomic** (the 0↔1 node-set flip is decided inside the EVAL over the session set, so
+  concurrent same-node connect/disconnect and cross-node ops all serialize at Redis — no reorder can wipe a live
+  node); **identical idiom** to the proven RC1 path (same two-key + hash-tag + Lua + node-scoped `removeAllForNode`);
+  Redis off the message hot path via the cache; correctness equals Redis Pub/Sub's subscription model.
+- **Cost:** one Redis write per session connect/disconnect — exactly what RC1 rooms (`joinRoom`/`leaveRoom`) and the
+  session registry (`register`/`deregister`) already pay on the session-lifecycle path, **off the message hot path**.
+- **Why not a JVM session count + per-transition writes (v2's rejected approach):** splitting the count into the JVM
+  and firing two independent unordered Redis writes loses RC1's in-EVAL atomicity — a same-node `SADD`(connect) can
+  land before a `SREM`-Lua(disconnect) and the Lua's empty-check then `DEL`s a live node's membership permanently.
+  Round-2 review confirmed this as a BLOCKER. The fix is to put the count and the flip back in Redis, in the Lua.
 
-**B. Mesh-gossiped interest.** Each node tells peers its live-session-URI set on connect + on change; no Redis.
+**B. Mesh-gossiped interest.** Each node tells peers its live-session-URI set; no Redis.
 - **Con:** eventual-consistency **staleness is a correctness regression** — a freshly-subscribed node is invisible to
   publishers until gossip converges; a partition/missed-gossip can drop broadcasts indefinitely with no authoritative
-  source to reconcile against. Significant new machinery (anti-entropy, versioning). The `/goal` text says "gossip",
-  but the codebase's correctness bar + RC1/RC2/RC3 precedent favor the authoritative registry. **Rejected** for RC4b.
+  source to reconcile against. The codebase's correctness bar + RC1/RC2/RC3 precedent favor the authoritative
+  registry. **Rejected** for RC4b.
 
-**C. Hybrid (Redis source of truth + mesh interest-change notifications for fast cache invalidation).** Option A plus
-a lightweight mesh "interest-changed" notice on first/last-session so publishers refresh immediately instead of ≤TTL.
-- **Pro:** shrinks the freshly-subscribed window from ≤TTL to ~RTT.
-- **Con:** extra protocol + ordering/race handling; the ≤TTL window is already accepted by RC1. **Deferred** (RC4c).
+**C. Hybrid (Redis source of truth + mesh interest-change notifications for fast cache invalidation).** A plus a
+lightweight mesh "interest-changed" notice on first/last-session so publishers refresh immediately instead of ≤TTL.
+- **Pro:** shrinks the freshly-subscribed window from ≤TTL to ~RTT. **Con:** extra protocol + ordering; the ≤TTL
+  window is already accepted by RC1. **Deferred** (RC4c).
 
-**Decision: A**, session-grained. Correct, atomic, consistent with the codebase, keeps Redis off the message hot path,
+**Decision: A**, RC1-faithful. Correct, atomic, consistent with the codebase, keeps Redis off the message hot path,
 reuses dead-node invalidation. C is the natural follow-on if the staleness window matters.
 
 ---
@@ -126,10 +154,12 @@ reuses dead-node invalidation. C is the natural follow-on if the staleness windo
 
 ```java
 public interface MeshInterestRegistry {
-    /** This node now hosts its FIRST live local session for {@code uri} (the 0→1 transition). */
-    CompletionStage<Void> subscribe(String uri, String nodeId);
-    /** This node's LAST live local session for {@code uri} just left (the 1→0 transition). */
-    CompletionStage<Void> unsubscribe(String uri, String nodeId);
+    /** A local session for {@code uri} registered on this node (call per session-register; the impl decides the
+     *  0→1 node-set add atomically). */
+    CompletionStage<Void> subscribe(String uri, String sessionId, String nodeId);
+    /** A local session for {@code uri} was removed from this node (call per session-remove; the impl decides the
+     *  1→0 node-set remove atomically). */
+    CompletionStage<Void> unsubscribe(String uri, String sessionId, String nodeId);
     /** Remove all of a (dead) node's interest entries — called on the leader-elected dead-node reap. */
     CompletionStage<Void> removeAllForNode(String nodeId);
     /**
@@ -142,83 +172,83 @@ public interface MeshInterestRegistry {
 }
 ```
 
-Mirror of `ClusterRoomRegistry` minus the room dimension. Interest is node-grained in Redis (one set per URI), driven
-by the per-URI **live-session refcount** in §4.3 (the broker does *not* track session counts today — that refcount is
-new). `subscribe`/`unsubscribe` are called only on the true 0↔1 transitions, so they are NOT per-session writes.
+Mirror of `ClusterRoomRegistry` minus the room dimension. `subscribe`/`unsubscribe` carry the `sessionId` because the
+registry — not a JVM counter — owns the per-node session set and decides the 0↔1 node-set transition in its Lua.
 
-### 4.2 `RedisMeshInterestRegistry` (default impl)
+### 4.2 `RedisMeshInterestRegistry` (default impl) — RC1-exact two-key + Lua
 
-**Redis key schema** (mirror `RedisRoomRegistry`'s base64url convention):
+**Redis key schema** (mirror `RedisRoomRegistry`'s base64url + hash-tag convention so the two keys co-locate in one
+slot for the `EVAL`, Redis-Cluster-safe):
 ```
-netty:interest:{b64uri}:nodes   →  Set<nodeId>   (the routing set; b64uri = base64url(uri), delimiter-safe)
+netty:interest:{b64uri}:nodes        →  Set<nodeId>      (the routing set; read by nodesForUri)
+netty:interest:{b64uri}:n:{b64node}  →  Set<sessionId>   (per-node live-session set; drives the 0↔1 flip)
 ```
-- `subscribe(uri, nodeId)`   → `SADD netty:interest:{b64uri}:nodes nodeId`
-- `unsubscribe(uri, nodeId)` → **single Lua `EVAL`**: `SREM key nodeId; if redis.call('SCARD', key)==0 then redis.call('DEL', key) end`.
-  Atomic so the cross-node race (A `SREM`→0, B `SADD`→1, A `DEL` wipes B) cannot happen — a concurrent `SADD` is
-  serialized either fully before (SCARD≥1 ⇒ no DEL) or fully after (key re-created) the script. **Do NOT** use a
-  non-atomic SREM-then-DEL. Mirrors `RedisRoomRegistry.LEAVE_LUA`'s reason-for-being.
-- `nodesForUri(uri)`         → `SMEMBERS netty:interest:{b64uri}:nodes`
-- `removeAllForNode(nodeId)` → `SCAN netty:interest:*:nodes` + `SREM nodeId` from each. **Cost (stated honestly):**
-  this is **node-agnostic** — the nodeId is a set *member*, not in the key — so it scans **all distinct-URI interest
-  sets cluster-wide**, an **O(distinct-URIs)** scan, NOT the node-scoped `O(rooms-on-this-node)` cost of
-  `RedisRoomRegistry.removeAllForNode` (whose pattern embeds the nodeId in the key suffix). It is correct (`SREM` of a
-  non-member is a no-op) and runs only on the **leader-elected dead-node reap**, off the message hot path. Acceptable
-  at the documented scale (≤~10 nodes; distinct partitioned-topic URIs in the tens–low-hundreds per the §1 "use rooms
-  for high cardinality" guidance). A per-node reverse index (`netty:interest:node:{b64nodeId} → Set<b64uri>`) to make
-  cleanup bounded is **deferred** (§10) — only worth it if URI cardinality grows.
+(`{b64uri}` is both the base64url-encoded URI and the Redis hash-tag, exactly as `RedisRoomRegistry` tags on the room.)
 
-Single key per URI ⇒ no cross-slot concern (one key is one slot; no hash-tag needed). Dedicated executor like the
-other Redis SPIs.
+- `subscribe(uri, sessionId, nodeId)` → **`JOIN_LUA` (single `EVAL`)**:
+  `SADD sessionSet sessionId; if redis.call('SCARD', sessionSet)==1 then redis.call('SADD', nodeSet, nodeId) end`
+- `unsubscribe(uri, sessionId, nodeId)` → **`LEAVE_LUA` (single `EVAL`)**:
+  `SREM sessionSet sessionId; if redis.call('SCARD', sessionSet)==0 then redis.call('SREM', nodeSet, nodeId); redis.call('DEL', sessionSet) end`
+- `nodesForUri(uri)` → `SMEMBERS netty:interest:{b64uri}:nodes`
+- `removeAllForNode(nodeId)` → `SCAN MATCH netty:interest:*:n:{b64node}` (the nodeId is in the **key suffix**, so this
+  is **node-scoped** — only this node's session-set keys, `O(URIs-on-this-node)`, exactly like
+  `RedisRoomRegistry.removeAllForNode`); for each, parse the `{b64uri}`, then `SREM nodeId` from the node-set + `DEL`
+  the session set. Runs only on the **leader-elected dead-node reap**, off the message hot path. (A `SCAN MATCH` still
+  walks the whole keyspace cursor-side and filters — `O(total-keys)` cursor cost — same as the shipped
+  `RedisRoomRegistry`; acceptable at the documented scale.)
 
-### 4.3 Per-URI live-session refcount (`ClusterMessageSender`) — the new mechanism
+This is `RedisRoomRegistry` with the room dimension collapsed away: the per-node session set is keyed by `(uri,node)`
+instead of `(uri,room,node)`, and `nodesForUri` is `nodesForRoom` without the room. The atomic in-EVAL 0↔1 decision —
+the property the v2 JVM-count approach lost — is restored verbatim. Dedicated executor like the other Redis SPIs.
 
-The hooks already fire per session: `ClusterSessionHookImpl.onSessionAdded` → `clusterSender.onLocalUriActive(uri)`
-(line 189) and `onSessionRemoved` → `clusterSender.onLocalUriInactive(uri)` (line 262). Today
-`onLocalUriActive` calls the idempotent `subscribeBroadcast` (holds the broker subscription) and `onLocalUriInactive`
-is a **no-op**. RC4b adds a per-URI live-session count and fires interest on the genuine 0↔1 transitions:
+### 4.3 Interest wiring (`ClusterMessageSender` / `ClusterSessionHookImpl`) — per-session, no JVM counter
+
+The hooks already fire per session: `ClusterSessionHookImpl.onSessionRegistered` → `clusterSender.onLocalUriActive(uri, sessionId)`
+(today the call is `onLocalUriActive(uri)` at line 189) and `onSessionRemoved` → `clusterSender.onLocalUriInactive(uri, sessionId)`
+(line 262). RC4b threads the `sessionId` through and calls the registry per session — the registry's Lua owns the
+0↔1 decision, so **no JVM counter exists** (v2's race source is gone):
 
 ```java
-// new: live local session count per app URI (NOT the held broker subscription, which stays for the node lifetime)
-private final ConcurrentHashMap<String, Integer> localUriSessions = new ConcurrentHashMap<>();
-
-public void onLocalUriActive(String uri) {
+public void onLocalUriActive(String uri, String sessionId) {
     subscribeBroadcast(uri);                       // unchanged: hold the broker RECEIVE subscription (idempotent)
     if (reliableBroker != null) subscribeReliable(uri);
-    if (interestRegistry == null) return;
-    boolean first = localUriSessions.merge(uri, 1, Integer::sum) == 1;   // atomic 0→1 detect
-    if (first) {
-        interestRegistry.subscribe(uri, nodeId)
-            .exceptionally(ex -> { log.warn("interest subscribe({}) failed — publishers may miss this node ≤TTL until retry", uri, ex); return null; });
+    if (interestRegistry != null) {
+        interestRegistry.subscribe(uri, sessionId, nodeId)
+            .exceptionally(ex -> { log.warn("interest subscribe({}) failed — publishers may miss this node ≤TTL until a later session re-asserts", uri, ex); return null; });
     }
 }
 
-public void onLocalUriInactive(String uri) {
-    if (interestRegistry == null) return;          // broker subscription stays HELD regardless (receive capability)
-    boolean last = localUriSessions.compute(uri, (u, c) -> (c == null || c <= 1) ? null : c - 1) == null;  // atomic 1→0 (removes key)
-    if (last) {
-        interestRegistry.unsubscribe(uri, nodeId)
-            .exceptionally(ex -> { log.warn("interest unsubscribe({}) failed — stale interest until dead-node reap / retry", uri, ex); return null; });
+public void onLocalUriInactive(String uri, String sessionId) {
+    if (interestRegistry != null) {                // broker subscription stays HELD (receive capability)
+        interestRegistry.unsubscribe(uri, sessionId, nodeId)
+            .exceptionally(ex -> { log.warn("interest unsubscribe({}) failed — stale interest until dead-node reap / a later op", uri, ex); return null; });
     }
 }
 ```
 
-- **Fail-safe drift.** If a count drifts high (an `onSessionRemoved` somehow missed for a live node), the node stays
-  over-interested → extra sends it drops locally — never a missed delivery. A failed `subscribe` write is the only
-  under-interest risk and is bounded by the ≤TTL window + the periodic nature of reconnects (a new session re-fires).
-- **Crash cleanup.** On crash the in-memory count dies with the node; the node's interest is cleared by
-  `removeAllForNode` on the leader-elected reap (§4.2) — identical to how session-registry/userRegistry/presence are
-  reaped. Graceful shutdown clears via the broker/registry shutdown.
-- The broker subscription is **never** dropped on last-session (receive capability is held), exactly as today — only
-  the interest *registration* is session-grained.
+- **Atomic & race-free:** because the node-set flip is decided inside the registry's Lua over the per-node session
+  set, a concurrent same-node connect (`SADD`+maybe-add-node) and disconnect (`SREM`+maybe-remove-node) serialize at
+  Redis — the v2 reorder-wipe is impossible. The session set is the source of truth for "does this node still have a
+  live session for `uri`."
+- **Drift / write-failure is fail-safe.** A failed `subscribe` write under-includes the node, bounded by the ≤TTL
+  window + the next session's `subscribe` re-asserting + the all-peers fallback when reads fail. A failed `unsubscribe`
+  over-includes (a wasted send dropped locally) until the dead-node reap or a later op. Never a wrong delivery.
+- **Crash cleanup.** The session sets die with no graceful `unsubscribe`; the node's interest is cleared by
+  `removeAllForNode` on the leader-elected reap (§4.2) — identical to session-registry/userRegistry/presence reaps.
+- The broker subscription is **never** dropped on last-session (receive capability is held), exactly as today.
 
-### 4.4 `MeshBroker.publish` — interest routing (with the null-vs-empty sentinel)
+`onLocalUriActive`/`onLocalUriInactive` gain the `sessionId` parameter; `ClusterSessionHookImpl` passes it (the
+session is in hand at both call sites). The hook method is named `onSessionRegistered` (connect) / `onSessionRemoved`
+(disconnect).
+
+### 4.4 `MeshBroker.publish` — interest routing (reserved-bypass + null-vs-empty sentinel)
 
 ```java
 public void publish(String uri, ClusterEnvelope envelope) {
     checkActive();
     String wrapped = authenticator.wrap(codec.encode(envelope));
     Map<String,String> peers = directory.peers(nodeId).toCompletableFuture().join();  // live ∩ has-address (RC4a)
-    Set<String> interested = interestRouter.nodesForUriCached(uri);   // null => UNCERTAIN => fall back to all-peers
+    Set<String> interested = interestRouter.nodesForUriCached(uri);   // null => UNCERTAIN or RESERVED => all-peers
     for (Map.Entry<String,String> e : peers.entrySet()) {
         if (interested != null && !interested.contains(e.getKey())) {
             continue;   // RC4b: skip peers with no live session for this uri
@@ -228,53 +258,50 @@ public void publish(String uri, ClusterEnvelope envelope) {
 }
 ```
 
-**The failure sentinel — a DELIBERATE divergence from RC1's `nodesForRoomCached`.** RC1's `nodesForRoomCached`
-returns `Collections.emptySet()` on a lookup timeout/error (a tolerated missed room-round). RC4b must **not** copy
-that: `nodesForUriCached` returns:
-- **`null`** when the registry is **absent**, or a read **failed / timed out** ⇒ publish falls back to **all-peers**
-  (logged once, metered `fanout_fallback`). *Never a missed delivery from a Redis blip.*
-- a **non-null set (possibly empty)** only on a **successful authoritative read**. An empty set means "no peer
-  currently has a live audience" ⇒ pruning all peers is **correct** (the publisher already did local fan-out before
-  `publish`; a genuinely-empty remote audience should receive nothing).
+**Reserved/control channels bypass pruning (the presence fix).** `nodesForUriCached(uri)` returns **`null`** (⇒
+all-peers, RC4a behavior) for any **reserved channel** — for RC4b that is exactly `PRESENCE_CHANNEL`. No interest is
+ever registered for reserved channels, so there is no SADD that could fail and no membership that could be pruned;
+cross-node presence keeps fanning out to every presence-enabled node exactly as in RC4a. (Pruning a reserved channel
+would buy zero reduction anyway — its audience *is* all presence-enabled nodes.) The router is constructed with the
+reserved-channel set (`{ PRESENCE_CHANNEL }`).
 
-This null⇒fallback / empty⇒authoritative split is the load-bearing safety contract and MUST be implemented as such
-(the v1 "verbatim RC1 pattern" wording is removed; copying RC1's emptySet-on-failure would silently drop a whole
-broadcast on a transient Redis error). Two tests pin it (§9): read-timeout ⇒ all-peers; authoritative-empty ⇒ no peers.
+**The failure sentinel — a DELIBERATE divergence from RC1's `nodesForRoomCached`.** RC1 returns
+`Collections.emptySet()` on a lookup timeout/error. RC4b must **not** copy that. `nodesForUriCached` returns:
+- **`null`** when the URI is reserved, the registry is **absent**, or a read **failed / timed out** ⇒ publish falls
+  back to **all-peers** (logged once, metered `fanout_fallback`). **The null/failure result is NOT cached** — mirror
+  RC1's `nodesForRoomCached` which puts into the cache only on the success branch and returns without caching on the
+  catch branch, so a transient blip does not pin all-peers for a full TTL window.
+- a **non-null set (possibly empty)** only on a **successful authoritative read** of a non-reserved URI. An empty set
+  means "no peer currently has a live audience" ⇒ pruning all peers is **correct** (the publisher already did local
+  fan-out before `publish`).
 
-The cache + registry live in a small `MeshInterestRouter` collaborator injected into `MeshBroker` (keeps the broker
-focused; mirrors how `ClusterMessageSender` owns `nodesForRoomCached`). `nodesForUriCached` reuses RC1's
-`CachedNodeSet` 5s-TTL + lookup-timeout-bounded + `NODE_LEFT`-clear shape, but with the null-on-failure sentinel above.
-When the registry bean is absent (custom mesh without interest), the router returns `null` ⇒ all-peers.
+This null⇒fallback / empty⇒authoritative split is the load-bearing safety contract (copying RC1's emptySet-on-failure
+would silently drop a whole broadcast on a transient Redis error). Three tests pin it (§9): read-timeout ⇒ all-peers
+(not cached); authoritative-empty ⇒ no peers; reserved channel ⇒ all-peers.
 
-### 4.5 App-URI interest wiring summary (`ClusterMessageSender`)
+The cache + registry live in a small `MeshInterestRouter` collaborator injected into `MeshBroker` (mirrors how
+`ClusterMessageSender` owns `nodesForRoomCached`). `nodesForUriCached` reuses RC1's `CachedNodeSet` 5s-TTL +
+lookup-timeout-bounded + `NODE_LEFT`-clear shape, with the null-on-failure (uncached) sentinel above. When the
+registry bean is absent (custom mesh without interest), the router returns `null` ⇒ all-peers.
 
-- **subscribe (0→1 live session):** in `onLocalUriActive` via the §4.3 refcount ⇒ `interestRegistry.subscribe(uri, nodeId)`.
-- **unsubscribe (1→0 live session):** in `onLocalUriInactive` via the §4.3 refcount ⇒ `interestRegistry.unsubscribe(uri, nodeId)`.
-- **dead node:** `invalidateCacheForNode(deadNodeId)` already clears the room cache + calls `roomRegistry.removeAllForNode`
-  on the leader-elected reaped path; add the symmetric `interestRegistry.removeAllForNode(deadNodeId)` +
-  `interestNodeSetCache.clear()` on that **same** path (which is leader-only — verified: the sole production caller of
-  the dead-node callback is inside `ClusterNodeManager`'s `reaper.tryClaim` guard).
-- **startup:** no boot-time blanket announce. A node announces interest in `uri` only when its first live session for
-  `uri` connects — so a freshly-booted node with no sessions is correctly absent from every interest set.
+### 4.5 Dead-node + cache wiring
 
-### 4.6 Reserved channels — presence interest is registered (the fix)
+`invalidateCacheForNode(deadNodeId)` already clears the room cache + calls `roomRegistry.removeAllForNode` on the
+leader-elected reaped path (verified: the sole production caller of the dead-node callback is inside
+`ClusterNodeManager`'s `reaper.tryClaim` guard). RC4b adds the symmetric `interestRegistry.removeAllForNode(deadNodeId)`
++ `interestNodeSetCache.clear()` on that **same** path. No boot-time blanket announce: a node announces interest in
+`uri` only when its first live session for `uri` connects.
 
-Presence is **not** session-driven: a presence-enabled node always wants every cross-node `PRESENCE_CHANGE` event for
-its whole lifetime. So presence registers **permanent** interest, separate from the app-URI refcount, at the point it
-subscribes the reserved channel:
+### 4.6 Reserved channels — pruning bypass (not registration)
 
-- **Presence** (`PRESENCE_CHANNEL`): where `start()` does `broker.subscribe(PRESENCE_CHANNEL, this::onPresenceMessage)`
-  (the dedicated, non-`subscribeBroadcast` path), **also** call `interestRegistry.subscribe(PRESENCE_CHANNEL, nodeId)`
-  once, and **never** session-retract it (cleared only on shutdown / dead-node reap). Then
-  `nodesForUri(PRESENCE_CHANNEL)` = all presence-enabled nodes = the correct audience, and `firePresenceTransition`'s
-  `broker.publish(PRESENCE_CHANNEL, env)` still reaches every watcher. **Without this, interest routing would read an
-  empty set for `PRESENCE_CHANNEL` (a successful, non-null empty read ⇒ NOT the fallback) and prune every peer —
-  silently killing all cross-node presence (a shipped RC3 GA feature).** A test asserts presence E2E still reaches a
-  remote watcher with interest routing on.
+- **Presence** (`PRESENCE_CHANNEL`): **never registered in the interest registry and never pruned** — `publish`
+  treats it as all-peers (§4.4). This is strictly simpler and safer than v2's permanent-SADD: no write to fail, no
+  membership to lose, no lifecycle to manage, and cross-node presence (the shipped RC3 GA feature) keeps working
+  unchanged. A test asserts presence E2E still reaches a remote watcher with interest routing on.
 - **Room** (`ROOM_BROADCAST`): goes through `broker.unicast(targetNode, ...)`, **not** `publish` — untouched. ✔
 - **Offline / `sendToUser`:** unicast/user-targeted, not topic `publish` — untouched. ✔
-- **Generalization:** any channel a node listens on via a non-session path (reserved/control channels) registers
-  permanent interest at its subscribe site. For RC4b that is exactly `PRESENCE_CHANNEL`.
+- **Generalization:** the `MeshInterestRouter` holds the reserved-channel set; any channel in it bypasses pruning
+  (returns `null` ⇒ all-peers). For RC4b that set is `{ PRESENCE_CHANNEL }`.
 
 ---
 
@@ -287,17 +314,24 @@ subscribes the reserved channel:
 
 Auto-config (`NettyWebSocketClusterConfigure`): a `RedisMeshInterestRegistry` bean gated on
 `STANDALONE_MESH_BROKER and interest-routing.enable` + `@ConditionalOnMissingBean(MeshInterestRegistry.class)`, wired
-into the `MeshBroker`/router, into `ClusterMessageSender`'s per-URI refcount hooks, and into the presence subscribe
-site (§4.6). When `mesh.enable=false` the bean never exists — byte-identical to RC1/RC2/RC3/RC4a.
+into the `MeshBroker`/router (with the reserved-channel set) and into `ClusterMessageSender`'s per-session interest
+hooks. When `mesh.enable=false` the bean never exists — byte-identical to RC1/RC2/RC3/RC4a.
 
-**`OnAnyRedisSpiRequired`: no new clause needed (resolved).** Mesh already forces the standalone-Redis path and the
-existing `meshEnabled && !hasBean(MeshNodeDirectory.class)` clause **already** retains `nettyClusterRedisConnection`
-for any mesh deployment using the default directory; the default `RedisMeshInterestRegistry` autowires that same
-connection. Adding a "same shape" interest clause would either be redundant or (if it omitted the
-`interest-routing.enable` predicate) hold Redis up when the registry bean isn't even created. So **no clause is added**;
-a context test covers the only edge it would protect: `mesh.enable=true` + a fully custom mesh SPI set (custom
-`MeshNodeDirectory` AND custom `MeshInterestRegistry`) correctly gates Redis off, while `mesh.enable=true` + default
-directory keeps it on.
+**`OnAnyRedisSpiRequired` gains an interest clause (resolved — v2's "no clause" was unsound).** The default
+`RedisMeshInterestRegistry` autowires `nettyClusterRedisConnection`, and its gate (`STANDALONE_MESH_BROKER and
+interest-routing.enable`) is **independent of `MeshNodeDirectory`** — so a custom `MeshNodeDirectory` (e.g. K8s-DNS)
+plus all-custom core SPIs plus the **default** interest registry would gate the Redis connection off (the directory
+clause sees the custom directory ⇒ `false`) while still creating the registry that needs it ⇒ `NoSuchBeanDefinitionException`
+at startup. This is the exact structural situation the room/offline/presence per-SPI clauses already guard. Add the
+symmetric clause:
+```java
+boolean interestRoutingEnabled = meshEnabled && Boolean.parseBoolean(env.getProperty(
+        "server.netty.websocket.cluster.mesh.interest-routing.enable", "true"));
+if (interestRoutingEnabled && !hasBean(bf, MeshInterestRegistry.class)) return true;
+```
+(OR'd with the existing directory clause.) Context tests cover both the **symmetric** case (custom directory + custom
+interest registry ⇒ Redis gated off) **and the asymmetric** case (custom directory + **default** interest registry +
+all-custom core SPIs ⇒ Redis stays **on**) — the latter is what would otherwise break and what the v2 test missed.
 
 ---
 
@@ -309,18 +343,18 @@ directory keeps it on.
   by remote publishers for up to `node-set-cache-ttl-ms` (their cache hasn't refreshed). Identical to RC1's
   just-joined-room-member window and to Redis Pub/Sub's own subscribe-propagation latency. Local delivery on the
   subscribing node is immediate. Mitigation is the deferred approach C.
-- **Cold-start / first-publish race.** A `publish` to `uri` before a remote audience node's `SADD` has landed reads an
-  authoritative (possibly empty) set and may miss that node — this is the *same* ≤TTL freshly-subscribed window from
-  the publisher's side (the `subscribe` write is async, like RC1's `joinRoom`). At-most-once; documented, not a new
-  loss class. Authoritative-empty ⇒ prune-all is correct (genuinely no live remote audience yet).
-- **Registry read failure ⇒ RC4a all-peers fallback** (the §4.4 `null` sentinel). Never a missed delivery from a
-  Redis blip; logged + metered (`fanout_fallback`).
+- **Cold-start / first-publish race** is the same ≤TTL window from the publisher's side (the `subscribe` write is
+  async, like RC1's `joinRoom`). At-most-once; authoritative-empty ⇒ prune-all is correct (no live remote audience yet).
+- **Registry read failure ⇒ RC4a all-peers fallback** (the §4.4 `null` sentinel, not cached). Never a missed delivery
+  from a Redis blip; logged + metered (`fanout_fallback`).
+- **Reserved channels never pruned** (§4.6) — presence/control delivery is exactly RC4a all-peers, with no dependence
+  on any interest write succeeding.
 - **Over/under-interest are both fail-safe** (see §2 receive-vs-send): over-interest = a wasted send dropped locally;
-  under-interest (a held-subscription node briefly absent from the set) = bounded by the ≤TTL window, and the held
-  broker subscription means any send that *does* arrive is still delivered.
-- **Dead peer.** Excluded by live-membership (RC4a MF1) immediately for reachability, and pruned from the interest
+  under-interest (a node briefly absent from the set) = bounded by the ≤TTL window, and the held broker subscription
+  means any send that *does* arrive is still delivered.
+- **Dead peer.** Excluded by live-membership (RC4a MF1) immediately for reachability; pruned from the interest
   registry on the leader-elected reap (`removeAllForNode`) + wholesale cache clear. A stale interest entry for a dead
-  node at worst causes one `sendTo` that the membership filter (RC4a MF1) already drops.
+  node at worst causes one `sendTo` the membership filter (RC4a MF1) already drops.
 - **Backpressure (RC4a M1).** Unchanged; a slow interested peer still drops+counts past the watermark.
 
 ---
@@ -331,8 +365,8 @@ Internal counters now (surfaced to `netty.cluster.mesh.*` in RC4d, consistent wi
 **sender's shared** `ClusterRuntimeStats` so RC4d can read them — also fixing RC4a's BL6):
 - `mesh.broadcast.target_nodes` — interested peers targeted per `publish` (the reduction observable; mirrors
   `netty.cluster.room.fanout.target_nodes`).
-- `mesh.broadcast.fanout_fallback` — publishes that fell back to all-peers (registry unavailable/timeout) — watch this;
-  a high value means interest routing is not actually engaging (Redis trouble) and the reduction isn't being realized.
+- `mesh.broadcast.fanout_fallback` — publishes that fell back to all-peers (registry unavailable/timeout/reserved) —
+  watch this; a high value on non-reserved URIs means interest routing is not engaging (Redis trouble).
 
 ---
 
@@ -341,46 +375,45 @@ Internal counters now (surfaced to `netty.cluster.mesh.*` in RC4d, consistent wi
 - `mesh.enable=false` ⇒ no mesh, no interest registry — byte-identical to RC1/RC2/RC3.
 - `mesh.enable=true, interest-routing.enable=false` ⇒ RC4a naive all-peers (the prior RC4a behavior exactly).
 - New SPI `MeshInterestRegistry` is additive + `@ConditionalOnMissingBean`. Same envelope wire (no version bump). A
-  mesh node with interest routing and one without inter-operate: the without-routing node receives + drops uninterested
-  URIs as in RC4a; the with-routing node prunes — both safe (a mixed RC4a/RC4b cluster never loses delivery, because
-  pruning is only ever applied by a node that successfully read interest; an RC4a node sends to all).
+  mesh node with interest routing and one without inter-operate: the without-routing node sends to all; the
+  with-routing node prunes only after a successful read — a mixed RC4a/RC4b cluster never loses delivery.
 
 ---
 
 ## 9. Testing
 
-- `MeshInterestRegistry` SPI + an `InMemoryMeshInterestRegistry` test stub (mirror `InMemoryMeshNodeDirectory`).
-- `RedisMeshInterestRegistry`: `SADD` / atomic-Lua `SREM`+conditional-`DEL` / `nodesForUri` / `removeAllForNode` unit
-  (mock Lettuce, assert the single `EVAL` for unsubscribe) + a real-Redis IT (assumeTrue-gated, like
-  `RedisMeshNodeDirectoryTest`), incl. the unsubscribe-race (`SREM`→0 concurrent with `SADD` keeps the member).
-- **Session-grained refcount** (`ClusterMessageSender`): two sessions on `/ws/a` ⇒ exactly **one** `subscribe`; first
-  leave ⇒ no `unsubscribe`; second (last) leave ⇒ exactly one `unsubscribe`; the held broker subscription is NOT
-  dropped on last-leave.
+- `MeshInterestRegistry` SPI + an `InMemoryMeshInterestRegistry` test stub (mirror `InMemoryMeshNodeDirectory`;
+  per-node session set + node-set in memory, 0↔1 decided under a lock to model the Lua).
+- `RedisMeshInterestRegistry`: `JOIN_LUA` / `LEAVE_LUA` / `nodesForUri` / node-scoped `removeAllForNode` unit (mock
+  Lettuce, assert one `EVAL` per subscribe/unsubscribe) + a real-Redis IT (assumeTrue-gated, like
+  `RedisMeshNodeDirectoryTest`). **Atomicity tests:** (a) two sessions for `/ws/a` on one node ⇒ node-set has the node
+  once, first leave keeps it, last leave removes it; (b) the **same-node connect/disconnect race** — interleave a
+  `subscribe(sessionB)` with an `unsubscribe(sessionA)` and assert the node stays in the node-set whenever a live
+  session remains (the v2-regression guard); (c) cross-node `SREM`→0 concurrent with another node's `SADD` keeps both.
+- **Per-session wiring** (`ClusterMessageSender`): `onLocalUriActive`/`Inactive` thread `sessionId` and call the
+  registry per session; the held broker subscription is NOT dropped on last-leave.
 - `MeshBroker.publish` interest routing: a peer **with** a live session receives, a peer **without** is skipped;
-  registry read **failure/timeout ⇒ `null` ⇒ all-peers**; authoritative **empty ⇒ no peers**; live-membership ∩
-  interest (a dead-but-interested peer is not contacted).
-- **Presence composition** (the §4.6 fix): with interest routing **on**, a presence change on node A still reaches a
-  remote watcher node B (B registered permanent `PRESENCE_CHANNEL` interest); a presence-only deployment SADDs
-  `PRESENCE_CHANNEL`.
+  registry read **failure/timeout ⇒ `null` ⇒ all-peers** and the null is **not cached** (a second publish within the
+  TTL still attempts the read); authoritative **empty ⇒ no peers**; **reserved channel (`PRESENCE_CHANNEL`) ⇒
+  all-peers** (bypass); live-membership ∩ interest (a dead-but-interested peer is not contacted).
+- **Presence composition** (the §4.6 bypass): with interest routing **on**, a presence change on node A still reaches
+  a remote watcher node B; no interest key is created for `PRESENCE_CHANNEL`.
 - Two-node real-TCP-via-real-Redis E2E (extend `MeshTwoNodeE2ETest`): B has a live session on `/ws/a` only; A's
   publish to `/ws/a` reaches B, A's publish to `/ws/b` does **not**; close B's `/ws/a` session ⇒ A's next `/ws/a`
   publish (after ≤TTL) no longer targets B.
-- Context test (`NettyWebSocketClusterConfigureTest`): `mesh.enable=true` ⇒ interest registry present + wired;
-  `interest-routing.enable=false` ⇒ absent (all-peers); `mesh.enable=false` ⇒ absent; `mesh.enable=true` + fully
-  custom mesh SPI (custom directory + custom interest registry) ⇒ Redis connection gated off.
+- Context tests (`NettyWebSocketClusterConfigureTest`): `mesh.enable=true` ⇒ interest registry present + wired;
+  `interest-routing.enable=false` ⇒ absent (all-peers); `mesh.enable=false` ⇒ absent; **custom directory + custom
+  interest registry ⇒ Redis gated off**; **custom directory + DEFAULT interest registry + all-custom core SPIs ⇒
+  Redis stays on** (the OnAnyRedisSpiRequired interest-clause regression test).
 - **Honesty regression:** a topic with live sessions on every node targets all peers (no false reduction); a
-  partitioned topic (live sessions on a subset) targets only that subset — on a **homogeneous** registration set
-  (every node has the mapping; only some have live sessions), proving the reduction is session-grained, not
-  build-heterogeneity-dependent.
+  physically-partitioned topic (live sessions on a subset) targets only that subset — on a **homogeneous**
+  registration set (every node has the mapping; only some have live sessions), proving the reduction is session-grained.
 
 ---
 
 ## 10. Deferred
 
 - **Approach C** (mesh interest-change notifications to shrink the ≤TTL freshly-subscribed window) → RC4c.
-- **Per-node reverse index** `netty:interest:node:{b64nodeId} → Set<b64uri>` to make `removeAllForNode` bounded
-  (`SMEMBERS` + pipelined `SREM`) instead of an `O(distinct-URIs)` SCAN → only if URI cardinality grows beyond the
-  documented scale (otherwise YAGNI). Stated honestly in §4.2.
 - **Full `netty.cluster.mesh.*` meters** (incl. `broadcast.target_nodes`, `fanout_fallback`, + the RC4a counters
   fixed to the shared `ClusterRuntimeStats` — RC4a BL6) → RC4d.
 - Hierarchical/relay-tree fan-out for genuinely-global topics (out of mesh scope; sharded pub/sub → 2.0.0).
@@ -388,32 +421,40 @@ Internal counters now (surfaced to `netty.cluster.mesh.*` in RC4d, consistent wi
 
 ---
 
-## 11. Risks / open questions for design-review (v2 — post-fold)
+## 11. Risks / open questions for design-review (v3 — post-re-review)
 
-1. **Refcount correctness under concurrent connect/disconnect.** `merge`/`compute` give atomic 0↔1 detection; confirm
-   no interleaving fires a spurious double-`subscribe` or misses a `1→0`. (Fail-safe direction is over-interest.)
-2. **`subscribe` write failure under-interest.** A failed first-session `subscribe` leaves the node absent from the set
-   until a retry/new session; bounded by ≤TTL + reconnect cadence + the all-peers fallback when many nodes fail.
-   Confirm this is within at-most-once + RC1 parity.
-3. **Presence permanent-interest lifecycle.** Confirm `PRESENCE_CHANNEL` interest is registered exactly once at the
-   presence subscribe site and cleared only on shutdown/dead-node reap (never by the app-URI refcount path).
-4. **Honesty framing.** Release notes + cluster-design must state plainly: global-topic reduction is ~0; the win is
-   *partitioned live audiences* (now genuine on homogeneous fleets) + already-mesh-native rooms; high-cardinality
-   topics must use rooms. So RC4b is not over-claimed (RC1-style scope honesty).
+1. **Lua adaptation fidelity.** Confirm `JOIN_LUA`/`LEAVE_LUA` mirror `RedisRoomRegistry`'s (lines 79-105) atomic
+   add-on-first/remove-on-last with the room dimension collapsed (per-node session set keyed by `(uri,node)`), and the
+   hash-tag co-locates both keys for the `EVAL` (Redis-Cluster-safe).
+2. **Reserved-channel set source.** Confirm the router's reserved set (`{ PRESENCE_CHANNEL }`) is sourced from the
+   canonical constant and that `publish` to it is genuinely all-peers (no interest read), so presence has no
+   dependence on any interest write.
+3. **`OnAnyRedisSpiRequired` interest clause** covers the asymmetric custom-directory + default-interest case without
+   over-retaining Redis when `interest-routing.enable=false`.
+4. **§1 honesty precondition** (random-LB population saturation) is stated plainly and mirrored into release-notes +
+   cluster-design, so RC4b is not over-claimed (RC1-style scope honesty).
 
 ---
 
-## 12. Design-review resolutions (folded from the 31-agent review)
+## 12. Design-review resolutions (folded across two rounds)
 
-| # | Blocking finding | Resolution in this spec |
+**Round 1 (v1 → v2): registered-mapping grain → session grain.**
+
+| # | Round-1 blocker | Resolution |
 |---|---|---|
-| A | Interest was registered-mapping-grained; "zero-session" reduction fictional; `unsubscribe` dead code; sparse win needed a heterogeneous build | **Pivot to session-grained interest** via the per-URI live-session refcount (§4.3); reduction now genuine on homogeneous fleets; `subscribe`/`unsubscribe` fire on real 0↔1 transitions (§4.1, §4.5); §1/§2 reframed |
-| B | `PRESENCE_CHANNEL` never registered interest ⇒ interest routing would prune all peers ⇒ silent cross-node presence regression | **Permanent presence interest** registered at the presence subscribe site (§4.6) + composition test (§9) |
-| C | "Verbatim RC1" `nodesForRoomCached` returns emptySet-on-failure ⇒ a Redis blip silently drops the whole broadcast | **null-vs-empty sentinel** made explicit + DELIBERATE divergence from RC1 (§4.1 `nodesForUri` contract, §4.4) + two tests |
-| D | Non-atomic `SREM`+`DEL` unsubscribe races (A SREM→0, B SADD→1, A DEL wipes B) | **Single atomic Lua `EVAL`** mandated; non-atomic option removed (§4.2) |
-| E | `removeAllForNode` SCAN mischaracterized as "same shape as room" (it is O(distinct-URIs), not node-scoped) | **Honest cost statement** (§4.2); reverse-index optimization deferred (§10) |
-| F | `OnAnyRedisSpiRequired` "same shape" clause redundant / wrong predicate | **No new clause** — the directory clause already retains Redis; documented + context test (§5) |
+| A | Interest was registered-`@MessageMapping`-grained ⇒ zero reduction on a homogeneous fleet; `unsubscribe` dead code | Pivot to **session-grained** interest (§2, §4.3); reduction genuine on homogeneous fleets |
+| B | `PRESENCE_CHANNEL` never registered interest ⇒ presence pruned to zero | (superseded by v3) reserved channels **bypass pruning** (§4.6) |
+| C | "Verbatim RC1" emptySet-on-failure ⇒ a Redis blip drops the whole broadcast | **null-vs-empty sentinel**, null **not cached** (§4.4) + tests |
+| D | Non-atomic `SREM`+`DEL` unsubscribe races cross-node | Atomic Lua (now `LEAVE_LUA`, §4.2) |
+| E | `removeAllForNode` mischaracterized as node-scoped | v3 makes it **genuinely node-scoped** via the per-node session-set key suffix (§4.2) |
+| F | `OnAnyRedisSpiRequired` "same shape" clause redundant | (corrected by v3) a **properly-predicated interest clause IS needed** (§5) |
 
-Non-blocking refinements folded: cold-start window documented as the ≤TTL window (§6); over/under-interest fail-safe
-framing (§2, §6); metrics written to the shared `ClusterRuntimeStats` (§7); §1 examples corrected to
-live-audience-partitioned (not heterogeneous-build).
+**Round 2 (v2 → v3): the session-grained pivot's own flaws.**
+
+| # | Round-2 finding | Resolution |
+|---|---|---|
+| R1 | **BLOCKER** — JVM session-count + two unordered Redis writes let a same-node connect/disconnect race permanently wipe a live node's membership | **RC1-exact in-EVAL atomicity**: per-node session set + JOIN/LEAVE Lua decides the 0↔1 flip; no JVM counter (§3 A, §4.2, §4.3) |
+| R2 | **BLOCKER** — presence permanent-interest one-shot `SADD` had no retry ⇒ a transient blip permanently, silently killed cross-node presence | Reserved channels **bypass interest pruning** entirely — no presence SADD, no failure mode (§4.4, §4.6) |
+| R3 | **BLOCKER/MAJOR** — `OnAnyRedisSpiRequired` "no clause" was unsound (custom directory + default interest registry orphans the Redis connection) | Add the **interest clause** + asymmetric context test (§5, §9) |
+| R4 | **MAJOR** — §1 over-claimed partitioned reduction; omitted the random-LB / population-saturation precondition (the RC1 shard-ring lesson) | Add the **§1 precondition** + reframe examples (small population / session-sticky / tenant-affine) |
+| R5 | **MINOR** — `removeAllForNode` cost label / null-not-cached not explicit / hook named `onSessionAdded` | Honest `O(total-keys)` cursor cost note (§4.2); null-not-cached stated + tested (§4.4, §9); hook named `onSessionRegistered` (§4.3) |

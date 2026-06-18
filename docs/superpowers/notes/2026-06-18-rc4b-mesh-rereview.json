@@ -1,0 +1,47 @@
+{
+  "review": "1.10.0-RC4b interest-routed mesh broadcast — adversarial RE-REVIEW of spec v2 (session-grained pivot)",
+  "date": "2026-06-18",
+  "method": "6 resolve-checks (one per round-1 flaw A-F) + 4 new-flaw lenses + skeptic verify; 20 agents",
+  "verdict": {
+    "rc4bReadyToPlan": false,
+    "resolvedRound1": "A,B,C,D,E genuinely resolved + verified against HEAD; F resolution was UNSOUND (no-clause)",
+    "outcome": "v2 returned for rework; v3 folds the 3 new BLOCKERs + 1 new MAJOR + F correction — see spec §12 round-2 table"
+  },
+  "newBlockers": [
+    {
+      "id": "R1",
+      "severity": "BLOCKER",
+      "title": "Split JVM-refcount + unordered Redis writes reorder same-node subscribe/unsubscribe → permanent silent under-interest (RC1 atomicity regression)",
+      "detail": "v2 put the per-URI live-session count in a JVM ConcurrentHashMap (merge/compute 0↔1) then fired two independent fire-and-forget Redis writes: subscribe=bare SADD, unsubscribe=atomic Lua SREM+conditional-DEL. The Lua only defends the CROSS-node race (round-1 D); it does NOT serialize a concurrent SAME-node SADD against the SREM-Lua. Race: last-leave (T1: compute 1→0, async unsubscribe-Lua) concurrent with first-connect (T2: merge 0→1, async SADD); if T2's SADD lands before T1's Lua, the Lua SREM→{} then DEL → key absent while the node has a live session. Not ≤TTL-bounded (no further 0↔1 fires for a steady single-session URI) → remote publishers' nodesForUri excludes it and silently drop every broadcast — exactly RC4b's headline partitioned-topic use case. Verified: hooks fire synchronously on different channel event-loop threads with no per-URI lock/ordering token.",
+      "fix": "Restore RC1's in-EVAL atomicity: per-(uri,node) Redis session set + JOIN_LUA/LEAVE_LUA decide the node-set add-on-first/remove-on-last inside the EVAL (mirror RedisRoomRegistry exactly, minus the room dimension); drop the JVM counter. Folded in v3 §3 A, §4.2, §4.3."
+    },
+    {
+      "id": "R2",
+      "severity": "BLOCKER",
+      "title": "Presence permanent-interest one-shot fire-and-forget SADD with no retry → transient Redis blip permanently, silently kills cross-node presence for the node's lifetime",
+      "detail": "v2 §4.6 registered PRESENCE_CHANNEL interest once at start() with no .exceptionally retry/re-assert. Presence is NOT session-driven, so nothing re-fires the SADD. If that single write fails on a transient blip, the node is permanently absent from the PRESENCE_CHANNEL node-set; once Redis recovers, remote publishers' nodesForUri(PRESENCE_CHANNEL) returns a successful non-null set that omits the node → it is pruned (the §4.4 contract working against it; all-peers fallback only fires on the READER's read failure). Silent, unbounded loss of the shipped RC3 GA presence feature — for zero routing benefit (presence audience IS all presence-enabled nodes).",
+      "fix": "Reserved/control channels BYPASS interest pruning entirely — publish to PRESENCE_CHANNEL is always all-peers, no interest registered for reserved channels. Removes the failure class, simpler than the permanent SADD. Folded in v3 §4.4, §4.6."
+    },
+    {
+      "id": "R3",
+      "severity": "BLOCKER/MAJOR (multiple confirmations)",
+      "title": "OnAnyRedisSpiRequired finding-F resolution ('no clause needed') is unsound — custom MeshNodeDirectory + default RedisMeshInterestRegistry orphans the Redis connection",
+      "detail": "The default interest registry is gated on STANDALONE_MESH_BROKER + interest-routing.enable + @ConditionalOnMissingBean(MeshInterestRegistry) — independent of MeshNodeDirectory. A reachable config (mesh.enable=true + all-4-custom core SPIs + custom MeshNodeDirectory + default interest registry) makes OnAnyRedisSpiRequired.matches() false (the sole mesh clause checks only !hasBean(MeshNodeDirectory), and the custom directory makes hasBean=true), so nettyClusterRedisConnection is gated off while the default RedisMeshInterestRegistry still autowires it → NoSuchBeanDefinitionException at startup. Exact analog of the presence P4 precedent (presenceOnly_allFourCustomCoreSpi_redisConnectionStillExists).",
+      "fix": "Add the symmetric clause: if (meshEnabled && interestRoutingEnabled && !hasBean(MeshInterestRegistry.class)) return true; (OR'd with the directory clause) + an asymmetric context test (custom directory + default interest registry ⇒ Redis stays on). Folded in v3 §5, §9."
+    }
+  ],
+  "newMajors": [
+    {
+      "id": "R4",
+      "severity": "MAJOR (blocksPlanning=false but a must-fix honesty item)",
+      "title": "§1 over-claims partitioned-topic reduction; omits the random-LB / population-vs-node-count saturation precondition that retired RC1's shard ring",
+      "detail": "interestedNodes(uri) = nodes hosting ≥1 live session. Under random/round-robin LB (the WS-fleet default), a topic whose concurrent live population is comparable to or exceeds node count saturates (nearly) ALL nodes by coupon-collector — so a LOGICALLY partitioned topic (region/large-tenant) has interest = all nodes → ~0 reduction despite being 'partitioned'. §1 conflated logical partitioning with physical node partitioning; the two coincide only for small populations or session-sticky/tenant-affine LB. This is the documented reason RC1's shard ring was retired (CLAUDE.md / development-plan), and RC1's own docs disclose it (api-guide hot-room row, release-notes hot-room benchmark).",
+      "fix": "Add the §1 precondition + reframe per-tenant/per-region examples as small-population / session-sticky / tenant-affine. Folded in v3 §1."
+    }
+  ],
+  "minorsFolded": [
+    "removeAllForNode cost: SCAN MATCH walks the whole keyspace cursor-side (O(total-keys)), not O(matching-keys) — same as shipped RedisRoomRegistry; v3 states honestly. With the RC1 two-key fix the per-node SCAN MATCH netty:interest:*:n:{b64node} is node-scoped on the matched keys.",
+    "null/failure result must NOT be cached for the TTL (mirror RC1 nodesForRoomCached: cache only on success branch) + a test pinning a transient blip does not pin all-peers for a full TTL — v3 §4.4, §9.",
+    "Connect hook is onSessionRegistered (not onSessionAdded); cited line numbers + per-session semantics otherwise correct — v3 §4.3."
+  ]
+}
