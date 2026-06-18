@@ -153,6 +153,19 @@ public interface ClusterBroker {
     }
 
     /**
+     * Invoked on the leader-elected dead-node reap so an interest-routing transport can drop the dead node from its
+     * routing state (e.g. clear an interest send-cache + reap the registry). Default no-op — transports without
+     * interest routing (Redis Pub/Sub, NATS) need nothing here. Additive default method (mirrors
+     * {@link #setTransportStateListener}'s default-method precedent — backward-compatible).
+     *
+     * @param nodeId the failed node's identifier
+     * @since V1.10.0
+     */
+    default void onNodeLeft(String nodeId) {
+        // no-op by default; interest-routing transports (MeshBroker) override this
+    }
+
+    /**
      * Shuts down the broker, releasing all transport resources.
      * After shutdown, all publish/unicast/subscribe calls will throw.
      */
