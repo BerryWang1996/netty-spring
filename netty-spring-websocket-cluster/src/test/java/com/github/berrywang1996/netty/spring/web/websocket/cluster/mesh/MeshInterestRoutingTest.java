@@ -64,6 +64,9 @@ class MeshInterestRoutingTest {
         b.start();
         b.subscribe("/ws/a", env -> recvB.add(body(env)));
         b.subscribe("/ws/b", env -> recvB.add(body(env)));
+        // RC4c BL5: publish reads A's peer SNAPSHOT (not a live Redis read); B advertised after A's start()-time
+        // populate, so refresh A's snapshot via the membership tick (the real periodic tick does this every ~10s).
+        a.membershipTick();
     }
 
     private MeshBroker newBroker(String nodeId, int port) {

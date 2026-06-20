@@ -126,6 +126,8 @@ class MeshTwoNodeE2ETest {
         // wait until B's directory (real Redis) shows A's advertised address
         assertTrue(waitFor(() -> b.directoryForTest().peers("e2e-mesh-B").toCompletableFuture().join()
                 .containsKey("e2e-mesh-A"), 5000), "B discovered A via the real Redis directory");
+        // RC4c BL5: publish/unicast read B's peer snapshot; refresh it now that the directory shows A.
+        b.membershipTick();
 
         // broadcast B → A over TCP, retrying the publish until A receives (covers the advertise/connect warm-up)
         assertTrue(waitFor(() -> {
@@ -157,6 +159,9 @@ class MeshTwoNodeE2ETest {
             interest.subscribe("/ws/x", "sb", "e2e-mesh-B").toCompletableFuture().join();
             assertTrue(waitFor(() -> a.directoryForTest().peers("e2e-mesh-A").toCompletableFuture().join()
                     .containsKey("e2e-mesh-B"), 5000), "A discovered B");
+            // RC4c BL5: publish reads A's peer snapshot; refresh it now that the directory shows B (the real periodic
+            // membership tick does this every ~10s — we trigger it once for a deterministic test).
+            a.membershipTick();
 
             // /ws/x → B is interested → delivered over TCP.
             assertTrue(waitFor(() -> {
