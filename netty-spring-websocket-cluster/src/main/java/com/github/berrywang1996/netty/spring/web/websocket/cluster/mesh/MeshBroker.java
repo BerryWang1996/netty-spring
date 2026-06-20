@@ -193,7 +193,7 @@ public class MeshBroker implements ClusterBroker {
                         if (idleTimeoutMs > 0) {
                             ch.pipeline().addLast(new io.netty.handler.timeout.IdleStateHandler(
                                     0, idleTimeoutMs, 0, TimeUnit.MILLISECONDS));
-                            ch.pipeline().addLast(new IdleCloseHandler());
+                            ch.pipeline().addLast(new IdleCloseHandler(stats));
                         }
                         // Outbound carries length-prefixed frames; inbound on this channel is unused (directional).
                         ch.pipeline().addLast(MeshFrames.prepender());
@@ -651,9 +651,16 @@ public class MeshBroker implements ClusterBroker {
     /** RC4c BL3: closes an outbound channel on a WRITER_IDLE event — its closeFuture listener evicts it from the
      *  cache; the next send re-dials lazily (honoring backoff). */
     private static final class IdleCloseHandler extends io.netty.channel.ChannelInboundHandlerAdapter {
+        private final ClusterRuntimeStats stats;
+
+        IdleCloseHandler(ClusterRuntimeStats stats) {
+            this.stats = stats;
+        }
+
         @Override
         public void userEventTriggered(io.netty.channel.ChannelHandlerContext ctx, Object evt) {
             if (evt instanceof io.netty.handler.timeout.IdleStateEvent) {
+                stats.incMeshIdleReaps();   // RC4d: count the reap before closing
                 ctx.close();
             } else {
                 ctx.fireUserEventTriggered(evt);
