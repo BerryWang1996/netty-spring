@@ -1,0 +1,42 @@
+{
+  "review": "1.10.0-RC4c mesh hot-path robustness — adversarial design review (v1 spec)",
+  "date": "2026-06-20",
+  "method": "3 lenses (correctness, composition, scope-architecture) + skeptic verify + synthesis; 9 agents",
+  "verdict": {
+    "fixDesignFirst": true,
+    "mustFix_MAJOR": 3,
+    "nonBlockingNits": 6,
+    "outcome": "v1 spec returned for rework; v2 folds all — see spec §9"
+  },
+  "mustFix": [
+    {
+      "id": 1,
+      "severity": "MAJOR",
+      "title": "Reconnect backoff in the shared connectionTo() latches the node DEGRADED on the recovery edge",
+      "detail": "connectionTo() is shared by both the send hot path AND membershipTick (MeshBroker.java:213) — the SOLE DEGRADED→ACTIVE recovery probe (evaluateReachability restores only on reachable>0). A peer backed off near the 30s cap that then recovers gets null from connectionTo on every tick within the window → reachable stays 0 → broker latched DEGRADED ~30s vs today's ≤tickMs (~10s). v1 §3.2 explicitly endorsed the tick honoring the backoff.",
+      "fix": "Scope the backoff to the send path only (connectionForSend used by sendTo); membershipTick calls raw connectionTo (it self-rate-limits to one dial/peer/tick). Folded v2 §3.2 + recovery test."
+    },
+    {
+      "id": 2,
+      "severity": "MAJOR",
+      "title": "BL5 snapshot widens the unicast silent-drop window, breaking the unicast→MessageSessionClosedException contract",
+      "detail": "unicast's targetNodeId is registry-resolved (caller knows the node hosts the session now); a registry can learn of a node before the mesh tick refreshes peerSnapshot. A snapshot miss makes unicast return without throwing (MeshBroker.java:294-298) → ClusterMessageSender counts unicastSent and skips closedIds → silent loss, widening the undeliverable window from ~0 to ≤tickMs. Broadcast can accept ≤tickMs; unicast cannot.",
+      "fix": "Unicast keeps the snapshot but falls back to a single direct directory.peers().get(targetNodeId) read on a miss (rare, bounded, off the storm path) before dropping. Folded v2 §3.1 + fresh-target test."
+    },
+    {
+      "id": 3,
+      "severity": "MAJOR",
+      "title": "'Zero synchronous Redis on the hot path' Goal over-claimed",
+      "detail": "BL5 removes the per-message directory SCAN+GET, but publish() also blocks on router.nodesForUriCached() (RC4b interest), a 5s-TTL-cached SMEMBERS that hits Redis on a cache miss (per URI per ~5s, not per message). The literal 'zero' claim is false until the interest read is also in-memory (RC4d/approach-C).",
+      "fix": "Honest §1/§2: BL5 removes the per-message directory SCAN+GET; interest remains a short-TTL-cached SMEMBERS; fully-in-memory interest is RC4d/approach-C. Folded v2 §1/§2."
+    }
+  ],
+  "nonBlockingNits_folded": [
+    "ALL_IDLE on a write-only outbound channel reaps a slow-but-alive peer mid-traffic → use WRITER_IDLE (IdleStateHandler(0, idle, 0)) (v2 §3.3)",
+    "BL4 reconcile fired inline in setTransportStateListener on the bean-init thread → grace=0 synchronous degrade (possibly closeAllLocalSessions) BEFORE start() finishes wiring → move to the end of ClusterMessageSender.start() (v2 §3.4)",
+    "reconnectNotBefore leak (onNodeLeft only forwards to interestRouter, no per-peer map prune) → membershipTick prunes via retainAll(livePeers) (v2 §3.2)",
+    "initial start() peerSnapshot populate is an unbounded directory.peers().join() (only Lettuce timeout) → bound with .get(commandTimeoutMs, MS) (v2 §3.1)",
+    "BL2 guard doesn't prevent a transient conflicting-broker open (clusterBrokerCluster / clusterBrokerNats live connection eligible alongside the throwing guard, no ordering) → honest caveat: torn down by the failing refresh; + mesh+nats context test (v2 §3.5/§6)",
+    "§5 implied backoff drops are operator-visible but mesh counters write a throwaway ClusterRuntimeStats no meter reads until RC4d (BL6) → dropped the visibility claim (v2 §5)"
+  ]
+}
