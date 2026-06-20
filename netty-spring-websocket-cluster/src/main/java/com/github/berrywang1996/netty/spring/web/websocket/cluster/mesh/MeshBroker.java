@@ -611,6 +611,24 @@ public class MeshBroker implements ClusterBroker {
         return clientBootstrap;
     }
 
+    // ---- RC4d observability accessors ----
+
+    /** RC4d: the broker's own runtime stats — where mesh transport counters are written; the meter binder reads THIS. */
+    public ClusterRuntimeStats runtimeStats() {
+        return stats;
+    }
+
+    /** RC4d gauge: live outbound channels currently cached (lazily dialed; usually &lt;= knownPeerCount). */
+    public int activeOutboundConnections() {
+        return outbound.size();
+    }
+
+    /** RC4d gauge: peers in this node's directory snapshot (raw advertised view by address TTL; may briefly include
+     *  a heartbeat-dead peer whose mesh address has not yet expired). */
+    public int knownPeerCount() {
+        return peerSnapshot.size();
+    }
+
     private void checkActive() {
         BrokerState s = state.get();
         if (s == BrokerState.SHUTDOWN) {

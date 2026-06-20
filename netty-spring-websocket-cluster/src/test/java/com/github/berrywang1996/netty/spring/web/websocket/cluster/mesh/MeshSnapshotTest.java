@@ -123,6 +123,22 @@ class MeshSnapshotTest {
     }
 
     @Test
+    void accessorsReflectSnapshotAndStats() throws Exception {
+        CountingDirectory dir = new CountingDirectory();
+        MeshBroker a = newBroker(dir, freePort());
+        a.start();
+        try {
+            assertEquals(0, a.activeOutboundConnections(), "no dials yet");
+            org.junit.jupiter.api.Assertions.assertNotNull(a.runtimeStats(), "broker exposes its own stats");
+            dir.addrs.put("node-P", "127.0.0.1:" + freePort());
+            a.membershipTick();   // pulls node-P into the snapshot
+            assertEquals(1, a.knownPeerCount(), "knownPeerCount reflects the directory snapshot");
+        } finally {
+            a.shutdown();
+        }
+    }
+
+    @Test
     void unicastToUnknownTarget_dropsAndCounts() throws Exception {
         CountingDirectory dir = new CountingDirectory();
         ClusterRuntimeStats stats = new ClusterRuntimeStats();
