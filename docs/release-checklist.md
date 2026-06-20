@@ -85,6 +85,7 @@
 | 9 | `docs/release-notes-<version>.md` | 标题状态行 + 全文 | 该版本权威记录（新建文件） | 每次发布/RC |
 | 10 | `.claude/CLAUDE.md` | Current version 行 | 项目上下文 | 每次 GA |
 | 11 | `docs/release-checklist.md`（本文件） | 顶部「更新时间」 | checklist 自身时效 | 每次走完 checklist |
+| 12 | `netty-websocket-cluster-spring-boot-starter/.../META-INF/additional-spring-configuration-metadata.json` | `properties` 数组 | **每个新 `cluster.*` 配置项的 IDE 自动补全元数据**（描述+默认值） | 新增任何集群配置项时（教训：RC4a–RC4d 的 `cluster.mesh.*` 14 个键漏到了 1.10.0 GA 才补） |
 
 **自检命令**（发布前跑,确认没有遗漏的旧版本号）：
 ```bash

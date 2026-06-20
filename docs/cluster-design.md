@@ -1,9 +1,9 @@
 # Cluster Design — Redis 集群方案（设计全集 + 1.8.0 实现范围）
 
-> **本文档描述的是完整目标架构（设计全集），不是单一版本的实现清单。** `1.8.0` 实现了其中一个子集；`1.9.0` RC1 完成了 5 项可靠性硬化项，RC2 新增了 Redis Streams 可靠投递（`reliableBroadcast`），RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；其余能力推迟到后续版本。下方"## 实现范围"表是实现与设计的权威对照——阅读本文其余章节时，请以该表为准判断某项是否已落地。
+> **本文档描述的是完整目标架构（设计全集），不是单一版本的实现清单。** `1.8.0` 实现了其中一个子集；`1.9.0` RC1 完成了 5 项可靠性硬化项，RC2 新增了 Redis Streams 可靠投递（`reliableBroadcast`），RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；**`1.10.0`（GA 已切版）新增 RC1 房间路由 + RC2 离线队列/按用户寻址 + RC3 多设备 presence + RC4a–RC4d node-to-node mesh（兴趣路由扇出削减 + 热路径健壮性 + 9 个 `netty.cluster.mesh.*` 指标）**；其余能力推迟到后续版本。下方"## 实现范围"表是实现与设计的权威对照——阅读本文其余章节时，请以该表为准判断某项是否已落地。
 > 落地进度与推迟项跟踪：`docs/development-plan.md`。
 
-## 实现范围 vs 设计目标（1.8.0 / 1.9.0 已落地）
+## 实现范围 vs 设计目标（1.8.0 / 1.9.0 / 1.10.0 已落地）
 
 > 原则：**只暴露有实际效果的配置项**。本文档其余章节描述的 `pubsub-connections`、
 > `sharded-pubsub`、`publish-batch-size`、`max-subscribed-channels`、

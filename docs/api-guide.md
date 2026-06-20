@@ -1,6 +1,6 @@
 # netty-spring API Usage Guide
 
-> Version: 1.9.0 | Updated: 2026-05-31
+> Version: 1.10.0 | Updated: 2026-06-20
 
 This guide walks through the most common integration scenarios for `netty-spring`. Each section is self-contained — jump directly to the scenario that matches your use case.
 
@@ -1273,7 +1273,11 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 | `cluster.mesh.max-frame-bytes` | `0` | *(since V1.10.0-RC4a)* Max inbound frame bytes (rejects a corrupt length prefix). `0` = `message-max-size-bytes` ×2 headroom. |
 | `cluster.mesh.write-buffer-high-water-mark` | `65536` | *(since V1.10.0-RC4a)* Outbound buffer high mark — past it a peer channel is non-writable and frames are dropped+counted (slow-peer OOM guard). |
 | `cluster.mesh.write-buffer-low-water-mark` | `32768` | *(since V1.10.0-RC4a)* The peer channel becomes writable again below this. |
-| `cluster.mesh.idle-timeout-ms` | `60000` | *(since V1.10.0-RC4a)* **Reserved — no effect in RC4a** (relies on TCP keep-alive). Proactive idle-connection reaping is RC4c. |
+| `cluster.mesh.idle-timeout-ms` | `60000` | *(since V1.10.0-RC4a; **active since RC4c**)* Reaps an outbound peer connection after this long with no WRITE (WRITER_IDLE — a write-only channel, so READ-idle never fires); the next send transparently re-dials. `0` = disabled. Inert in RC4a/RC4b. |
+| `cluster.mesh.reconnect-backoff-base-ms` | `1000` | *(since V1.10.0-RC4c)* Initial per-peer **send-path** reconnect backoff after a failed dial (doubles per failure). The membership tick dials raw (un-gated), so a backoff never strands a recoverable peer. |
+| `cluster.mesh.reconnect-backoff-max-ms` | `30000` | *(since V1.10.0-RC4c)* Cap on the per-peer send-path reconnect backoff. |
+| `cluster.mesh.interest-routing.enable` | `true` | *(since V1.10.0-RC4b)* When the mesh is enabled, route `publish(uri)` only to peers that currently host a live session for the URI (session-grained fan-out reduction). `false` = RC4a all-peers (escape hatch). See [§9.7 Node-to-Node Mesh](#node-to-node-mesh-transport-meshbroker). |
+| `cluster.mesh.interest-routing.node-set-cache-ttl-ms` | `5000` | *(since V1.10.0-RC4b)* Send-side cache TTL (ms) for the per-URI interested-node set; a freshly-subscribed node may be missed by remote publishers for up to this window (RC1 parity). |
 
 ---
 

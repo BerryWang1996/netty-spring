@@ -235,6 +235,89 @@
       "type": "java.lang.Boolean",
       "description": "Whether aggregate presence transitions are broadcast cluster-wide as PRESENCE_CHANGE events on the reserved channel. When false the local PresenceChangeListener still fires but no cross-node event is published (query-only deployments that only call getPresence). Default true.",
       "defaultValue": true
+    },
+    {
+      "name": "server.netty.websocket.cluster.mesh.enable",
+      "type": "java.lang.Boolean",
+      "description": "Opt-in node-to-node mesh transport (since 1.10.0-RC4a). When true the MeshBroker replaces the Redis Pub/Sub broker — cross-node messages ride direct Netty TCP; registry/heartbeat stay on Redis for node-address discovery only (off the message hot path). Standalone-Redis only (mutually exclusive with redis.cluster-nodes and nats.servers; fail-fast guard since RC4c). false (default) = byte-identical to RC1/RC2/RC3. RC4a is the transport foundation (direct unicast + naive all-peers broadcast); interest-routed fan-out reduction is RC4b (see mesh.interest-routing.enable).",
+      "defaultValue": false
+    },
+    {
+      "name": "server.netty.websocket.cluster.mesh.port",
+      "type": "java.lang.Integer",
+      "description": "TCP port this node listens on AND advertises to peers (since 1.10.0-RC4a).",
+      "defaultValue": 9700
+    },
+    {
+      "name": "server.netty.websocket.cluster.mesh.advertised-host",
+      "type": "java.lang.String",
+      "description": "Host advertised to peers (since 1.10.0-RC4a). Null/empty auto-detects a non-loopback site-local IPv4 and FAILS FAST at startup if only loopback resolves — containers/NAT/k8s MUST set this explicitly."
+    },
+    {
+      "name": "server.netty.websocket.cluster.mesh.bind-address",
+      "type": "java.lang.String",
+      "description": "Local bind interface for the inbound mesh TCP server (since 1.10.0-RC4a).",
+      "defaultValue": "0.0.0.0"
+    },
+    {
+      "name": "server.netty.websocket.cluster.mesh.connect-timeout-ms",
+      "type": "java.lang.Long",
+      "description": "TCP connect timeout (ms) to a peer (since 1.10.0-RC4a). Bounds the blocking dial on the publish/unicast path (vs Netty's 30s default) so a dead/unreachable peer cannot stall the hot path.",
+      "defaultValue": 5000
+    },
+    {
+      "name": "server.netty.websocket.cluster.mesh.idle-timeout-ms",
+      "type": "java.lang.Long",
+      "description": "Reap an outbound peer connection after this long with no WRITE (WRITER_IDLE; the next send re-dials). Active since 1.10.0-RC4c (inert in RC4a/RC4b). 0 = disabled.",
+      "defaultValue": 60000
+    },
+    {
+      "name": "server.netty.websocket.cluster.mesh.max-frame-bytes",
+      "type": "java.lang.Integer",
+      "description": "Max inbound mesh frame bytes — rejects a corrupt length prefix (since 1.10.0-RC4a). 0 = derive from message-max-size-bytes (x2 headroom).",
+      "defaultValue": 0
+    },
+    {
+      "name": "server.netty.websocket.cluster.mesh.write-buffer-high-water-mark",
+      "type": "java.lang.Integer",
+      "description": "Outbound buffer high watermark (bytes) — past it a peer channel is non-writable and frames are dropped+counted, never buffered unboundedly (the slow-peer OOM guard; since 1.10.0-RC4a).",
+      "defaultValue": 65536
+    },
+    {
+      "name": "server.netty.websocket.cluster.mesh.write-buffer-low-water-mark",
+      "type": "java.lang.Integer",
+      "description": "Outbound buffer low watermark (bytes) — the peer channel becomes writable again below this (since 1.10.0-RC4a).",
+      "defaultValue": 32768
+    },
+    {
+      "name": "server.netty.websocket.cluster.mesh.advertise-ttl-ms",
+      "type": "java.lang.Long",
+      "description": "Directory advertisement TTL (ms); refreshed every ~ttl/3 by the membership tick (since 1.10.0-RC4a).",
+      "defaultValue": 30000
+    },
+    {
+      "name": "server.netty.websocket.cluster.mesh.reconnect-backoff-base-ms",
+      "type": "java.lang.Long",
+      "description": "Initial per-peer SEND-PATH reconnect backoff (ms) after a failed dial (doubles per failure; since 1.10.0-RC4c). The membership tick dials raw (un-gated) so it stays the sole DEGRADED->ACTIVE recovery probe — a backoff never strands a recoverable peer.",
+      "defaultValue": 1000
+    },
+    {
+      "name": "server.netty.websocket.cluster.mesh.reconnect-backoff-max-ms",
+      "type": "java.lang.Long",
+      "description": "Cap on the per-peer send-path reconnect backoff (ms; since 1.10.0-RC4c).",
+      "defaultValue": 30000
+    },
+    {
+      "name": "server.netty.websocket.cluster.mesh.interest-routing.enable",
+      "type": "java.lang.Boolean",
+      "description": "When the mesh is enabled, route publish(uri) only to peers that currently host a live session for the URI — session-grained fan-out reduction (since 1.10.0-RC4b). false = RC4a all-peers (escape hatch). Reduction is real on a homogeneous fleet for physically-partitioned live audiences, but ~0 for global topics or high-population topics under random load-balancing (coupon-collector saturation); reserved/control channels bypass pruning.",
+      "defaultValue": true
+    },
+    {
+      "name": "server.netty.websocket.cluster.mesh.interest-routing.node-set-cache-ttl-ms",
+      "type": "java.lang.Long",
+      "description": "Send-side cache TTL (ms) for the per-URI interested-node set (since 1.10.0-RC4b). A freshly-subscribed node may be missed by remote publishers for up to this window (RC1 parity); the cache is invalidated wholesale on NODE_LEFT.",
+      "defaultValue": 5000
     }
   ],
   "hints": [
