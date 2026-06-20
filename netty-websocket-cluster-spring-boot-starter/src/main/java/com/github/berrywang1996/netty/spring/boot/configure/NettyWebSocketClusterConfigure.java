@@ -394,6 +394,11 @@ public class NettyWebSocketClusterConfigure {
                             meshInterestRegistry, reserved,
                             m.getInterestRouting().getNodeSetCacheTtlMs(), properties.getCommandTimeoutMs()));
         }
+        // RC4c: hot-path robustness knobs (bounded snapshot populate + unicast fallback; send-path reconnect backoff;
+        // WRITER_IDLE reap). Set BEFORE start() (idle builds the pipeline). Setters keep the constructor stable.
+        broker.setCommandTimeoutMs(properties.getCommandTimeoutMs());
+        broker.setIdleTimeoutMs(m.getIdleTimeoutMs());
+        broker.setReconnectBackoff(m.getReconnectBackoffBaseMs(), m.getReconnectBackoffMaxMs());
         broker.start();
         log.info("Cluster broker = MESH (node-to-node TCP {}:{}) — registry/heartbeat remain on Redis",
                 m.getBindAddress(), m.getPort());
@@ -419,6 +424,24 @@ public class NettyWebSocketClusterConfigure {
                 "server.netty.websocket.cluster.nats.servers is set (" + redactServerUris(properties.getNats().getServers())
                 + ") but io.nats:jnats is not on the classpath — add the io.nats:jnats dependency "
                 + "to use the NATS cluster transport, or unset nats.servers to use the Redis transport.");
+    }
+
+    /**
+     * RC4c BL2: fail-fast guard for {@code mesh.enable=true} combined with {@code redis.cluster-nodes} and/or
+     * {@code nats.servers}. {@code STANDALONE_MESH_BROKER} requires the standalone path, so in that combination the
+     * mesh broker is SILENTLY suppressed and a different transport (Redis-Cluster / NATS) wins — the operator believes
+     * they are on the mesh but are not. This bean activates ONLY on that misconfig (mesh.enable AND (cluster-nodes set
+     * OR nats.servers set)) and throws an actionable {@link IllegalStateException}; a valid mesh deployment (mesh +
+     * standalone Redis + no NATS) does not match. Mirrors {@link #natsTransportClasspathGuard}. (A conflicting broker
+     * may be briefly instantiated before this guard throws; the failing context refresh tears it down.)
+     */
+    @Bean
+    @ConditionalOnExpression(MESH_TRANSPORT + " and (" + CLUSTER_TRANSPORT + " or " + NATS_TRANSPORT + ")")
+    public Object meshTransportConflictGuard() {
+        throw new IllegalStateException(
+                "server.netty.websocket.cluster.mesh.enable=true requires the standalone-Redis transport, but "
+                + "redis.cluster-nodes and/or nats.servers is also set — the mesh broker would be silently suppressed. "
+                + "Use exactly one transport: unset cluster-nodes/nats.servers for the mesh, or set mesh.enable=false.");
     }
 
     // ---- NATS broker (active only when nats.servers is set; ADR-001 scaling tier) ----

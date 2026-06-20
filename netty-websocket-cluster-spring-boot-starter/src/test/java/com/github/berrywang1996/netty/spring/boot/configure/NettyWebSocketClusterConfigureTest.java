@@ -289,6 +289,39 @@ class NettyWebSocketClusterConfigureTest {
                 });
     }
 
+    /** RC4c BL2: mesh.enable=true + redis.cluster-nodes set ⇒ fail fast (the mesh would be silently suppressed). */
+    @Test
+    void meshEnabled_withClusterNodes_failsFast() {
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.node-id=ctx-mesh-conflict-cn",
+                        "server.netty.websocket.cluster.mesh.enable=true",
+                        "server.netty.websocket.cluster.redis.cluster-nodes=localhost:7000")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    Throwable root = context.getStartupFailure();
+                    while (root.getCause() != null) {
+                        root = root.getCause();
+                    }
+                    assertThat(root).isInstanceOf(IllegalStateException.class);
+                    assertThat(root).hasMessageContaining("mesh.enable=true requires the standalone-Redis transport");
+                });
+    }
+
+    /** RC4c BL2: mesh.enable=true + nats.servers set ⇒ context fails fast — mesh never silently runs. (With jnats on
+     *  the classpath the eligible clusterBrokerNats opens a live connection in its factory, which throws first when no
+     *  NATS server is up; with a server present the meshTransportConflictGuard throws after a transient connection.
+     *  Either way the refresh fails — assert that, not the specific exception, since the order is non-deterministic.) */
+    @Test
+    void meshEnabled_withNatsServers_failsFast() {
+        runner.withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.node-id=ctx-mesh-conflict-nats",
+                        "server.netty.websocket.cluster.mesh.enable=true",
+                        "server.netty.websocket.cluster.nats.servers=nats://localhost:4222")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
     @Test
     void clusterNodesSet_usesRedisClusterTransport_notStandalone() {
         Assumptions.assumeTrue(ClusterTestRedisCluster.available(),

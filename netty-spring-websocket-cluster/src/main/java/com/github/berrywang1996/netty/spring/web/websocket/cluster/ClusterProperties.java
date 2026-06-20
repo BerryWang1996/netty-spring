@@ -475,6 +475,16 @@ public class ClusterProperties {
         public void setConnectTimeoutMs(long connectTimeoutMs) { this.connectTimeoutMs = connectTimeoutMs; }
         public long getIdleTimeoutMs() { return idleTimeoutMs; }
         public void setIdleTimeoutMs(long idleTimeoutMs) { this.idleTimeoutMs = idleTimeoutMs; }
+
+        /** RC4c: initial per-peer SEND-PATH reconnect backoff (ms) after a failed connect (doubles per failure). */
+        private long reconnectBackoffBaseMs = 1000;
+        /** RC4c: cap on the per-peer reconnect backoff (ms). */
+        private long reconnectBackoffMaxMs = 30000;
+
+        public long getReconnectBackoffBaseMs() { return reconnectBackoffBaseMs; }
+        public void setReconnectBackoffBaseMs(long v) { this.reconnectBackoffBaseMs = v; }
+        public long getReconnectBackoffMaxMs() { return reconnectBackoffMaxMs; }
+        public void setReconnectBackoffMaxMs(long v) { this.reconnectBackoffMaxMs = v; }
         public int getMaxFrameBytes() { return maxFrameBytes; }
         public void setMaxFrameBytes(int maxFrameBytes) { this.maxFrameBytes = maxFrameBytes; }
         public int getWriteBufferHighWaterMark() { return writeBufferHighWaterMark; }
