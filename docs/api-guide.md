@@ -916,8 +916,7 @@ heartbeat's job, so a crashed peer whose address lingers until TTL does not caus
 channel with no writes for this many ms is closed and evicted; the next send transparently re-dials. `0` disables
 reaping).
 
-> Full `netty.cluster.mesh.*` metrics are RC4d. Through RC4c the broker counts frames/send-failures/backpressure-drops
-> internally but does not yet surface them to the meter registry.
+> The full `netty.cluster.mesh.*` meter set ships in RC4d (see *Mesh metrics* below).
 
 ##### Interest-routed broadcast (RC4b)
 
@@ -967,8 +966,37 @@ and reserved/control channels (`PRESENCE_CHANNEL`) **bypass pruning** entirely �
 **Config** (`server.netty.websocket.cluster.mesh.*`): `reconnect-backoff-base-ms` (`1000`), `reconnect-backoff-max-ms`
 (`30000`), `idle-timeout-ms` (`60000`, now active).
 
+##### Mesh metrics (RC4d)
+
+> **Since V1.10.0-RC4d.** When the mesh transport is the active broker AND `micrometer-core` is on the classpath,
+> nine aggregate `netty.cluster.mesh.*` meters are registered on every `MeterRegistry` (no config; the existing
+> cluster meter-binder reads the mesh broker's own counters). The standalone Redis broker emits **none** of them.
+
+| meter | type | meaning |
+|---|---|---|
+| `netty.cluster.mesh.frames.received` | counter | frames received over the mesh TCP transport |
+| `netty.cluster.mesh.frames.sent` | counter | frames successfully written to a peer channel (one per peer per fan-out) |
+| `netty.cluster.mesh.send.failures` | counter | sends that failed (no/dead channel, dial failure, async write failure) |
+| `netty.cluster.mesh.send.dropped_backpressure` | counter | frames dropped because a peer channel was not writable (slow-peer OOM guard) |
+| `netty.cluster.mesh.idle.reaps` | counter | outbound channels closed by the WRITER_IDLE reaper |
+| `netty.cluster.mesh.reconnect.backoff_skips` | counter | send-path dials skipped while a per-peer backoff window was open — a partition signal, **not** a failure |
+| `netty.cluster.mesh.fanout.target_nodes` | gauge | average peers targeted per broadcast — **the fan-out reduction meter** |
+| `netty.cluster.mesh.connections.active` | gauge | live outbound mesh channels currently cached |
+| `netty.cluster.mesh.peers.known` | gauge | peers in this node's directory snapshot |
+
+**Reading the reduction.** Compare `fanout.target_nodes` against `peers.known`: `avg ≈ peers.known` ⇒ no reduction
+(a global topic, or a high-population topic that has saturated the fleet under random LB — see the RC4b honesty note);
+`avg ≪ peers.known` ⇒ interest routing is pruning. `frames.sent / broadcast.published` is the same empirical fan-out.
+
+**Honest scope.** Aggregate **per node**, no per-peer tags. The four send outcomes are **disjoint** (`backoff_skips` |
+`send.failures` | `send.dropped_backpressure` | `frames.sent`) — a backoff skip is a deliberate shed, never double-counted
+as a failure. `peers.known` is the **raw directory snapshot** (by address TTL), not a liveness probe — it may briefly
+include a heartbeat-dead peer whose address lingers. `connections.active` is **usually ≤** `peers.known` (channels are
+dialed lazily and idle-reaped; a peer dropped from the snapshot can keep a cached channel until reaped, so it can
+transiently overshoot). No Micrometer Observation/trace propagation yet (2.0.0).
+
 > **Deferred to later RCs:** mTLS for mesh links and approach-C interest-change push notifications are separable
-> subsystems; full `netty.cluster.mesh.*` meters are RC4d.
+> subsystems.
 
 ---
 

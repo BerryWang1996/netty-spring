@@ -762,6 +762,70 @@ the "zero Redis" over-claim — + 6 nits; round 2: the unicast fallback re-SCAN 
 
 ---
 
+## 1.10.0-RC4d — Mesh observability (`netty.cluster.mesh.*` meters)
+
+**The fourth 1.10.0 feature, fourth (final functional) sub-stage — and the GA on-ramp.** RC4a–RC4c built the mesh
+transport, interest routing, and hot-path robustness, but the broker's internal counters and live connection state
+were **invisible** to Micrometer. RC4d surfaces nine aggregate `netty.cluster.mesh.*` meters on every `MeterRegistry`
+— including the fan-out reduction gauge that finally lets you *see* RC4b working — with **no new transport behaviour**.
+
+**BL6 — the bug this fixes.** The mesh counters were *written* (since RC4a) but *never read*: the meter binder only
+ever read the **sender's** `ClusterRuntimeStats`, while the broker incremented its **own** instance. RC4d points the
+binder's mesh block at the broker's own stats (`MeshBroker.runtimeStats()`). No shared instance / setter-swap is
+needed — the counters partition cleanly by owner (the sender owns the routing/application counters; the broker owns
+the transport counters) — and the design review caught that the broker self-starts in its `@Bean` **before** the
+sender bean, so any setter-swap would land *after* traffic had started. Reading the broker's own instance is both
+simpler and correct.
+
+**The nine meters** (registered only when the active broker is a `MeshBroker`; the standalone Redis path emits none):
+
+| meter | type | meaning |
+|---|---|---|
+| `netty.cluster.mesh.frames.received` | counter | frames received over the mesh TCP transport |
+| `netty.cluster.mesh.frames.sent` | counter | frames successfully written to a peer channel (one per peer per fan-out) |
+| `netty.cluster.mesh.send.failures` | counter | sends that failed (no/dead channel, dial failure, async write failure) |
+| `netty.cluster.mesh.send.dropped_backpressure` | counter | frames dropped because a peer channel was not writable (slow-peer OOM guard) |
+| `netty.cluster.mesh.idle.reaps` | counter | outbound channels closed by the WRITER_IDLE reaper |
+| `netty.cluster.mesh.reconnect.backoff_skips` | counter | send-path dials skipped while a per-peer backoff window was open — a partition signal, **not** a failure |
+| `netty.cluster.mesh.fanout.target_nodes` | gauge | average peers targeted per broadcast — **the fan-out reduction meter** |
+| `netty.cluster.mesh.connections.active` | gauge | live outbound mesh channels currently cached |
+| `netty.cluster.mesh.peers.known` | gauge | peers in this node's directory snapshot |
+
+**Reading the reduction.** Compare `fanout.target_nodes` against `peers.known`: `avg ≈ peers.known` ⇒ no reduction
+(a global topic, or a high-population topic that has saturated the fleet under random LB — the recorded RC4b honesty);
+`avg ≪ peers.known` ⇒ interest routing is pruning. `frames.sent / broadcast.published` is the same empirical fan-out.
+
+**A contained accounting cleanup.** `reconnect.backoff_skips` and `send.failures` are now **disjoint** — a backoff
+skip is a deliberate shed, counted once in `connectionForSend`, and `sendTo` no longer also counts it as a failure;
+`frames.sent` counts **only** on async write-success. So every send attempt lands in exactly one of
+`backoff_skips | send.failures | send.dropped_backpressure | frames.sent`.
+
+**Config.** None — the meters auto-register when `micrometer-core` is on the classpath and the mesh broker is active.
+
+**Compatibility.** Aggregate-only (no per-peer tags). `peers.known` is the **raw directory snapshot** (by address TTL),
+not a liveness probe; `connections.active` is **usually ≤** `peers.known` (lazy dial + idle reap; can transiently
+overshoot). The mesh-off and standalone-Redis paths are byte-identical to RC4c (the meter block is `instanceof`-guarded).
+No envelope/wire change. No Micrometer Observation/trace propagation yet (2.0.0).
+
+**636 tests / 11 modules green** (RC4c's 629 + RC4d's: the `ClusterRuntimeStats` sampler unit, the disjoint-counter +
+accessor + fan-out + idle-reap + frames-sent broker tests, the binder mesh-meter unit, and a real-broker→binder→registry
+BL6 integration test).
+
+RC4d's **design review** ran four lenses; its Verify+Synthesis phases hit an account session-limit and were adjudicated
+against the tree — **9 findings** (1 BLOCKER on the BL6 start-ordering, 4 MAJOR, 2 MINOR, 2 NIT) folded into the spec
+**before** coding. The adversarial **implementation review** (4 lenses → skeptic-verify → synthesis) returned **0
+BLOCKERs**; three test-completeness findings (F1 MAJOR — `connections.active` 0→1→0 coverage; F2/RC4d-C1 MINOR —
+hot-path disjoint-counter test + the real-broker BL6 end-to-end test) were folded; one sub-µs TOCTOU NIT left as-is.
+
+### Deferred to GA / later
+
+- **1.10.0 GA** — the cut once the RC chain is stabilized (no new mesh features planned; GA = hardening + the
+  commercial-promotion playbook).
+- **Later (separable subsystems)** — mTLS on mesh channels; approach-C interest-change notifications; the Micrometer
+  Observation API / W3C trace propagation (2.0.0, Boot 3.x).
+
+---
+
 # 发布说明 — 1.10.0（中文）
 
 > **状态：开发中（RC 周期）。** 1.10.0 是构建在 1.9.0 GA 之上的 IM 平台线。各 RC 在特性分支上累积，直至最终
@@ -1347,3 +1411,61 @@ nit;第二轮:unicast 回退的重新 SCAN 风暴;全部折叠,归档于 `docs/s
 
 - **RC4d**——完整 `netty.cluster.mesh.*` 指标(含退避/背压丢弃计数器接到 sender 共享的 `ClusterRuntimeStats`)。
 - **之后(可分离子系统)**——mesh 通道 mTLS;approach-C 兴趣变更通知(也会让兴趣读全内存);单对端目录查询 SPI;双向链路去重。
+
+---
+
+## 1.10.0-RC4d — mesh 可观测性（`netty.cluster.mesh.*` 指标）
+
+**1.10.0 的第四个特性、第四（最后一个功能）子阶段——也是 GA 的上坡道。** RC4a–RC4c 建好了 mesh 传输、兴趣路由
+和热路径健壮性,但 broker 的内部计数器与活跃连接状态对 Micrometer **不可见**。RC4d 在每个 `MeterRegistry` 上
+暴露九个聚合 `netty.cluster.mesh.*` 指标——**包含让你终于能"看见"RC4b 起作用的扇出削减 gauge**——且**不引入任何
+新的传输行为**。
+
+**BL6——本期修的 bug。** 那些 mesh 计数器自 RC4a 起就在**写**,却从未被**读**:meter binder 一直只读 **sender 的**
+`ClusterRuntimeStats`,而 broker 递增的是它**自己的**实例。RC4d 让 binder 的 mesh 块直接读 broker 自己的统计
+(`MeshBroker.runtimeStats()`)。无需共享实例/setter swap——计数器按 owner 自然分区(sender 拥有路由/应用计数;broker
+拥有传输计数)——而且设计审查发现 broker 在它的 `@Bean` 里**先于** sender bean 自启动,任何 swap 都会晚于流量。
+读 broker 自己的实例既更简单也更正确。
+
+**九个指标**(仅当活跃 broker 是 `MeshBroker` 时注册;独立 Redis 路径一个都不发):
+
+| 指标 | 类型 | 含义 |
+|---|---|---|
+| `netty.cluster.mesh.frames.received` | counter | 经 mesh TCP 传输收到的帧 |
+| `netty.cluster.mesh.frames.sent` | counter | 成功写入对端通道的帧(每对端每次扇出 +1) |
+| `netty.cluster.mesh.send.failures` | counter | 发送失败(无/失效通道、拨号失败、异步写失败) |
+| `netty.cluster.mesh.send.dropped_backpressure` | counter | 因对端通道不可写而丢弃的帧(慢对端 OOM 守卫) |
+| `netty.cluster.mesh.idle.reaps` | counter | 被 WRITER_IDLE 回收器关闭的出站通道 |
+| `netty.cluster.mesh.reconnect.backoff_skips` | counter | 退避窗口开启时被跳过的发送路径拨号——分区信号,**非失败** |
+| `netty.cluster.mesh.fanout.target_nodes` | gauge | 每次广播平均定向的对端数——**扇出削减观测点** |
+| `netty.cluster.mesh.connections.active` | gauge | 当前缓存的活跃出站 mesh 通道 |
+| `netty.cluster.mesh.peers.known` | gauge | 本节点目录快照中的对端数 |
+
+**读削减。** 用 `fanout.target_nodes` 对比 `peers.known`:`avg ≈ peers.known` ⇒ 无削减(全局话题,或高并发人口话题
+在随机 LB 下已饱和整个集群——即 RC4b 的诚实声明);`avg ≪ peers.known` ⇒ 兴趣路由在裁剪。`frames.sent /
+broadcast.published` 是同一个经验扇出。
+
+**一处受控的计数清理。** `reconnect.backoff_skips` 与 `send.failures` 现在**不相交**——退避跳过是主动 shed,在
+`connectionForSend` 里只计一次,`sendTo` 不再把它也算作失败;`frames.sent` **只**在异步写成功时计数。于是每次发送
+尝试恰好落入 `backoff_skips | send.failures | send.dropped_backpressure | frames.sent` 之一。
+
+**配置。** 无——classpath 上有 `micrometer-core` 且 mesh broker 活跃时,指标自动注册。
+
+**兼容性。** 仅聚合(无 per-peer 标签)。`peers.known` 是**原始目录快照**(按地址 TTL),非存活探针;`connections.active`
+**通常 ≤** `peers.known`(懒拨号 + idle 回收,可瞬时超出)。mesh 关闭与独立 Redis 路径与 RC4c **逐字节一致**(mesh
+指标块由 `instanceof` 门控)。无信封/线格变更。尚无 Micrometer Observation/trace 传播(2.0.0)。
+
+**636 个测试 / 11 个模块全绿**(RC4c 的 629 + RC4d 的:`ClusterRuntimeStats` 采样器单测、不相交计数器 + 访问器 +
+扇出 + idle 回收 + frames-sent broker 测试、binder mesh 指标单测,以及一个 real-broker→binder→registry 的 BL6
+集成测试)。
+
+RC4d 的**设计审查**跑了四个镜头;其 Verify+Synthesis 阶段撞上账户会话上限,改为对照代码树裁定——**9 项发现**
+(1 个 BLOCKER 是 BL6 启动顺序、4 个 MAJOR、2 个 MINOR、2 个 NIT)在写代码**之前**折叠进规格 v2。对抗式**实现审查**
+(4 镜头 → skeptic 验证 → 综合)返回 **0 个 BLOCKER**;三项测试完备性发现(F1 MAJOR——`connections.active` 0→1→0
+覆盖;F2/RC4d-C1 MINOR——热路径不相交计数器测试 + real-broker BL6 端到端测试)已折叠;一个亚微秒 TOCTOU NIT 保持原样。
+
+### 推迟到 GA / 之后
+
+- **1.10.0 GA**——RC 链稳定后的正式切版(无新增 mesh 特性;GA = 加固 + 商业推广手册)。
+- **之后(可分离子系统)**——mesh 通道 mTLS;approach-C 兴趣变更通知;Micrometer Observation API / W3C trace 传播
+  (2.0.0,Boot 3.x)。
