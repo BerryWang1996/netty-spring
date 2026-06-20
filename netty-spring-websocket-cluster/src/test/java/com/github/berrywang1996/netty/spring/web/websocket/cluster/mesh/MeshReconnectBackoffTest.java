@@ -72,6 +72,24 @@ class MeshReconnectBackoffTest {
         assertEquals(d0 + 2, a.dialAttemptsForTest(), "raw connectionTo (the tick recovery probe) dials regardless");
     }
 
+    /** RC4d: a backoff-skipped send increments ONLY mesh.reconnect.backoff_skips; a genuine dial failure increments
+     *  ONLY mesh.send.failures. The two counters are disjoint (no double-count of a skipped send as a failure). */
+    @Test
+    void backoffSkipAndFailureAreDisjoint() throws Exception {
+        com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterRuntimeStats s = a.runtimeStats();
+        String deadAddr = "127.0.0.1:" + closedPort();
+        long f0 = s.getMeshSendFailures();
+        long b0 = s.getMeshReconnectBackoffSkips();
+
+        a.connectionForSend("node-Z", deadAddr);                 // dial #1 fails → ONE send-failure, NO skip
+        assertEquals(f0 + 1, s.getMeshSendFailures(), "a genuine dial failure counts one send-failure");
+        assertEquals(b0, s.getMeshReconnectBackoffSkips(), "a dial failure is not a backoff skip");
+
+        a.connectionForSend("node-Z", deadAddr);                 // within backoff → ONE skip, NO new failure
+        assertEquals(f0 + 1, s.getMeshSendFailures(), "a backoff-skipped send is NOT counted as a failure");
+        assertEquals(b0 + 1, s.getMeshReconnectBackoffSkips(), "a backoff-skipped send counts one skip");
+    }
+
     /** The round-1 MAJOR's end-to-end guard: a node DEGRADED with a send-path backoff for a peer still RECOVERS to
      *  ACTIVE within one membership tick once the peer is reachable, because the tick dials the RAW connectionTo. */
     @Test

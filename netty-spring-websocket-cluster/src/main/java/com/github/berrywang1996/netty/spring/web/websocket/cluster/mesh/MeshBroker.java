@@ -410,8 +410,7 @@ public class MeshBroker implements ClusterBroker {
         try {
             Channel ch = connectionForSend(peerNodeId, addr);
             if (ch == null || !ch.isActive()) {
-                stats.incMeshSendFailures();
-                return;
+                return;   // RC4d: the null/inactive reason (backoff skip OR dial failure) is already counted in connectionForSend
             }
             writeFramed(peerNodeId, ch, wrapped);
         } catch (Exception e) {
@@ -451,12 +450,14 @@ public class MeshBroker implements ClusterBroker {
         }
         long[] b = reconnect.get(peerNodeId);
         if (b != null && System.currentTimeMillis() < b[0]) {
+            stats.incMeshReconnectBackoffSkips();   // RC4d: a deliberate shed — NOT a send failure
             return null;   // within backoff, no live channel → skip the dial (at-most-once drop)
         }
         Channel ch = connectionTo(peerNodeId, addr);
         if (ch == null || !ch.isActive()) {
             long cur = (b == null) ? reconnectBackoffBaseMs : Math.min(b[1] * 2, reconnectBackoffMaxMs);
             reconnect.put(peerNodeId, new long[]{ System.currentTimeMillis() + cur, cur });
+            stats.incMeshSendFailures();   // RC4d: a genuine dial/connect failure, counted once at its origin
         } else {
             reconnect.remove(peerNodeId);
         }
