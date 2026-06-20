@@ -374,6 +374,13 @@ public class ClusterMessageSender implements MessageSender, RoomOperations, User
             broker.subscribe(PRESENCE_CHANNEL, this::onPresenceMessage);
         }
 
+        // RC4c BL4: if a mesh membership tick degraded the broker BEFORE this sender wired the transport listener
+        // (a tick can fire between broker.start() and here), deliver the missed callback now — all listeners +
+        // subscriptions are in place. Idempotent: nodeManager.onTransportLost is grace-debounced + CAS-guarded.
+        if (broker.state() == BrokerState.DEGRADED) {
+            nodeManager.onTransportLost();
+        }
+
         log.info("ClusterMessageSender started for node {} — {} URI broadcast subscriptions",
                 nodeId, broadcastSubscriptions.size());
     }

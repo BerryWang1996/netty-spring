@@ -76,6 +76,25 @@ class ClusterMessageSenderTest {
         nodeManager.shutdown();
     }
 
+    /** RC4c BL4: if the broker is already DEGRADED when the sender starts (a mesh tick degraded it before the
+     *  transport listener was wired), start() reconciles by delivering onTransportLost to the node manager. */
+    @Test
+    void start_reconcilesAlreadyDegradedBroker() {
+        InMemoryBroker degraded = new InMemoryBroker();
+        degraded.setState(BrokerState.DEGRADED);
+        ClusterNodeManager nm = new ClusterNodeManager("node-R", 3000, 10000, 15000, 0, new NoOpHeartbeat(), registry);
+        nm.setRedisLossGracePeriodMs(0);   // instant degrade so the reconcile is observable without a 5s grace wait
+        ClusterMessageSender s = new ClusterMessageSender(localSender, degraded, registry, nm, 5000);
+        nm.start();   // JOINING → ACTIVE
+        s.start();    // RC4c BL4: broker DEGRADED → reconcile → nm.onTransportLost() → DEGRADED
+        try {
+            assertEquals(NodeState.DEGRADED, nm.getState(), "sender start reconciles an already-degraded broker");
+        } finally {
+            s.shutdown();
+            nm.shutdown();
+        }
+    }
+
     /** RC4b: the sender forwards every local session connect/disconnect to the interest registry (the registry's
      *  atomic op decides the node-set 0↔1); the held broker subscription is independent of interest. */
     @Test
