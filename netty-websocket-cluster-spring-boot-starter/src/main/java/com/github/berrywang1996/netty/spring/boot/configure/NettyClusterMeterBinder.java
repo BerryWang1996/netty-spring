@@ -20,6 +20,7 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterMessag
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterRuntimeStats;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.HmacMessageAuthenticator;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.mesh.MeshBroker;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.NodeState;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.BrokerState;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
@@ -165,6 +166,35 @@ public class NettyClusterMeterBinder implements MeterBinder {
                                 ? (double) ((HmacMessageAuthenticator) a).getRejectedCount() : 0.0)
                 .description("Inbound cluster envelopes rejected for a missing/invalid HMAC tag")
                 .register(registry);
+
+        // ---- Mesh transport (1.10.0-RC4d) — only when the broker IS the mesh broker (reads the broker's OWN stats) ----
+        if (broker instanceof MeshBroker) {
+            MeshBroker mesh = (MeshBroker) broker;
+            ClusterRuntimeStats meshStats = mesh.runtimeStats();
+            counter(registry, "netty.cluster.mesh.frames.received", meshStats,
+                    ClusterRuntimeStats::getMeshFramesReceived, "Frames received over the mesh TCP transport");
+            counter(registry, "netty.cluster.mesh.frames.sent", meshStats,
+                    ClusterRuntimeStats::getMeshFramesSent, "Frames successfully written to a peer channel (one per peer per fan-out)");
+            counter(registry, "netty.cluster.mesh.send.failures", meshStats,
+                    ClusterRuntimeStats::getMeshSendFailures, "Mesh sends that failed (no/dead channel, dial failure, async write failure)");
+            counter(registry, "netty.cluster.mesh.send.dropped_backpressure", meshStats,
+                    ClusterRuntimeStats::getMeshSendDroppedBackpressure,
+                    "Frames dropped because a peer's outbound channel was not writable (the slow-peer OOM guard)");
+            counter(registry, "netty.cluster.mesh.idle.reaps", meshStats,
+                    ClusterRuntimeStats::getMeshIdleReaps, "Outbound channels closed by the WRITER_IDLE reaper (RC4c)");
+            counter(registry, "netty.cluster.mesh.reconnect.backoff_skips", meshStats,
+                    ClusterRuntimeStats::getMeshReconnectBackoffSkips,
+                    "Send-path dials deliberately skipped while a per-peer reconnect-backoff window was open (RC4c) — a partition signal, NOT a failure");
+            Gauge.builder("netty.cluster.mesh.fanout.target_nodes", meshStats, ClusterRuntimeStats::getMeshFanoutTargetsAvg)
+                    .description("Average peers targeted per mesh broadcast (the fan-out reduction meter; compare to mesh.peers.known)")
+                    .register(registry);
+            Gauge.builder("netty.cluster.mesh.connections.active", mesh, m -> (double) m.activeOutboundConnections())
+                    .description("Live outbound mesh channels currently cached (lazily dialed; usually <= peers.known)")
+                    .register(registry);
+            Gauge.builder("netty.cluster.mesh.peers.known", mesh, m -> (double) m.knownPeerCount())
+                    .description("Peers in this node's directory snapshot (advertised by address TTL; raw — may briefly include a heartbeat-dead peer)")
+                    .register(registry);
+        }
 
         for (NodeState s : NodeState.values()) {
             Gauge.builder("netty.cluster.node.state", nodeManager, nm -> nm.getState() == s ? 1.0 : 0.0)

@@ -20,6 +20,7 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterMessag
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterRuntimeStats;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.HmacMessageAuthenticator;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.NoOpMessageAuthenticator;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.mesh.MeshBroker;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.NodeState;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.BrokerState;
@@ -156,6 +157,60 @@ class NettyClusterMeterBinderTest {
         assertEquals(3.0, registry.get("netty.cluster.presence.self_delivery_dropped").functionCounter().count());
         assertEquals(7.0, registry.get("netty.cluster.presence.set").functionCounter().count());
         assertEquals(2.0, registry.get("netty.cluster.presence.reap_offline").functionCounter().count());
+    }
+
+    @Test
+    void bindsMeshMetersOnlyWhenBrokerIsMesh() {
+        // RC4d: the mesh meters read the BROKER's own stats (not the sender's), and appear only for a MeshBroker.
+        ClusterRuntimeStats meshStats = mock(ClusterRuntimeStats.class);
+        when(meshStats.getMeshFramesReceived()).thenReturn(10L);
+        when(meshStats.getMeshFramesSent()).thenReturn(9L);
+        when(meshStats.getMeshSendFailures()).thenReturn(2L);
+        when(meshStats.getMeshSendDroppedBackpressure()).thenReturn(1L);
+        when(meshStats.getMeshIdleReaps()).thenReturn(3L);
+        when(meshStats.getMeshReconnectBackoffSkips()).thenReturn(4L);
+        when(meshStats.getMeshFanoutTargetsAvg()).thenReturn(2.5);
+
+        MeshBroker mesh = mock(MeshBroker.class);
+        when(mesh.state()).thenReturn(BrokerState.ACTIVE);
+        when(mesh.runtimeStats()).thenReturn(meshStats);
+        when(mesh.activeOutboundConnections()).thenReturn(6);
+        when(mesh.knownPeerCount()).thenReturn(8);
+
+        ClusterMessageSender sender = mock(ClusterMessageSender.class);
+        when(sender.getClusterRuntimeStats()).thenReturn(mock(ClusterRuntimeStats.class));   // sender's own (non-mesh) stats
+        ClusterNodeManager nodeManager = mock(ClusterNodeManager.class);
+        when(nodeManager.getState()).thenReturn(NodeState.ACTIVE);
+
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        new NettyClusterMeterBinder(sender, nodeManager, mesh, new NoOpMessageAuthenticator()).bindTo(registry);
+
+        assertEquals(10.0, registry.get("netty.cluster.mesh.frames.received").functionCounter().count());
+        assertEquals(9.0, registry.get("netty.cluster.mesh.frames.sent").functionCounter().count());
+        assertEquals(2.0, registry.get("netty.cluster.mesh.send.failures").functionCounter().count());
+        assertEquals(1.0, registry.get("netty.cluster.mesh.send.dropped_backpressure").functionCounter().count());
+        assertEquals(3.0, registry.get("netty.cluster.mesh.idle.reaps").functionCounter().count());
+        assertEquals(4.0, registry.get("netty.cluster.mesh.reconnect.backoff_skips").functionCounter().count());
+        assertEquals(2.5, registry.get("netty.cluster.mesh.fanout.target_nodes").gauge().value());
+        assertEquals(6.0, registry.get("netty.cluster.mesh.connections.active").gauge().value());
+        assertEquals(8.0, registry.get("netty.cluster.mesh.peers.known").gauge().value());
+    }
+
+    @Test
+    void nonMeshBrokerEmitsNoMeshMeters() {
+        ClusterMessageSender sender = mock(ClusterMessageSender.class);
+        when(sender.getClusterRuntimeStats()).thenReturn(mock(ClusterRuntimeStats.class));
+        ClusterNodeManager nodeManager = mock(ClusterNodeManager.class);
+        when(nodeManager.getState()).thenReturn(NodeState.ACTIVE);
+        ClusterBroker broker = mock(ClusterBroker.class);   // the standalone Redis path — NOT a MeshBroker
+        when(broker.state()).thenReturn(BrokerState.ACTIVE);
+
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        new NettyClusterMeterBinder(sender, nodeManager, broker, new NoOpMessageAuthenticator()).bindTo(registry);
+
+        assertNull(registry.find("netty.cluster.mesh.frames.received").meter(), "no mesh meters on the Redis path");
+        assertNull(registry.find("netty.cluster.mesh.fanout.target_nodes").meter());
+        assertNull(registry.find("netty.cluster.mesh.peers.known").meter());
     }
 
     @Test
