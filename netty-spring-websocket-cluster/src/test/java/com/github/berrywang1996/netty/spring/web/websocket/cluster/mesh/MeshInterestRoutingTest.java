@@ -34,6 +34,7 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BooleanSupplier;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -120,6 +121,22 @@ class MeshInterestRoutingTest {
         a.publish("/ws/b", bc("/ws/b", "hello-b"));
         Thread.sleep(300);
         assertFalse(recvB.contains("hello-b"), "B (no /ws/b session) is pruned from the /ws/b broadcast");
+    }
+
+    /** RC4d: publish records the inline-filtered fan-out — the interested-peer count, or 0 when all peers are pruned. */
+    @Test
+    void fanoutRecordsTargetedPeerCount() throws Exception {
+        interest.subscribe("/ws/a", "s1", "node-B").toCompletableFuture().join();
+        assertTrue(waitFor(() -> {
+            a.publish("/ws/a", bc("/ws/a", "hi"));
+            return recvB.contains("hi");
+        }, 4000), "B (interested in /ws/a) receives the broadcast");
+        assertEquals(1, a.runtimeStats().getMeshFanoutTargetsLast(),
+                "fan-out records the single interested peer for /ws/a");
+
+        a.publish("/ws/b", bc("/ws/b", "hi-b"));   // B not interested → all pruned
+        assertEquals(0, a.runtimeStats().getMeshFanoutTargetsLast(),
+                "an all-pruned broadcast records fan-out 0");
     }
 
     /** RC4d: a successful mesh write increments mesh.frames.sent (counted on the async write-success listener). */

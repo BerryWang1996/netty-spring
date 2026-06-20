@@ -301,12 +301,15 @@ public class MeshBroker implements ClusterBroker {
         // RC4b: null => no routing / reserved channel / read failure => all-peers (RC4a). A non-null set (possibly
         // empty) is authoritative => skip peers with no live session for this uri.
         Set<String> interested = (router == null) ? null : router.nodesForUriCached(uri);
+        int targets = 0;
         for (Map.Entry<String, String> e : peers.entrySet()) {
             if (interested != null && !interested.contains(e.getKey())) {
                 continue; // peer has no live audience for this uri
             }
+            targets++;
             sendTo(e.getKey(), e.getValue(), wrapped);
         }
+        stats.recordMeshFanoutTargets(targets);   // RC4d: the empirical routing fan-out (interested subset, or all peers)
     }
 
     @Override
