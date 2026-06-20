@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BooleanSupplier;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -137,5 +138,38 @@ class MeshTwoNodeE2ETest {
             b.unicast("e2e-mesh-A", unicast("e2e-mesh-B", "/ws/chat", "s1", "dm-B"));
             return recvA.contains("UC:dm-B");
         }, 5000), "node-A received the direct unicast over TCP");
+    }
+
+    @Test
+    void publish_routesToInterestedNodesOnly_overTcp_viaRealRedis() throws Exception {
+        // A real interest registry on the shared Redis; node-A routes its publishes via it.
+        for (String k : conn.sync().keys("netty:interest:*")) {
+            conn.sync().del(k);
+        }
+        RedisMeshInterestRegistry interest = new RedisMeshInterestRegistry(conn);
+        try {
+            a.setInterestRouter(new MeshInterestRouter(interest, java.util.Collections.emptySet(), 100L, 2000L));
+
+            b.subscribe("/ws/x", env -> recvA.add("X:" + body(env)));
+            b.subscribe("/ws/y", env -> recvA.add("Y:" + body(env)));
+
+            // B announces a live session for /ws/x ONLY.
+            interest.subscribe("/ws/x", "sb", "e2e-mesh-B").toCompletableFuture().join();
+            assertTrue(waitFor(() -> a.directoryForTest().peers("e2e-mesh-A").toCompletableFuture().join()
+                    .containsKey("e2e-mesh-B"), 5000), "A discovered B");
+
+            // /ws/x → B is interested → delivered over TCP.
+            assertTrue(waitFor(() -> {
+                a.publish("/ws/x", broadcast("e2e-mesh-A", "/ws/x", "hi-x"));
+                return recvA.contains("X:hi-x");
+            }, 5000), "B (interested in /ws/x) received the broadcast over TCP");
+
+            // /ws/y → B NOT interested → pruned, not delivered.
+            a.publish("/ws/y", broadcast("e2e-mesh-A", "/ws/y", "hi-y"));
+            Thread.sleep(400);
+            assertFalse(recvA.contains("Y:hi-y"), "B (no /ws/y session) was pruned from the /ws/y broadcast");
+        } finally {
+            interest.shutdown();
+        }
     }
 }
