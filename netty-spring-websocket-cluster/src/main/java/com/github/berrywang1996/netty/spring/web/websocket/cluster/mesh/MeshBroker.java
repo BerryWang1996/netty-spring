@@ -432,7 +432,9 @@ public class MeshBroker implements ClusterBroker {
             return;
         }
         ch.writeAndFlush(MeshFrames.toPayload(wrapped)).addListener(f -> {
-            if (!f.isSuccess()) {
+            if (f.isSuccess()) {
+                stats.incMeshFramesSent();   // RC4d: a successful write — disjoint from the failure/backpressure paths
+            } else {
                 stats.incMeshSendFailures();
                 log.debug("mesh send to {} failed", peerNodeId, f.cause());
             }

@@ -122,6 +122,19 @@ class MeshInterestRoutingTest {
         assertFalse(recvB.contains("hello-b"), "B (no /ws/b session) is pruned from the /ws/b broadcast");
     }
 
+    /** RC4d: a successful mesh write increments mesh.frames.sent (counted on the async write-success listener). */
+    @Test
+    void framesSentCountsSuccessfulWrites() throws Exception {
+        interest.subscribe("/ws/a", "s1", "node-B").toCompletableFuture().join();
+        long sent0 = a.runtimeStats().getMeshFramesSent();
+        assertTrue(waitFor(() -> {
+            a.publish("/ws/a", bc("/ws/a", "hello-a"));
+            return recvB.contains("hello-a");
+        }, 4000), "B receives the /ws/a broadcast over TCP");
+        assertTrue(a.runtimeStats().getMeshFramesSent() >= sent0 + 1,
+                "a successful mesh write increments frames.sent");
+    }
+
     /** RC4b R2: a reserved channel (e.g. PRESENCE_CHANNEL) BYPASSES interest pruning — even with an empty/excluding
      *  interest set, the router returns null ⇒ publish goes all-peers ⇒ B still receives. Guards against presence
      *  being silently pruned to zero. */
