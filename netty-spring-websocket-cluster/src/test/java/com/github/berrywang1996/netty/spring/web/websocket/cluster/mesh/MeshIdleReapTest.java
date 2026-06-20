@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 
 import java.net.ServerSocket;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -55,6 +56,8 @@ class MeshIdleReapTest {
             Channel ch = a.connectionTo("node-B", addrB);   // establish + cache
             assertNotNull(ch);
             assertTrue(ch.isActive());
+            assertEquals(1, a.activeOutboundConnections(),
+                    "RC4d: connections.active reads the live outbound cache (1 after a dial)");
 
             // no writes for > idleTimeoutMs → WRITER_IDLE fires → channel closes → evicted from the cache
             boolean reaped = false;
@@ -68,6 +71,8 @@ class MeshIdleReapTest {
             }
             assertTrue(reaped, "an idle outbound channel is reaped (closed + evicted from the cache)");
             assertTrue(a.runtimeStats().getMeshIdleReaps() >= 1, "RC4d: an idle reap increments mesh.idle.reaps");
+            assertEquals(0, a.activeOutboundConnections(),
+                    "RC4d: connections.active drops back to 0 after the idle reap evicts the channel");
 
             // RC4c §6: the next send re-establishes the connection (the idle reap is transparent to traffic).
             Channel reDialed = a.connectionTo("node-B", addrB);

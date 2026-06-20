@@ -21,11 +21,13 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.InMemoryMeshN
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.NoOpMessageAuthenticator;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.BrokerState;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEnvelope;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.net.ServerSocket;
+import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -88,6 +90,39 @@ class MeshReconnectBackoffTest {
         a.connectionForSend("node-Z", deadAddr);                 // within backoff → ONE skip, NO new failure
         assertEquals(f0 + 1, s.getMeshSendFailures(), "a backoff-skipped send is NOT counted as a failure");
         assertEquals(b0 + 1, s.getMeshReconnectBackoffSkips(), "a backoff-skipped send counts one skip");
+    }
+
+    /** RC4d (impl-review F2): the disjoint-counter invariant holds on the PUBLIC hot path too — a publish whose
+     *  target is in a backoff window goes publish → sendTo → connectionForSend → skip, and sendTo must NOT also
+     *  count it as a send failure (guards against re-introducing incMeshSendFailures() into sendTo's null branch). */
+    @Test
+    void publicHotPathBackoffSkip_isNotDoubleCountedAsFailure() throws Exception {
+        InMemoryMeshNodeDirectory dir = new InMemoryMeshNodeDirectory();
+        MeshBroker node = new MeshBroker("hot-A", dir, new SimpleTextEnvelopeCodec(),
+                new NoOpMessageAuthenticator(), new ClusterRuntimeStats(),
+                "127.0.0.1", 0, "127.0.0.1", 1_048_576, 30000, 32768, 65536, 300);
+        node.setReconnectBackoff(60_000L, 60_000L);   // long window so the skip persists across the publish
+        node.start();
+        try {
+            int deadPort = closedPort();
+            dir.advertise("hot-Z", "127.0.0.1", deadPort, 30000).toCompletableFuture().join();
+            node.membershipTick();   // pull hot-Z into the snapshot (the raw tick dial fails but does NOT set send-backoff)
+            node.connectionForSend("hot-Z", "127.0.0.1:" + deadPort);   // one send-path dial-fail → backoff window opens
+
+            ClusterRuntimeStats s = node.runtimeStats();
+            long f0 = s.getMeshSendFailures();
+            long b0 = s.getMeshReconnectBackoffSkips();
+
+            // a real broadcast through the public hot path: publish → sendTo(hot-Z) → connectionForSend → within-backoff skip
+            node.publish("/ws/hot", new ClusterEnvelope("hot-A", "/ws/hot", ClusterEnvelope.MessageKind.BROADCAST,
+                    "x".getBytes(StandardCharsets.UTF_8), null, null, 1L));
+
+            assertEquals(b0 + 1, s.getMeshReconnectBackoffSkips(), "the hot-path backoff skip is counted once");
+            assertEquals(f0, s.getMeshSendFailures(), "sendTo must NOT also count the backoff skip as a send failure");
+        } finally {
+            node.shutdown();
+            dir.shutdown();
+        }
     }
 
     /** The round-1 MAJOR's end-to-end guard: a node DEGRADED with a send-path backoff for a peer still RECOVERS to
