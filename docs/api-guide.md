@@ -912,10 +912,11 @@ heartbeat's job, so a crashed peer whose address lingers until TTL does not caus
 **Config** (`server.netty.websocket.cluster.mesh.*`): `enable` (`false`), `port` (`9700`), `advertised-host`
 (auto-detect, fail-fast on loopback-only), `bind-address` (`0.0.0.0`), `connect-timeout-ms` (`5000`),
 `advertise-ttl-ms` (`30000`), `max-frame-bytes` (`0` = message-max ×2), `write-buffer-high-water-mark` (`65536`),
-`write-buffer-low-water-mark` (`32768`), `idle-timeout-ms` (`60000` — **reserved, no effect in RC4a**; proactive idle
-reaping is RC4c).
+`write-buffer-low-water-mark` (`32768`), `idle-timeout-ms` (`60000` — **active since RC4c**: a WRITER_IDLE outbound
+channel with no writes for this many ms is closed and evicted; the next send transparently re-dials. `0` disables
+reaping).
 
-> Full `netty.cluster.mesh.*` metrics are RC4d. In RC4a the broker counts frames/send-failures/backpressure-drops
+> Full `netty.cluster.mesh.*` metrics are RC4d. Through RC4c the broker counts frames/send-failures/backpressure-drops
 > internally but does not yet surface them to the meter registry.
 
 ##### Interest-routed broadcast (RC4b)
@@ -944,6 +945,30 @@ and reserved/control channels (`PRESENCE_CHANNEL`) **bypass pruning** entirely �
 
 **Config** (`server.netty.websocket.cluster.mesh.interest-routing.*`): `enable` (`true`), `node-set-cache-ttl-ms`
 (`5000` — a freshly-subscribed node may be missed by remote publishers for up to this window, RC1 parity).
+
+##### Hot-path robustness (RC4c)
+
+> **Since V1.10.0-RC4c.** No new API and no config required — these harden the existing mesh paths.
+
+- **Redis off the broadcast hot path.** `publish` and `unicast` now read an in-memory **peer-address snapshot**
+  refreshed by the periodic membership tick, so a steady-state broadcast does **zero Redis I/O** (the per-message
+  directory `SCAN`+`GET` is gone; the RC4b interest read stays a 5s-cached `SMEMBERS`). A newly-advertised peer
+  becomes a broadcast target within one membership tick (~`mesh.advertise-ttl-ms`/3).
+- **Unicast never silently misses a fresh peer.** On a snapshot miss, `unicast` falls back to **one bounded direct
+  directory read and warms the snapshot**, so a just-joined target still resolves on the first attempt (preserving
+  the `unicast → MessageSessionClosedException`-on-truly-unknown contract) without a per-message `SCAN` storm.
+- **Reconnect backoff (send path only).** A peer that fails to dial on the send path is skipped with exponential
+  backoff (`reconnect-backoff-base-ms`, default `1000`; `reconnect-backoff-max-ms`, default `30000`). The membership
+  tick dials **raw** (un-gated), so it remains the sole `DEGRADED → ACTIVE` recovery probe — a backoff can never
+  strand an otherwise-recoverable node.
+- **Idle reaping** (`idle-timeout-ms`, see above) and a **start-time transport-state reconcile** (a broker that comes
+  up already isolated reports `DEGRADED` immediately, not only after the first tick).
+
+**Config** (`server.netty.websocket.cluster.mesh.*`): `reconnect-backoff-base-ms` (`1000`), `reconnect-backoff-max-ms`
+(`30000`), `idle-timeout-ms` (`60000`, now active).
+
+> **Deferred to later RCs:** mTLS for mesh links and approach-C interest-change push notifications are separable
+> subsystems; full `netty.cluster.mesh.*` meters are RC4d.
 
 ---
 
