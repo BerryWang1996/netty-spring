@@ -1,6 +1,6 @@
 # RC4c — Mesh hot-path robustness (design)
 
-**Status:** design — **design-review folded** (v2). **Branch:** `feature/1.10.0-mesh-rc4c` (off `v1.10.0-RC4b`).
+**Status:** design — **two review rounds folded; plan-ready** (v2.1). **Branch:** `feature/1.10.0-mesh-rc4c` (off `v1.10.0-RC4b`).
 **Module:** `netty-spring-websocket-cluster` (+ the starter for auto-config). **Stack:** Boot 2.7 + Netty 4.1 + Lettuce 6.1, JDK 17.
 
 > **Design-review correction (recorded).** A 9-agent adversarial design-review (`fixDesignFirst=true`, archived at
@@ -29,10 +29,11 @@ the transport's failure-mode robustness. It adds **no new application feature**;
 **What BL5 actually removes (honest scope).** RC4c's snapshot removes the **per-message directory `SCAN`+`GET`** — the
 expensive part. The publish path's *only* remaining Redis touch is the **RC4b interest node-set lookup**, which is a
 **5s-TTL-cached `SMEMBERS`** (one read per URI per cache-TTL, command-timeout-bounded — **not** per message), and is
-skipped entirely for reserved channels / when interest routing is off. So after RC4c the steady-state hot path does
+skipped entirely for reserved channels / when interest routing is off. So after RC4c the steady-state **broadcast** hot path does
 **zero Redis I/O** (snapshot read + cached interest read); a Redis touch happens only on an interest-cache miss
-(~once per URI per 5s). Making the interest read *also* fully in-memory (refreshed from the tick) is a larger change
-deferred to **RC4d / approach-C** — not claimed here.
+(~once per URI per 5s). **Unicast** likewise reads the in-memory snapshot in steady state, falling back to a single
+bounded direct lookup only on a ≤tickMs snapshot miss (which warms the snapshot — §3.1). Making the interest read
+*also* fully in-memory (refreshed from the tick) is a larger change deferred to **RC4d / approach-C** — not claimed here.
 
 **One-line scope:** RC4c (1) serves broadcast peer addresses from an **in-memory snapshot** refreshed by the existing
 membership tick (and serves unicast from the snapshot with a **direct-lookup fallback** so it never silently widens its
@@ -99,17 +100,23 @@ catch (Exception e) { log.debug("initial mesh peer snapshot failed/timed out —
   ```java
   String addr = this.peerSnapshot.get(targetNodeId);
   if (addr == null) {
-      // snapshot miss for a registry-known target (freshly-joined node) — pay ONE bounded direct read (rare, off
-      // the storm path) rather than silently widen the undeliverable window from ~0 to ≤tickMs.
-      try { addr = directory.peers(nodeId).toCompletableFuture()
-                       .get(commandTimeoutMs, TimeUnit.MILLISECONDS).get(targetNodeId); }
-      catch (Exception e) { addr = null; }
+      // snapshot miss for a registry-known target (freshly-joined node) — pay ONE bounded direct read AND WARM the
+      // snapshot from its full result, so a burst of unicasts to the fresh target hits the warmed snapshot (no
+      // per-message SCAN storm) rather than silently widening the undeliverable window from ~0 to ≤tickMs.
+      try {
+          Map<String, String> fresh = directory.peers(nodeId).toCompletableFuture()
+                  .get(commandTimeoutMs, TimeUnit.MILLISECONDS);
+          this.peerSnapshot = fresh;          // off-cycle snapshot warm (same volatile-swap as the tick)
+          addr = fresh.get(targetNodeId);
+      } catch (Exception e) { addr = null; }
   }
   if (addr == null) { stats.incMeshSendFailures(); return; }   // genuinely unknown — existing behavior
   ```
 
-  The common case (target in the snapshot) is Redis-free; only the rare freshly-joined-target miss pays one bounded
-  read, preserving unicast's ~0 staleness + the undeliverable contract.
+  The common case (target in the snapshot) is Redis-free; the **first** unicast to a freshly-joined target pays one
+  bounded read **and warms the whole snapshot from it**, so subsequent unicasts (and broadcasts) to that node hit the
+  snapshot — at most one SCAN per fresh-target per ≤tickMs window, not per message. Preserves unicast's ~0 staleness +
+  the undeliverable contract.
 - **Redis-loss resilience improves.** A Redis blip during the tick leaves the *previous* snapshot in place (the tick's
   try/catch already swallows the failure), so broadcast keeps routing to last-known peers instead of failing every
   message. The membership-correctness (`live∩address`) + isolation/degrade logic still run in the tick on the **fresh**
@@ -156,9 +163,12 @@ private Channel connectionForSend(String peerNodeId, String addr) {
   self-rate-limits to one dial per peer per `tickMs` (not a storm), so a recovered peer is re-probed each tick and
   `evaluateReachability` restores ACTIVE within ~`tickMs`, not ~`backoff-max`.
 - `connectionTo` (the raw dial + the RC4a BL1 cache-replace loop) is **unchanged**.
-- **Leak prevention:** `membershipTick` prunes `reconnect` to the live∩address peer set each tick
-  (`reconnect.keySet().retainAll(livePeerIds)`) — a flapping peer that vanishes via TTL doesn't leak an entry;
-  `shutdown` clears it.
+- **Leak prevention:** `membershipTick` prunes `reconnect` to the live∩address peer set each tick. Materialize the set
+  explicitly — `Set<String> live = new HashSet<>(peers.keySet()); live.removeAll(deadNodeView.get());
+  reconnect.keySet().retainAll(live);` — so a dead-but-still-advertised peer's backoff entry is dropped immediately
+  (not held until its address TTL-expires) and a vanished peer doesn't leak an entry. `ConcurrentHashMap.keySet()
+  .retainAll` is weakly-consistent vs a concurrent send-path `put` (a stale entry may survive one extra tick —
+  bounded, not a leak); `shutdown` clears the map.
 
 ### 3.3 BL3 — `idle-timeout-ms` → `IdleStateHandler` (WRITER_IDLE)
 
@@ -311,9 +321,10 @@ affected). Same wire, no envelope bump.
 
 ## 8. Risks / open questions for design-review (v2 — post-fold)
 
-1. **Unicast fallback cost.** On a snapshot miss the fallback is a full `directory.peers()` SCAN for one target
-   (rare — only a freshly-joined target within ≤tickMs). Acceptable, or worth a single-peer directory SPI method
-   (`lookup(nodeId)`) to avoid the SCAN? (Lean acceptable — rare, bounded, off the storm path; SPI add is YAGNI.)
+1. **Unicast fallback cost.** On a snapshot miss the fallback is a full `directory.peers()` SCAN, but it **warms the
+   whole snapshot** from that read (§3.1), so it costs **at most one SCAN per fresh target per ≤tickMs window** — not
+   per message, even under a burst of unicasts to a just-joined node's sessions. A single-peer directory SPI method
+   (`lookup(nodeId)`) to avoid the one SCAN is deferred as YAGNI.
 2. **Backoff base/cap defaults** (1s→30s): reasonable for a ~10s tick? Confirm the send-path backoff + the raw-tick
    recovery interact as intended (recovery ≤tickMs regardless of backoff state).
 3. **WRITER_IDLE default 60s** vs the advertise TTL (30s): a peer with no app traffic for 60s gets its outbound channel
@@ -336,3 +347,13 @@ affected). Same wire, no envelope bump.
 | 7 | nit — initial `start()` populate is an unbounded `join()` | Bounded `.get(commandTimeoutMs, MS)` (§3.1) |
 | 8 | nit — BL2 guard doesn't prevent a transient conflicting-broker open | Honest caveat: transient open torn down by the failing refresh; + the mesh+nats context test (§3.5, §6) |
 | 9 | nit — §5 implied backoff drops are operator-visible (throwaway stats, BL6) | Dropped the visibility claim; meters are RC4d (§5) |
+
+**Round 2 (v2 → v2.1): re-review of the v2 patches** (`docs/superpowers/notes/2026-06-20-rc4c-mesh-rereview.json` —
+M1/M2/M3 confirmed resolved; one new MAJOR in the v2 unicast fallback + 2 minor):
+
+| # | Round-2 finding | Resolution |
+|---|---|---|
+| R1 | **MAJOR** — the v2 unicast fallback resolved into a local var and never warmed `peerSnapshot`, so a burst of unicasts to a freshly-joined node re-paid a full SCAN **per message** for ≤tickMs (re-introducing the storm BL5 removes) | The fallback now **warms the whole snapshot** from its `directory.peers()` read (§3.1); ≤1 SCAN per fresh target per window. §8 risk #1 corrected. |
+| R2 | nit — the M1 `retainAll` prune used `peers.keySet()`, not the live∩address set (would hold a dead-but-advertised peer's backoff entry until TTL) | Materialize `live = peers.keySet() − deadNodeView.get()` for the prune (§3.2) |
+| R3 | nit — §1 "zero Redis on the hot path" headline could be read as covering unicast | Scoped §1 explicitly to broadcast+interest; unicast's snapshot+bounded-fallback noted inline |
+| — | self-review (pre-re-review) — backoff gated a cached-active channel the tick reconnected | `connectionForSend` checks `outbound.get(peer).isActive()` BEFORE the backoff window (§3.2) |

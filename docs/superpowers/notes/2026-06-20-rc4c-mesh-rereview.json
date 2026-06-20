@@ -1,0 +1,23 @@
+{
+  "review": "1.10.0-RC4c mesh hot-path robustness — re-review of spec v2 (design-review patches)",
+  "date": "2026-06-20",
+  "method": "3 fold-checks (M1-M3) + 2 new-flaw probes + skeptic verify; 8 agents",
+  "verdict": {
+    "rc4cReadyToPlan_atV2": false,
+    "round1MustFixes": "M1 (backoff DEGRADED latch), M2 (unicast silent-drop), M3 (zero-Redis over-claim) — ALL resolvedInV2 + verifiedAgainstActualCode (designs sound + implementable; impl not yet written)",
+    "newFinding": "1 MAJOR in the v2 unicast fallback + 2 minor — folded as v2.1"
+  },
+  "newMajorFolded": {
+    "id": "R1",
+    "severity": "MAJOR (blocksPlanning; cost/storm, not a correctness regression)",
+    "title": "v2 unicast snapshot-miss fallback never warmed peerSnapshot → per-message SCAN storm on fresh-target join",
+    "detail": "The v2 fallback assigned the resolved address to a LOCAL var and never wrote this.peerSnapshot (refreshed only by the ~tickMs membership tick). RedisMeshNodeDirectory.peers() is always a full SCAN MATCH netty:mesh:addr:* + per-key GET (no single-key lookup). So every unicast to a target absent from the last snapshot (a freshly-joined node) re-paid a full SCAN, per-message, for ≤tickMs — N sessions on a fresh node = N per-message control-plane SCANs on every node join / autoscale event, re-introducing exactly the per-message directory SCAN BL5 exists to remove. The §8 risk-#1 'single bounded read, rare' framing masked it. Distinct from round-1 finding #2 (which fixed the silent-DROP correctness gap; this is the fallback's cost profile).",
+    "fix": "The fallback warms the whole snapshot from its directory.peers() read (this.peerSnapshot = fresh) — ≤1 SCAN per fresh target per window, then snapshot hits. §8 risk #1 corrected. Folded v2.1 §3.1/§8."
+  },
+  "minorsFolded": [
+    "M1 retainAll prune must materialize live = peers.keySet() − deadNodeView.get() (not plain peers.keySet()) so a dead-but-advertised peer's backoff entry is dropped immediately, matching §3.2's live∩address wording (v2.1 §3.2)",
+    "§1 'zero Redis on the hot path' headline scoped explicitly to broadcast+interest; unicast's snapshot+bounded-fallback noted inline (v2.1 §1)"
+  ],
+  "alsoNoted": "The M1/M2/M3 fixes exist only in the spec; HEAD is still RC4b code (no connectionForSend, no reconnect map, publish/unicast still join() on the hot path). 'Resolved' = the v2 design is sound + implementable; the plan (task #10) treats them as designs-to-implement.",
+  "selfReviewPreReview": "Before this re-review, a self-review caught that connectionForSend gated a cached-active channel the tick had reconnected — fixed so the backoff gates only a fresh DIAL (v2.1 §3.2)."
+}
