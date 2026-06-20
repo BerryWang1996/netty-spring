@@ -83,9 +83,14 @@ public class MeshInterestRouter {
     public void onNodeLeft(String nodeId) {
         cache.clear();
         try {
-            registry.removeAllForNode(nodeId);
+            // removeAllForNode runs async (CompletableFuture.runAsync) — attach .exceptionally so a Redis-side reap
+            // failure is logged, not silently dropped (the sync catch only covers a synchronous throw).
+            registry.removeAllForNode(nodeId).exceptionally(ex -> {
+                log.debug("interest registry cleanup for dead node {} failed", nodeId, ex);
+                return null;
+            });
         } catch (Exception e) {
-            log.debug("interest registry cleanup for dead node {} failed", nodeId, e);
+            log.debug("interest registry cleanup for dead node {} threw synchronously", nodeId, e);
         }
     }
 

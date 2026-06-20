@@ -118,4 +118,18 @@ class MeshInterestRoutingTest {
         Thread.sleep(300);
         assertFalse(recvB.contains("hello-b"), "B (no /ws/b session) is pruned from the /ws/b broadcast");
     }
+
+    /** RC4b R2: a reserved channel (e.g. PRESENCE_CHANNEL) BYPASSES interest pruning — even with an empty/excluding
+     *  interest set, the router returns null ⇒ publish goes all-peers ⇒ B still receives. Guards against presence
+     *  being silently pruned to zero. */
+    @Test
+    void reservedChannel_bypassesPruning_allPeersReceive() throws Exception {
+        a.setInterestRouter(new MeshInterestRouter(interest, Set.of("/ws/reserved"), 50L, 2000L));
+        b.subscribe("/ws/reserved", env -> recvB.add(body(env)));
+        // No interest is registered for /ws/reserved → an authoritative-empty read would prune B; but it is reserved.
+        assertTrue(waitFor(() -> {
+            a.publish("/ws/reserved", bc("/ws/reserved", "presence-like"));
+            return recvB.contains("presence-like");
+        }, 4000), "reserved channel bypasses interest pruning — B receives despite empty interest");
+    }
 }

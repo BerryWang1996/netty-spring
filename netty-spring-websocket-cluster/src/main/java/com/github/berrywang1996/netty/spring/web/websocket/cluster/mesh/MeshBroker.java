@@ -59,10 +59,11 @@ import java.util.function.Supplier;
  * peer</b> (send). Frames are length-prefixed ({@link MeshFrames}) carrying the existing HMAC-wrapped
  * {@link EnvelopeCodec} line. Peer addresses come from {@link MeshNodeDirectory}.
  *
- * <p><b>Scope (RC4a skeleton):</b> {@code unicast} is direct; {@code publish} is <b>naive</b> — sent to all peers
- * (never self), each peer dispatching to its local listeners (a peer with no listener for the URI drops it). Interest-
- * routed broadcast (the fan-out reduction) is RC4b. Backpressure (T4), off-loop dispatch (T5) and the total-isolation
- * degrade trigger (T6) refine this class.
+ * <p><b>Scope:</b> {@code unicast} is direct. {@code publish} is <b>interest-routed (RC4b)</b> when a
+ * {@link MeshInterestRouter} is wired (via {@link #setInterestRouter}): it targets only {@code interestedNodes(uri) ∩
+ * live-membership}, falling back to all-peers (RC4a behavior) when the router is absent, the URI is a reserved channel,
+ * or a registry read fails. Each peer dispatches to its local listeners (a peer with no listener for the URI drops it).
+ * RC4a foundations remain: backpressure (M1), off-loop dispatch (M3), and the total-isolation degrade trigger (M5).
  *
  * @author berrywang1996
  * @since V1.10.0

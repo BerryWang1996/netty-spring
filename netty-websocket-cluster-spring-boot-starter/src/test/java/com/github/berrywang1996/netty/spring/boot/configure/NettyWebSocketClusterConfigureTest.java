@@ -264,6 +264,31 @@ class NettyWebSocketClusterConfigureTest {
                 });
     }
 
+    /** RC4b R3 (symmetric over-retain guard): mesh + ALL-4-custom core SPI + a CUSTOM MeshNodeDirectory + a CUSTOM
+     *  MeshInterestRegistry ⇒ nettyClusterRedisConnection is GATED OFF (no default Redis SPI needs it; the interest
+     *  clause's `!hasBean(MeshInterestRegistry)` is false, so it does NOT over-retain). */
+    @Test
+    void meshAllCustomMeshSpi_allCustomCore_redisConnectionGatedOff() throws Exception {
+        int meshPort;
+        try (java.net.ServerSocket s = new java.net.ServerSocket(0)) {
+            meshPort = s.getLocalPort();
+        }
+        runner.withUserConfiguration(AllFourSpiOverridesConfig.class, CustomMeshDirectoryConfig.class,
+                        CustomMeshInterestRegistryConfig.class)
+                .withPropertyValues(
+                        "server.netty.websocket.cluster.enable=true",
+                        "server.netty.websocket.cluster.node-id=ctx-mesh-allcustom-node",
+                        "server.netty.websocket.cluster.heartbeat-interval-seconds=30",
+                        "server.netty.websocket.cluster.mesh.enable=true",
+                        "server.netty.websocket.cluster.mesh.advertised-host=127.0.0.1",
+                        "server.netty.websocket.cluster.mesh.port=" + meshPort)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    // Everything is custom → no default Redis-backed SPI → the connection is correctly NOT retained.
+                    assertThat(context).doesNotHaveBean("nettyClusterRedisConnection");
+                });
+    }
+
     @Test
     void clusterNodesSet_usesRedisClusterTransport_notStandalone() {
         Assumptions.assumeTrue(ClusterTestRedisCluster.available(),
@@ -957,6 +982,15 @@ class NettyWebSocketClusterConfigureTest {
         @Bean(name = "customMeshNodeDirectory")
         com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshNodeDirectory customMeshNodeDirectory() {
             return mock(com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshNodeDirectory.class);
+        }
+    }
+
+    /** Helper @Configuration supplying a CUSTOM MeshInterestRegistry (RC4b symmetric over-retain test) — a mock. */
+    @Configuration
+    static class CustomMeshInterestRegistryConfig {
+        @Bean(name = "customMeshInterestRegistry")
+        com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry customMeshInterestRegistry() {
+            return mock(com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry.class);
         }
     }
 

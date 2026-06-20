@@ -237,14 +237,17 @@ public class ClusterMessageSender implements MessageSender, RoomOperations, User
         this.traceContext = traceContext;
     }
 
-    /** Injects the room registry (enables {@link RoomOperations}). Null = room routing disabled
-     *  ({@code room.enable=false} — no room path; runtime behavior identical to 1.9.0, though the
-     *  envelope wire is globally v2 since 1.10.0 and 1.9.0 nodes discard v2 on the version gate). */
+    /** Injects the per-URI mesh interest registry (RC4b). The sender WRITES subscribe/unsubscribe per live session;
+     *  the broker's {@code MeshInterestRouter} READS + reaps. Null = interest routing disabled
+     *  ({@code mesh.interest-routing.enable=false}) ⇒ publish stays RC4a all-peers. */
     public void setInterestRegistry(
             com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry interestRegistry) {
         this.interestRegistry = interestRegistry;
     }
 
+    /** Injects the room registry (enables {@link RoomOperations}). Null = room routing disabled
+     *  ({@code room.enable=false} — no room path; runtime behavior identical to 1.9.0, though the
+     *  envelope wire is globally v2 since 1.10.0 and 1.9.0 nodes discard v2 on the version gate). */
     public void setRoomRegistry(ClusterRoomRegistry roomRegistry) {
         this.roomRegistry = roomRegistry;
     }

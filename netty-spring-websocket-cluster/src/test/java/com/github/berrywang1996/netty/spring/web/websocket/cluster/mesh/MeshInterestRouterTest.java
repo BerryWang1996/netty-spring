@@ -20,6 +20,8 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.InMemoryMeshI
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshInterestRegistry;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -69,5 +71,29 @@ class MeshInterestRouterTest {
         assertNull(r.nodesForUriCached("/ws/a"), "read failure ⇒ null ⇒ all-peers fallback");
         // second call must attempt the read again (null not cached) — still null, but proves no cached-null poisoning
         assertNull(r.nodesForUriCached("/ws/a"));
+    }
+
+    /** RC4b R6: onNodeLeft clears the send-cache (so a re-read is fresh) AND reaps the registry (removeAllForNode). */
+    @Test
+    void onNodeLeft_clearsCache_andReapsRegistry() {
+        List<String> reaped = new ArrayList<>();
+        InMemoryMeshInterestRegistry backing = new InMemoryMeshInterestRegistry();
+        backing.subscribe("/ws/a", "s1", "node-B").toCompletableFuture().join();
+        MeshInterestRegistry recording = new MeshInterestRegistry() {
+            public CompletionStage<Void> subscribe(String u, String s, String n) { return backing.subscribe(u, s, n); }
+            public CompletionStage<Void> unsubscribe(String u, String s, String n) { return backing.unsubscribe(u, s, n); }
+            public CompletionStage<Void> removeAllForNode(String n) { reaped.add(n); return backing.removeAllForNode(n); }
+            public CompletionStage<Set<String>> nodesForUri(String u) { return backing.nodesForUri(u); }
+            public void shutdown() { }
+        };
+        // long TTL so only onNodeLeft (not expiry) can clear the cache
+        MeshInterestRouter r = new MeshInterestRouter(recording, Set.of(), 60_000L, 2000L);
+        assertEquals(Set.of("node-B"), r.nodesForUriCached("/ws/a")); // primes the cache
+
+        r.onNodeLeft("node-B");
+
+        assertEquals(List.of("node-B"), reaped, "registry.removeAllForNode invoked for the dead node");
+        assertTrue(r.nodesForUriCached("/ws/a").isEmpty(),
+                "cache cleared → fresh read reflects the reap (node-B gone)");
     }
 }

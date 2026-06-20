@@ -1,0 +1,21 @@
+{
+  "review": "1.10.0-RC4b interest-routed mesh broadcast — adversarial implementation review before cut",
+  "date": "2026-06-18",
+  "method": "3 lenses (transport-correctness, wiring-gating, spec-fidelity-regression) + skeptic verify + synthesis; 4 agents",
+  "verdict": {
+    "rc4bReadyToCut": true,
+    "survivingBlockers": 0,
+    "survivingMajors": 0,
+    "note": "All load-bearing claims spot-verified against the tree: publish() genuinely interest-routes (prunes uninterested peers; null/reserved/read-failure ⇒ all-peers); mesh.enable=false and interest-routing.enable=false byte-identical paths untouched; full reactor 617 tests / 11 modules / 0 skips green."
+  },
+  "findingsAllMinor_7deduped_ALL_FOLDED_before_cut": [
+    {"id": "1", "title": "setInterestRegistry javadoc was a copy-paste of the room-registry doc (and displaced setRoomRegistry's doc)", "fix": "interest-specific javadoc on setInterestRegistry + restored room javadoc on setRoomRegistry (ClusterMessageSender)", "folded": true},
+    {"id": "2", "title": "MeshBroker class javadoc still said 'publish is naive — all peers ... interest routing is RC4b' (future tense)", "fix": "promoted to implemented: publish is interest-routed when a router is wired, all-peers fallback otherwise (MeshBroker)", "folded": true},
+    {"id": "3", "title": "MeshInterestRouter.onNodeLeft async-error visibility — removeAllForNode's async failure dropped silently (sync catch is dead for the real failure mode)", "fix": "attached .exceptionally(...) to the returned stage (MeshInterestRouter)", "folded": true},
+    {"id": "4", "title": "Missing R6 dead-node onNodeLeft test (cache clear + registry reap)", "fix": "MeshInterestRouterTest.onNodeLeft_clearsCache_andReapsRegistry (recording registry asserts removeAllForNode + fresh re-read)", "folded": true},
+    {"id": "5", "title": "Missing reserved-channel (R2) pruning-bypass test at the broker level (MeshInterestRoutingTest used an empty reserved set)", "fix": "MeshInterestRoutingTest.reservedChannel_bypassesPruning_allPeersReceive (router with reserved={uri}, empty interest, B still receives)", "folded": true},
+    {"id": "6", "title": "E2E omitted the spec §9 unsubscribe→retract transition", "fix": "extended MeshTwoNodeE2ETest interest E2E: after B's last /ws/x session leaves + ≤TTL, A no longer targets B", "folded": true},
+    {"id": "7", "title": "Missing symmetric OnAnyRedisSpiRequired (R3) over-retain test (custom directory + custom interest registry ⇒ Redis gated off)", "fix": "NettyWebSocketClusterConfigureTest.meshAllCustomMeshSpi_allCustomCore_redisConnectionGatedOff + CustomMeshInterestRegistryConfig", "folded": true}
+  ],
+  "postFold": "Cluster module folded tests green (MeshInterestRouterTest 4, MeshInterestRoutingTest 2, MeshTwoNodeE2ETest 2); starter context tests 38 green. All 7 backlog items folded into the cut rather than deferred to RC4c (project fold-before-cut culture), several directly testing the folded BLOCKERs (R2 reserved bypass, R3 symmetric clause, R6 onNodeLeft)."
+}

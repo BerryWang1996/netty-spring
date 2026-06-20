@@ -168,6 +168,15 @@ class MeshTwoNodeE2ETest {
             a.publish("/ws/y", broadcast("e2e-mesh-A", "/ws/y", "hi-y"));
             Thread.sleep(400);
             assertFalse(recvA.contains("Y:hi-y"), "B (no /ws/y session) was pruned from the /ws/y broadcast");
+
+            // RC4b §9 retract: B's last /ws/x session leaves → after the 100ms send-cache TTL, A stops targeting B.
+            interest.unsubscribe("/ws/x", "sb", "e2e-mesh-B").toCompletableFuture().join();
+            Thread.sleep(250); // > the 100ms cache TTL so A re-reads the now-empty interest set
+            recvA.clear();
+            a.publish("/ws/x", broadcast("e2e-mesh-A", "/ws/x", "after-leave"));
+            Thread.sleep(400);
+            assertFalse(recvA.contains("X:after-leave"),
+                    "after B's last /ws/x session leaves, A no longer targets B for /ws/x (1→0 node-set flip)");
         } finally {
             interest.shutdown();
         }
