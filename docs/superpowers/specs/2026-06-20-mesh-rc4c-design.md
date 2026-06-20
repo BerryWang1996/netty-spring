@@ -130,13 +130,18 @@ to `backoff-max` after a peer recovers. So:
 ```java
 private final ConcurrentHashMap<String, long[]> reconnect = new ConcurrentHashMap<>(); // peerNodeId → [notBeforeMs, curBackoffMs]
 
-/** Send-path connect: honors the per-peer backoff window (skips the dial → caller drops+counts). */
+/** Send-path connect: the backoff gates only the DIAL, never the use of an already-cached channel (e.g. one the
+ *  membership tick just re-established). */
 private Channel connectionForSend(String peerNodeId, String addr) {
+    Channel existing = outbound.get(peerNodeId);
+    if (existing != null && existing.isActive()) {
+        return existing;   // a live cached channel (incl. one the tick reconnected) — backoff is irrelevant
+    }
     long[] b = reconnect.get(peerNodeId);
     if (b != null && System.currentTimeMillis() < b[0]) {
-        return null;  // within backoff → skip dial (at-most-once drop)
+        return null;  // no live channel AND within backoff → skip the dial (at-most-once drop)
     }
-    Channel ch = connectionTo(peerNodeId, addr);   // the raw dial (unchanged)
+    Channel ch = connectionTo(peerNodeId, addr);   // the raw dial (unchanged; re-checks the cached fast-path)
     if (ch == null || !ch.isActive()) {
         long cur = (b == null) ? reconnectBackoffBaseMs : Math.min(b[1] * 2, reconnectBackoffMaxMs);
         reconnect.put(peerNodeId, new long[]{ System.currentTimeMillis() + cur, cur });   // extend backoff
