@@ -918,6 +918,33 @@ reaping is RC4c).
 > Full `netty.cluster.mesh.*` metrics are RC4d. In RC4a the broker counts frames/send-failures/backpressure-drops
 > internally but does not yet surface them to the meter registry.
 
+##### Interest-routed broadcast (RC4b)
+
+> **Since V1.10.0-RC4b.** On by default once the mesh is enabled (`cluster.mesh.interest-routing.enable=true`).
+> `publish(uri)` now routes only to peers that **currently host a live session** for that URI, instead of all peers —
+> the fan-out reduction RC4a deferred. Set `interest-routing.enable=false` to force RC4a all-peers (escape hatch).
+
+**Honest scope — when it actually reduces fan-out.** Interest is **session-grained**: a node is targeted for `uri`
+only if it has ≥1 live local session for it, so a support topic whose agents are on 4 of 100 nodes routes `99 → 3`
+peer sends **even though all 100 nodes run the same jar**. But the reduction has a precondition you must understand:
+
+- A **global** topic (live sessions on every node) gets **ZERO reduction** — correctly; RC4a already decentralized
+  that fan-out.
+- **⚠️ Under random/round-robin load-balancing**, a topic whose *concurrent live population* is comparable to or
+  larger than the node count **saturates (nearly) all nodes** (coupon-collector), so a *logically* partitioned topic
+  (e.g. `/ws/region-us` with 50k users across 100 nodes, or a large tenant) gets **~0 reduction despite being
+  "partitioned."** Reduction is real when **either** the live population is small relative to node count
+  (support/admin/ops, small tenants) **or** the LB is **session-sticky / tenant-affine**. (Same locality honesty as
+  rooms; this is why RC1's consistent-hashing shard ring was retired.)
+- For **high-cardinality** per-entity topics (millions of `/ws/conv-{id}`), use **rooms** (one URI + many rooms), not
+  per-entity URIs — interest creates one Redis set per distinct URI.
+
+**Safety.** A registry read failure/timeout falls back to **all-peers** (never a missed broadcast from a Redis blip),
+and reserved/control channels (`PRESENCE_CHANNEL`) **bypass pruning** entirely — cross-node presence is never reduced.
+
+**Config** (`server.netty.websocket.cluster.mesh.interest-routing.*`): `enable` (`true`), `node-set-cache-ttl-ms`
+(`5000` — a freshly-subscribed node may be missed by remote publishers for up to this window, RC1 parity).
+
 ---
 
 ### Cluster-Wide Queries

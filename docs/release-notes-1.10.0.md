@@ -606,6 +606,89 @@ cut; remaining findings are RC4a-deferrable robustness/observability items (belo
 
 ---
 
+## 1.10.0-RC4b — Interest-routed mesh broadcast (session-grained fan-out reduction)
+
+**The fourth 1.10.0 feature, second sub-stage.** RC4a moved cluster broadcast onto direct TCP but `publish(uri)` sent
+to **every** peer. RC4b makes `publish` **interest-aware**: it routes only to peers that **currently host a live
+session** for that URI. Opt-in inside the opt-in mesh (`mesh.enable=false` default; `mesh.interest-routing.enable=true`
+when mesh is on); with mesh disabled it is **byte-identical to RC1/RC2/RC3**, and with `interest-routing.enable=false`
+it is exactly RC4a all-peers.
+
+### Honest positioning (read this first)
+
+> Interest is **session-grained**: a node is interested in `uri` iff it has ≥1 **live local session** for it. So a
+> node that maps `/ws/support` but has **no live support session right now** is **not** contacted — a support topic
+> whose agents are on 4 of 100 nodes routes `99 → 3` peer sends (~25×) **even though all 100 nodes run the same jar**.
+> The reduction tracks where the *live audience* is, not where the code is deployed.
+
+Three honesty notes, stated not hidden:
+
+- **Global topic (audience on every node): ZERO reduction — and that is correct.** RC4a already decentralized the
+  global fan-out; RC4b cannot reduce a broadcast whose audience is genuinely everyone.
+- **⚠️ The random-LB / population-saturation precondition (the RC1 shard-ring lesson).** Reduction requires the live
+  audience to land on a **subset** of nodes. Under random / round-robin load-balancing (the WebSocket-fleet default),
+  a topic whose *concurrent live population* is comparable to or larger than the node count **saturates (nearly) all
+  nodes** by coupon-collector — so a *logically* partitioned topic (e.g. `/ws/region-us` with 50k users across 100
+  nodes, or a large tenant) has interest = all nodes → **~0 reduction despite being "partitioned."** RC4b helps when
+  **either** the live population is small relative to node count (support/admin/ops, small tenants) **or** the LB is
+  **session-sticky / tenant-affine**. This is exactly why RC1's consistent-hashing shard ring was retired (shards
+  collapsed to global broadcast under random LB).
+- **Use rooms, not per-entity URIs, for high cardinality.** Interest creates one Redis set per distinct URI — right
+  for a moderate number of partitioned topics (tens–low-hundreds). A per-conversation `/ws/conv-{id}` design (millions
+  of URIs) must use **RC1 rooms** (one URI + many rooms).
+
+### Architecture (mirrors `RedisRoomRegistry`, minus the room dimension)
+
+- **`MeshInterestRegistry` SPI** + default **`RedisMeshInterestRegistry`**: a per-`(uri,node)` Redis **session set** +
+  a per-`uri` **node-set**, with the node-set add-on-first / remove-on-last decided **inside a JOIN/LEAVE Lua**
+  (atomic — a same-node connect/disconnect race can never wipe a live node's membership). `removeAllForNode` is
+  **node-scoped** (the nodeId is in the key suffix). Interest writes ride the **session-lifecycle** path (per
+  connect/disconnect), off the message hot path — same cost class as RC1 `joinRoom` / the session registry.
+- **`MeshInterestRouter`** (owned by the broker): a 5s send-cache over `nodesForUri` with the safety contract — a read
+  **failure/timeout ⇒ `null` ⇒ all-peers fallback** (and **not** cached, so a Redis blip never pins all-peers), while
+  a successful **empty** read is authoritative (no remote audience ⇒ prune all). **Reserved channels
+  (`PRESENCE_CHANNEL`) bypass pruning entirely** (always all-peers) — so cross-node presence (the RC3 GA feature) is
+  never pruned and has no new failure mode.
+- **Dead-node reap** flows through a new additive `ClusterBroker.onNodeLeft(String)` default method (no-op for
+  Redis/NATS), so the broker clears its interest cache + reaps the registry on the leader-elected reconciliation path.
+
+### Config
+
+| Key | Default | Meaning |
+|---|---|---|
+| `server.netty.websocket.cluster.mesh.interest-routing.enable` | `true` | When `true` (and `mesh.enable=true`), `publish` routes to interested peers; `false` forces RC4a all-peers (escape hatch). |
+| `server.netty.websocket.cluster.mesh.interest-routing.node-set-cache-ttl-ms` | `5000` | Local send-cache TTL for the interest node-set (mirrors `room.node-set-cache-ttl-ms`). A freshly-subscribed node may be missed by remote publishers for up to this window (RC1 parity). |
+
+### Backward compatibility
+
+`mesh.enable=false` ⇒ no mesh, no interest registry — byte-identical to RC1/RC2/RC3. `mesh.enable=true,
+interest-routing.enable=false` ⇒ RC4a naive all-peers exactly. New SPI `MeshInterestRegistry` is additive +
+`@ConditionalOnMissingBean`; `ClusterBroker.onNodeLeft` is an additive default method (existing impls inherit the
+no-op). Same envelope wire (no version bump). A mixed RC4a/RC4b cluster never loses delivery (pruning only ever
+applied by a node that successfully read interest; an RC4a node sends to all).
+
+### Tests + review
+
+**620 tests / 11 modules green** (RC4a's 601 + RC4b's: the `MeshInterestRegistry` SPI + in-memory stub, the
+`RedisMeshInterestRegistry` JOIN/LEAVE-Lua unit + a real-Redis IT incl. the same-node connect/disconnect atomicity
+race, the `MeshInterestRouter` sentinel/reserved-bypass/onNodeLeft cases, the broker interest-routing + reserved-bypass
+tests, the per-session sender wiring, the two-node interest E2E incl. the unsubscribe→retract transition, and the
+auto-config context tests incl. both OnAnyRedisSpiRequired clause directions). 0 failures, 0 skips (Docker + Redis up).
+
+RC4b passed **three adversarial design-review rounds** before implementation (round 1: 12 blocking findings killed the
+registered-mapping-grained v1; round 2: 3 new BLOCKERs + an unsound clause from the session-grained pivot; round 3:
+one cache-ownership MAJOR — all folded, archived under `docs/superpowers/notes/2026-06-18-rc4b-mesh-*.json`) and an
+**adversarial implementation review** that returned `rc4bReadyToCut=true` (0 BLOCKER, 0 MAJOR; 7 MINOR doc/test items
+all folded before this cut).
+
+### Deferred to RC4c / RC4d
+
+- **RC4c** — approach C (mesh interest-change notifications to shrink the ≤TTL freshly-subscribed window from ≤TTL to
+  ~RTT); a per-node reverse index for `removeAllForNode` if URI cardinality grows; + the RC4a robustness backlog.
+- **RC4d** — full `netty.cluster.mesh.*` meters (incl. `broadcast.target_nodes` / `fanout_fallback`).
+
+---
+
 # 发布说明 — 1.10.0（中文）
 
 > **状态：开发中（RC 周期）。** 1.10.0 是构建在 1.9.0 GA 之上的 IM 平台线。各 RC 在特性分支上累积，直至最终
@@ -1059,3 +1142,73 @@ RC4a 经过与 RC1–RC3 相同的两道对抗式闸门。**设计审查**硬化
   去重、有界重连退避。
 - **RC4d——可观测性。** 完整 `netty.cluster.mesh.*` 指标集（并修复 mesh 计数器写到 sender 共享的
   `ClusterRuntimeStats`,使 `mesh.send_dropped_backpressure` 对运维可见——BL6）、文档、配置元数据。
+
+---
+
+## 1.10.0-RC4b — 按兴趣路由的 mesh 广播（按会话的扇出削减）
+
+**1.10.0 的第四个特性、第二个子阶段。** RC4a 把集群广播挪上了直连 TCP,但 `publish(uri)` 仍发给**每一个**对端。
+RC4b 让 `publish` **感知兴趣**:只路由到**当前托管该 URI 活跃会话**的对端。在已是可选的 mesh 内再可选
+（默认 `mesh.enable=false`;mesh 开启时 `mesh.interest-routing.enable=true`);mesh 关闭时与 RC1/RC2/RC3 **逐字节一致**,
+`interest-routing.enable=false` 时就是 RC4a 全对端。
+
+### 诚实定位（务必先读）
+
+> 兴趣是**按会话**的:节点对 `uri` 感兴趣 ⟺ 当前有 ≥1 个本地活跃会话。所以一个映射了 `/ws/support` 但**当前没有
+> 活跃 support 会话**的节点**不会**被联系——某 support 话题的客服分布在 100 个节点中的 4 个上时,路由 `99 → 3`
+> 个对端发送(~25×),**即便 100 个节点跑同一份 jar**。削减跟随**活跃受众**的位置,而非代码部署的位置。
+
+三条声明而非隐藏的诚实说明:
+
+- **全局话题(受众在每个节点):零削减——且这是对的。** RC4a 已经把全局扇出去中心化了;RC4b 无法削减一个受众
+  确实是「所有人」的广播。
+- **⚠️ 随机 LB / 人口饱和前提(RC1 分片环的教训)。** 削减要求活跃受众落在节点的**子集**上。在随机/轮询负载均衡
+  (WebSocket 集群默认)下,一个*并发活跃人口*与节点数相当或更大的话题会因优惠券收集者效应**饱和(近乎)所有节点**
+  ——于是一个*逻辑上*分区的话题(如 `/ws/region-us`,5 万用户分布在 100 个节点;或一个大租户)兴趣 = 所有节点 →
+  **尽管"分区"却 ~0 削减**。RC4b 的有效条件是:**要么**活跃人口相对节点数很小(support/admin/ops、小租户),
+  **要么** LB 是会话粘滞 / 租户亲和的。这正是当年砍掉 RC1 一致性哈希分片环的原因(随机 LB 下分片坍缩成全局广播)。
+- **高基数话题用 room,而非按实体的 URI。** 兴趣为每个不同 URI 建一个 Redis 集合——适合中等数量的分区话题
+  (几十到低百)。按会话的 `/ws/conv-{id}`(百万级 URI)必须用 **RC1 room**(一个 URI + 多个 room)。
+
+### 架构(镜像 `RedisRoomRegistry`,去掉 room 维度)
+
+- **`MeshInterestRegistry` SPI** + 默认 **`RedisMeshInterestRegistry`**:每 `(uri,node)` 一个 Redis **会话集** +
+  每 `uri` 一个**节点集**,节点集的「首个加入 / 末个移除」在 **JOIN/LEAVE Lua 内部**决定(原子——同节点连断竞态
+  绝不会抹掉仍有活跃会话节点的成员)。`removeAllForNode` **按节点**(nodeId 在键后缀)。兴趣写入走**会话生命周期**
+  路径(每次连/断),不在消息热路径上——与 RC1 `joinRoom` / 会话注册表同一成本量级。
+- **`MeshInterestRouter`**(由 broker 持有):`nodesForUri` 之上的 5s 发送缓存,安全契约——读**失败/超时 ⇒ `null` ⇒
+  回退全对端**(且**不缓存**,使一次 Redis 抖动绝不会把全对端钉住),而成功的**空**读是权威的(无远端受众 ⇒ 全裁剪)。
+  **保留通道(`PRESENCE_CHANNEL`)完全绕过裁剪**(始终全对端)——所以跨节点在线状态(RC3 GA 特性)永不被裁,且无新失败模式。
+- **死节点回收**经新增的加性 `ClusterBroker.onNodeLeft(String)` 默认方法(Redis/NATS 为 no-op),broker 在 leader
+  选举的对账路径上清理兴趣缓存 + 回收注册表。
+
+### 配置
+
+| 键 | 默认 | 含义 |
+|---|---|---|
+| `...mesh.interest-routing.enable` | `true` | `true` 时(且 mesh.enable=true)publish 路由到感兴趣的对端;`false` 强制 RC4a 全对端(逃生阀)。 |
+| `...mesh.interest-routing.node-set-cache-ttl-ms` | `5000` | 兴趣节点集的本地发送缓存 TTL(镜像 `room.node-set-cache-ttl-ms`)。刚订阅的节点可能在此窗口内被远端发布者漏掉(与 RC1 同档)。 |
+
+### 向后兼容
+
+`mesh.enable=false` ⇒ 无 mesh、无兴趣注册表——与 RC1/RC2/RC3 逐字节一致。`mesh.enable=true,
+interest-routing.enable=false` ⇒ 就是 RC4a 朴素全对端。新 SPI `MeshInterestRegistry` 为加性 +
+`@ConditionalOnMissingBean`;`ClusterBroker.onNodeLeft` 是加性默认方法(既有实现继承 no-op)。同一信封线(不升版本)。
+混合 RC4a/RC4b 集群永不丢投递(裁剪只由成功读到兴趣的节点施加;RC4a 节点发给所有人)。
+
+### 测试 + 审查
+
+**620 个测试 / 11 个模块全绿**(RC4a 的 601 + RC4b 的:`MeshInterestRegistry` SPI + 内存 stub、
+`RedisMeshInterestRegistry` 的 JOIN/LEAVE-Lua 单测 + 真实 Redis IT(含同节点连断原子性竞态)、`MeshInterestRouter`
+哨兵/保留绕过/onNodeLeft 用例、broker 兴趣路由 + 保留绕过测试、按会话的 sender 接线、双节点兴趣 E2E(含退订→不再定向
+转换)、自动装配 context 测试(含 OnAnyRedisSpiRequired 子句两个方向))。0 失败、0 跳过(Docker + Redis 在线)。
+
+RC4b 在实现前经过**三轮对抗式设计审查**(第一轮:12 项阻断,砍掉按注册映射的 v1;第二轮:按会话转向自身引入的 3 个
+BLOCKER + 一个不成立的子句;第三轮:一个缓存归属 MAJOR——全部折叠,归档于 `docs/superpowers/notes/2026-06-18-rc4b-mesh-*.json`),
+以及一轮**对抗式实现审查**(返回 `rc4bReadyToCut=true`,0 BLOCKER、0 MAJOR;7 个 MINOR 文档/测试项已在本次 cut 前全部折叠)。
+
+### 推迟到 RC4c / RC4d
+
+- **RC4c**——approach C(mesh 兴趣变更通知,把刚订阅的 ≤TTL 窗口从 ≤TTL 缩到 ~RTT);URI 基数增长时为
+  `removeAllForNode` 加按节点反向索引;+ RC4a 健壮性 backlog。
+- **RC4d**——完整 `netty.cluster.mesh.*` 指标(含 `broadcast.target_nodes` / `fanout_fallback`)。
