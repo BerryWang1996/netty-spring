@@ -446,6 +446,7 @@ public class MeshBroker implements ClusterBroker {
     Channel connectionForSend(String peerNodeId, String addr) {
         Channel existing = outbound.get(peerNodeId);
         if (existing != null && existing.isActive()) {
+            reconnect.remove(peerNodeId);   // RC4c: a live channel ⇒ the peer is reachable ⇒ clear any stale backoff
             return existing;
         }
         long[] b = reconnect.get(peerNodeId);

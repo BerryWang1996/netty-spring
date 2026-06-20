@@ -1,0 +1,18 @@
+{
+  "review": "1.10.0-RC4c mesh hot-path robustness — adversarial implementation review before cut",
+  "date": "2026-06-20",
+  "method": "3 lenses (transport-correctness, wiring-gating, spec-fidelity-regression) + skeptic verify + synthesis; 4 agents",
+  "verdict": {
+    "rc4cReadyToCut": true,
+    "survivingBlockers": 0,
+    "survivingMajors": 0,
+    "note": "All load-bearing claims verified against the tree: BL5 snapshot (no per-message Redis on broadcast; unicast warm-fallback), hot-path-only backoff (tick dials raw), WRITER_IDLE reap, BL4 reconcile at sender-start end, BL2 guard — all correct. mesh.enable=false / interest-routing.enable=false byte-identical paths untouched. Full reactor 627 → 629 tests / 11 modules / 0 skips green."
+  },
+  "findings_allMinor_FOLDED_before_cut": [
+    {"id": "1-3", "title": "MeshIdleReapTest omitted the spec §6 'next send re-dials and delivers' assertion (3 overlapping findings)", "fix": "extended MeshIdleReapTest: after the reap, a.connectionTo re-dials a fresh active channel that is re-cached", "folded": true},
+    {"id": "4", "title": "Unknown-target unicast drop+count path untested (MeshBroker.unicast addr==null branch)", "fix": "MeshSnapshotTest.unicastToUnknownTarget_dropsAndCounts: one bounded fallback SCAN + getMeshSendFailures()+1", "folded": true},
+    {"id": "5", "title": "Backoff-recovery (round-1 MAJOR resolution) tested only in decomposed halves, not end-to-end through membershipTick", "fix": "MeshReconnectBackoffTest.tickRecoversDegradedNode_despiteSendPathBackoff: DEGRADED + send-path backoff → peer recovers → one raw tick restores ACTIVE", "folded": true},
+    {"id": "6", "title": "Production robustness nit (bounded, at-most-once-preserved, ~unreachable under default timings): a stale future-dated reconnect entry could briefly suppress a send to a tick-recovered + idle-reaped peer", "fix": "one-liner: reconnect.remove(peerNodeId) in connectionForSend's cached-active fast path (a live channel ⇒ peer reachable ⇒ clear stale backoff)", "folded": true}
+  ],
+  "postFold": "Folded tests green (MeshIdleReap 1, MeshSnapshot 3, MeshReconnectBackoff 2); production one-liner clears stale backoff on a cached-active channel. All 6 findings folded into the cut rather than deferred (project fold-before-cut culture)."
+}

@@ -121,4 +121,24 @@ class MeshSnapshotTest {
             a.shutdown();
         }
     }
+
+    @Test
+    void unicastToUnknownTarget_dropsAndCounts() throws Exception {
+        CountingDirectory dir = new CountingDirectory();
+        ClusterRuntimeStats stats = new ClusterRuntimeStats();
+        MeshBroker a = new MeshBroker("node-A", dir, new SimpleTextEnvelopeCodec(), new NoOpMessageAuthenticator(),
+                stats, "127.0.0.1", freePort(), "127.0.0.1", 1_048_576, 30000, 32768, 65536, 5000);
+        a.start();
+        try {
+            int before = dir.peersCalls.get();
+            long failsBefore = stats.getMeshSendFailures();
+            // node-unknown is in neither the snapshot nor the directory → fallback SCAN finds nothing → drop+count.
+            a.unicast("node-unknown", new ClusterEnvelope("node-A", "/ws/x", ClusterEnvelope.MessageKind.UNICAST,
+                    "dm".getBytes(StandardCharsets.UTF_8), "s1", null, 1L));
+            assertEquals(before + 1, dir.peersCalls.get(), "exactly one bounded fallback SCAN on the miss");
+            assertEquals(failsBefore + 1, stats.getMeshSendFailures(), "genuinely-unknown target → drop+count");
+        } finally {
+            a.shutdown();
+        }
+    }
 }

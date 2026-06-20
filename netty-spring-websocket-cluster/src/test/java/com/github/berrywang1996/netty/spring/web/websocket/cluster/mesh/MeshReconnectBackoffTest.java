@@ -20,6 +20,7 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterRuntim
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.InMemoryMeshNodeDirectory;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.NoOpMessageAuthenticator;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.BrokerState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,7 @@ import java.net.ServerSocket;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** RC4c: per-peer reconnect backoff is on the SEND path only; the membership tick (raw connectionTo) dials regardless,
  *  so it stays the recovery probe. Uses the dial-attempt hook to distinguish a backoff-skip from a dialed+failed. */
@@ -68,5 +70,42 @@ class MeshReconnectBackoffTest {
 
         assertNull(a.connectionTo("node-Z", deadAddr));               // the raw tick path is NOT gated by backoff
         assertEquals(d0 + 2, a.dialAttemptsForTest(), "raw connectionTo (the tick recovery probe) dials regardless");
+    }
+
+    /** The round-1 MAJOR's end-to-end guard: a node DEGRADED with a send-path backoff for a peer still RECOVERS to
+     *  ACTIVE within one membership tick once the peer is reachable, because the tick dials the RAW connectionTo. */
+    @Test
+    void tickRecoversDegradedNode_despiteSendPathBackoff() throws Exception {
+        InMemoryMeshNodeDirectory dir = new InMemoryMeshNodeDirectory();
+        MeshBroker node = new MeshBroker("recover-A", dir, new SimpleTextEnvelopeCodec(),
+                new NoOpMessageAuthenticator(), new ClusterRuntimeStats(),
+                "127.0.0.1", 0, "127.0.0.1", 1_048_576, 30000, 32768, 65536, 300);
+        node.setReconnectBackoff(60_000L, 60_000L);   // a 60s backoff — would suppress the SEND path for a minute
+        node.start();
+        MeshBroker peer = null;
+        try {
+            int deadPort = closedPort();
+            dir.advertise("recover-B", "127.0.0.1", deadPort, 30000).toCompletableFuture().join();
+            node.connectionForSend("recover-B", "127.0.0.1:" + deadPort);   // set the send-path backoff for recover-B
+            node.membershipTick();   // 1 advertised peer, unreachable → DEGRADED
+            assertEquals(BrokerState.DEGRADED, node.state(), "isolated (advertised-but-unreachable peer) → DEGRADED");
+
+            // recover: bring the peer up; peer.start() re-advertises recover-B at its real (reachable) address
+            peer = new MeshBroker("recover-B", dir, new SimpleTextEnvelopeCodec(),
+                    new NoOpMessageAuthenticator(), new ClusterRuntimeStats(),
+                    "127.0.0.1", closedPort(), "127.0.0.1", 1_048_576, 30000, 32768, 65536, 5000);
+            peer.start();
+
+            int d0 = node.dialAttemptsForTest();
+            node.membershipTick();   // RAW connectionTo to the real addr → reachable → restore ACTIVE (backoff irrelevant)
+            assertTrue(node.dialAttemptsForTest() > d0, "the membership tick dials raw despite the send-path backoff");
+            assertEquals(BrokerState.ACTIVE, node.state(), "the raw tick recovers the node within one tick");
+        } finally {
+            node.shutdown();
+            if (peer != null) {
+                peer.shutdown();
+            }
+            dir.shutdown();
+        }
     }
 }

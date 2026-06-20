@@ -67,6 +67,12 @@ class MeshIdleReapTest {
                 Thread.sleep(50);
             }
             assertTrue(reaped, "an idle outbound channel is reaped (closed + evicted from the cache)");
+
+            // RC4c §6: the next send re-establishes the connection (the idle reap is transparent to traffic).
+            Channel reDialed = a.connectionTo("node-B", addrB);
+            assertNotNull(reDialed, "the next send re-dials a fresh channel after the idle reap");
+            assertTrue(reDialed.isActive());
+            assertTrue(a.outboundForTest().get("node-B") == reDialed, "the re-dialed channel is cached");
         } finally {
             a.shutdown();
             b.shutdown();
