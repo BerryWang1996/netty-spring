@@ -209,6 +209,44 @@ public class ClusterRuntimeStats {
     public long getMeshSendFailures() { return meshSendFailures.get(); }
     public long getMeshSendDroppedBackpressure() { return meshSendDroppedBackpressure.get(); }
 
+    // ---- Mesh observability (1.10.0-RC4d) ----
+
+    /** Frames successfully written to a peer channel (the async writeAndFlush succeeded). */
+    private final AtomicLong meshFramesSent = new AtomicLong();
+    /** Outbound channels closed by the WRITER_IDLE reaper (RC4c). */
+    private final AtomicLong meshIdleReaps = new AtomicLong();
+    /** Send-path dials deliberately skipped while a per-peer reconnect-backoff window was open (RC4c) — NOT a failure. */
+    private final AtomicLong meshReconnectBackoffSkips = new AtomicLong();
+    /** Fan-out sampler (mirrors the room sampler): peers targeted per mesh broadcast. */
+    private final AtomicLong meshFanoutSampleCount = new AtomicLong();
+    private final AtomicLong meshFanoutTargetsTotal = new AtomicLong();
+    private final AtomicLong meshFanoutTargetsLast = new AtomicLong();
+
+    public void incMeshFramesSent() { meshFramesSent.incrementAndGet(); }
+    public long getMeshFramesSent() { return meshFramesSent.get(); }
+    public void incMeshIdleReaps() { meshIdleReaps.incrementAndGet(); }
+    public long getMeshIdleReaps() { return meshIdleReaps.get(); }
+    public void incMeshReconnectBackoffSkips() { meshReconnectBackoffSkips.incrementAndGet(); }
+    public long getMeshReconnectBackoffSkips() { return meshReconnectBackoffSkips.get(); }
+
+    /**
+     * Record the peers a single mesh broadcast targeted (post interest-pruning, or all known peers when routing
+     * is off / a registry read failed / a reserved channel). The fan-out reduction observation point — compare
+     * {@link #getMeshFanoutTargetsAvg()} against the broker's {@code knownPeerCount()}.
+     */
+    public void recordMeshFanoutTargets(int targets) {
+        meshFanoutTargetsTotal.addAndGet(targets);
+        meshFanoutTargetsLast.set(targets);
+        meshFanoutSampleCount.incrementAndGet();
+    }
+
+    public double getMeshFanoutTargetsAvg() {
+        long n = meshFanoutSampleCount.get();
+        return n == 0 ? 0.0 : (double) meshFanoutTargetsTotal.get() / n;
+    }
+
+    public long getMeshFanoutTargetsLast() { return meshFanoutTargetsLast.get(); }
+
     // ---- Public read API ----
 
     public long getBroadcastPublished() { return broadcastPublished.get(); }
