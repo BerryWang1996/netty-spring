@@ -134,7 +134,7 @@ Handler and WebSocket lifecycle code populates SLF4J **MDC** (`netty.requestId`,
 %d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} [%X{netty.requestId}] [%X{netty.sessionId}] - %msg%n
 ```
 
-### WebSocket Cluster *(v1.8.0 / reliability-hardened in v1.9.0)*
+### WebSocket Cluster *(v1.8.0 / reliability-hardened in v1.9.0 / IM-platform foundation in v1.10.0)*
 
 Scale WebSocket across multiple nodes with Redis Pub/Sub. Default is single-node mode (zero overhead). Enable cluster with one config flag:
 
@@ -156,6 +156,17 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 **Zero business code changes** — `MessageSender` automatically switches to `ClusterMessageSender` with cross-node broadcast and unicast.
 
 > ⚠️ **Security:** Redis is the cluster control plane — anyone who can `PUBLISH` to it can inject into or close any session. Use a dedicated, network-isolated, password-protected, TLS Redis. Application-layer AES-GCM does **not** extend across Redis (plaintext is fanned out to remote nodes). See [Cluster Design §Security](docs/cluster-design.md).
+
+#### IM Platform Foundation *(v1.10.0, opt-in)*
+
+1.10.0 adds four opt-in IM primitives on top of the cluster core — all default-off, so `cluster.enable=false` stays byte-identical to 1.9.0:
+
+- **Room-scoped routing** — `roomMessage(uri, room, msg)` reaches only the nodes hosting that room's members (fan-out N/k for bounded rooms). `cluster.room.enable=true`.
+- **Offline queue + user-addressed delivery** — `sendToUser(userId, msg)` delivers to an online user or enqueues for FIFO backfill on reconnect (per-user Redis Stream). `cluster.offline.enable=true`.
+- **Multi-device presence** — per-user aggregate `ONLINE`/`AWAY`/`OFFLINE` + `PRESENCE_CHANGE` events across devices, incl. an authoritative crash-path `→OFFLINE`. `cluster.presence.enable=true`.
+- **Node-to-node mesh transport** — `MeshBroker` rides direct Netty TCP instead of Redis Pub/Sub (Redis stays for discovery only), with **interest-routed** fan-out reduction, hot-path robustness (Redis off the broadcast hot path), and nine `netty.cluster.mesh.*` meters incl. the `fanout.target_nodes` reduction gauge. `cluster.mesh.enable=true`.
+
+> The mesh pushes the ~10-node Redis Pub/Sub broadcast ceiling **for interest-partitioned live audiences** — a global or high-population topic under random load-balancing still saturates the fleet (the honest caveat). See [API Guide §9.4–§9.7](docs/api-guide.md#9-websocket-cluster) and [Cluster Design](docs/cluster-design.md).
 
 #### Performance Benchmarks
 
@@ -458,7 +469,8 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#11-configurati
 
 ### Current Status
 
-- **Latest stable: `1.9.0` GA (released 2026-06-07, on Maven Central).** Previous stable: `1.8.0`. The 1.9.0 GA cycle delivered: cluster reliability hardening (5 deferred items + 2 new knobs), reliable broadcast (Redis Streams + NATS JetStream — at-least-once, opt-in), HMAC envelope authentication (`MessageAuthenticator` SPI), full Micrometer cluster metrics, W3C TraceContext propagation, Redis Cluster client, multi/sharded pub/sub multiplexing, NATS broker + all-NATS stack (JetStream-KV registry/heartbeat/reaper), multi-node E2E + Testcontainers CI, and a GA-readiness audit. **444 tests / 11 modules green.** Single-node mode stays production-grade and identical to 1.7.x/1.8.0 — see [Release Notes 1.9.0](docs/release-notes-1.9.0.md) and [Cluster Design §Security](docs/cluster-design.md).
+- **`1.10.0` GA is cut + tagged (`v1.10.0`) and FF-merged to master; deploying to Maven Central.** Adds the **IM-platform foundation** on top of 1.9.0: room-scoped routing, offline queue + user-addressed `sendToUser`, multi-device presence, and the node-to-node **mesh** transport (interest-routed fan-out reduction + nine `netty.cluster.mesh.*` meters). `cluster.enable=false` stays byte-identical to 1.9.0. **636 tests / 11 modules green.** See [Release Notes 1.10.0](docs/release-notes-1.10.0.md) and [API Guide §9](docs/api-guide.md#9-websocket-cluster). *(Until the Central deploy completes, the Maven coordinate below resolves `1.9.0`.)*
+- **Latest stable on Maven Central: `1.9.0` GA (released 2026-06-07).** Previous stable: `1.8.0`. The 1.9.0 GA cycle delivered: cluster reliability hardening (5 deferred items + 2 new knobs), reliable broadcast (Redis Streams + NATS JetStream — at-least-once, opt-in), HMAC envelope authentication (`MessageAuthenticator` SPI), full Micrometer cluster metrics, W3C TraceContext propagation, Redis Cluster client, multi/sharded pub/sub multiplexing, NATS broker + all-NATS stack (JetStream-KV registry/heartbeat/reaper), multi-node E2E + Testcontainers CI, and a GA-readiness audit. **444 tests / 11 modules green.** Single-node mode stays production-grade and identical to 1.7.x/1.8.0 — see [Release Notes 1.9.0](docs/release-notes-1.9.0.md) and [Cluster Design §Security](docs/cluster-design.md).
 - `1.8.0` delivered WebSocket cluster support (Redis Pub/Sub + 5-layer SPI architecture + 291 tests) — all preserved in 1.9.0 and backward compatible.
 - Milestones P0 through P7 are all complete; performance (1.6.x), security/stability (1.6.2), observability (1.7.0), clustering (1.8.0), and cluster hardening (1.9.0) followed.
 - Next: `2.0.0` Spring Boot 3.x / Jakarta migration + enterprise security
@@ -630,7 +642,7 @@ handler 与 WebSocket 生命周期会写入 SLF4J **MDC**（`netty.requestId`、
 %d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} [%X{netty.requestId}] [%X{netty.sessionId}] - %msg%n
 ```
 
-### WebSocket 集群 *(v1.8.0 引入 / v1.9.0 可靠性硬化)*
+### WebSocket 集群 *(v1.8.0 引入 / v1.9.0 可靠性硬化 / v1.10.0 IM 平台基础)*
 
 通过 Redis Pub/Sub 实现跨节点广播和单播。默认单机模式零开销；一个配置开关即可启用集群：
 
@@ -652,6 +664,17 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 **业务代码零改动** — `MessageSender` 自动切换为 `ClusterMessageSender`，跨节点广播和单播即刻生效。
 
 > ⚠️ **安全**：Redis 是集群控制平面——任何能向它 `PUBLISH` 的人都能注入/关闭任意会话。生产必须用专用、网络隔离、带密码 + TLS 的 Redis。应用层 AES-GCM **不**延伸过 Redis（明文会扇出到远端节点）。详见 [集群方案设计 §安全模型](docs/cluster-design.md)。
+
+#### IM 平台基础 *(v1.10.0，按需启用)*
+
+1.10.0 在集群内核之上叠加四个可选 IM 原语——均默认关闭，`cluster.enable=false` 与 1.9.0 逐字节一致：
+
+- **房间维度路由**——`roomMessage(uri, room, msg)` 只定向承载该房间成员的节点（有界房间扇出 N/k）。`cluster.room.enable=true`。
+- **离线队列 + 按用户寻址投递**——`sendToUser(userId, msg)` 在线实时投递，离线则入队、重连时 FIFO 回填（每用户 Redis Stream）。`cluster.offline.enable=true`。
+- **多设备聚合在线状态**——按用户跨设备聚合 `ONLINE`/`AWAY`/`OFFLINE` + `PRESENCE_CHANGE` 事件，含崩溃路径权威 `→OFFLINE`。`cluster.presence.enable=true`。
+- **节点间 mesh 传输**——`MeshBroker` 走直连 Netty TCP 取代 Redis Pub/Sub（Redis 仅用于发现），含**按兴趣路由**的扇出削减、热路径健壮性（Redis 移出广播热路径）、以及九个 `netty.cluster.mesh.*` 指标含 `fanout.target_nodes` 削减 gauge。`cluster.mesh.enable=true`。
+
+> mesh 突破 ~10 节点 Redis Pub/Sub 广播上限**仅对按兴趣分区的活跃受众**成立——全局或高并发人口话题在随机 LB 下仍会饱和整个集群（诚实前提）。详见 [API 指南 §9.4–§9.7](docs/api-guide.md#9-websocket-cluster) 与 [集群方案设计](docs/cluster-design.md)。
 
 #### 性能基准
 
@@ -952,7 +975,8 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 
 ### 当前阶段
 
-- **最新稳定版：`1.9.0` GA**（2026-06-07 发布，已上 Maven Central）。上一稳定版：`1.8.0`。1.9.0 GA 周期交付：集群可靠性硬化（5 项 1.8.0 推迟项 + 2 个新配置项）、可靠投递（Redis Streams + NATS JetStream，至少一次，按需启用）、HMAC 信封鉴权（`MessageAuthenticator` SPI）、完整 Micrometer 集群指标、W3C TraceContext 跨节点透传、Redis Cluster 客户端、多/分片 Pub/Sub 多路复用、NATS 传输 + 全 NATS 技术栈（JetStream-KV 注册表/心跳/leader）、多节点 E2E + Testcontainers CI、以及 GA 就绪审计。**444 个测试 / 11 个模块全绿。** 单机模式生产级、与 1.7.x/1.8.0 完全一致——见 [1.9.0 发布说明](docs/release-notes-1.9.0.md) 与 [集群方案设计 §安全模型](docs/cluster-design.md)。
+- **`1.10.0` GA 已切版 + 打标签（`v1.10.0`）、FF 合并到 master；正在部署到 Maven Central。** 在 1.9.0 之上叠加 **IM 平台基础**：房间维度路由、离线队列 + 按用户寻址 `sendToUser`、多设备在线状态、以及节点间 **mesh** 传输（按兴趣路由扇出削减 + 九个 `netty.cluster.mesh.*` 指标）。`cluster.enable=false` 与 1.9.0 逐字节一致。**636 个测试 / 11 个模块全绿。** 见 [1.10.0 发布说明](docs/release-notes-1.10.0.md) 与 [API 指南 §9](docs/api-guide.md#9-websocket-cluster)。*（在 Central 部署完成前，下方 Maven 坐标仍解析为 `1.9.0`。）*
+- **Maven Central 最新稳定版：`1.9.0` GA**（2026-06-07 发布）。上一稳定版：`1.8.0`。1.9.0 GA 周期交付：集群可靠性硬化（5 项 1.8.0 推迟项 + 2 个新配置项）、可靠投递（Redis Streams + NATS JetStream，至少一次，按需启用）、HMAC 信封鉴权（`MessageAuthenticator` SPI）、完整 Micrometer 集群指标、W3C TraceContext 跨节点透传、Redis Cluster 客户端、多/分片 Pub/Sub 多路复用、NATS 传输 + 全 NATS 技术栈（JetStream-KV 注册表/心跳/leader）、多节点 E2E + Testcontainers CI、以及 GA 就绪审计。**444 个测试 / 11 个模块全绿。** 单机模式生产级、与 1.7.x/1.8.0 完全一致——见 [1.9.0 发布说明](docs/release-notes-1.9.0.md) 与 [集群方案设计 §安全模型](docs/cluster-design.md)。
 - `1.8.0` 交付 WebSocket 集群支持（Redis Pub/Sub 跨节点广播/单播 + 5 层 SPI 可插拔架构 + 291 个测试全绿）——在 `1.9.0` 中完整保留，全部向后兼容。
 - P0 至 P7 全部里程碑已完成；其后依次推进性能（1.6.x）、安全稳定性（1.6.2）、可观测性（1.7.0）、集群水平扩展（1.8.0）、集群可靠性硬化（1.9.0）。
 - 下一步：`2.0.0` Spring Boot 3.x / Jakarta 迁移 + 企业安全版本

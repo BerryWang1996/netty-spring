@@ -526,7 +526,7 @@ public MessageCryptoPolicy cryptoPolicy() {
 
 ## 9. WebSocket Cluster
 
-*Since V1.8.0; reliability-hardened in V1.9.0; HMAC envelope auth added in V1.9.0-RC3; Redis Cluster client foundation added in V1.9.0-RC7.* Scale WebSocket across multiple nodes via Redis Pub/Sub. **Default is single-node mode** (`cluster.enable=false`) with zero overhead and behavior identical to 1.7.x. Cluster mode is **opt-in** and targets **≤ ~10 nodes with a dedicated, secured Redis**.
+*Since V1.8.0; reliability-hardened in V1.9.0 (HMAC envelope auth + Redis Cluster client). **V1.10.0 adds the IM-platform foundation:** room-scoped routing ([§9.4](#94-room-scoped-routing-per-room-node-targeted-delivery--房间维度路由)), offline queue + user-addressed `sendToUser` ([§9.5](#95-offline-queue--user-addressable-delivery-sendtouser--离线队列--按用户投递)), multi-device presence ([§9.6](#96-multi-device-presence-presenceoperations--多设备在线状态)), and the node-to-node mesh transport ([§9.7](#97-node-to-node-mesh-transport-meshbroker--节点间-mesh-传输)).* Scale WebSocket across multiple nodes via Redis Pub/Sub. **Default is single-node mode** (`cluster.enable=false`) with zero overhead and behavior identical to 1.7.x/1.9.0. Cluster mode is **opt-in** and targets **≤ ~10 nodes with a dedicated, secured Redis** — the mesh transport (§9.7) pushes that broadcast ceiling for interest-partitioned audiences.
 
 ### Enable Cluster
 
@@ -882,7 +882,7 @@ When `presence.enable=false`, `setPresence`/`setPresenceForUser`/`getPresence` t
 **Metrics** (`netty.cluster.presence.*`): `changes`, `events_published`, `events_received`,
 `self_delivery_dropped`, `set`, `reap_offline` (the last is the crash-path correction meter).
 
-#### Node-to-Node Mesh Transport (`MeshBroker`)
+### 9.7 Node-to-Node Mesh Transport (`MeshBroker`) / 节点间 mesh 传输
 
 > **Since V1.10.0-RC4a.** Opt-in (`cluster.mesh.enable=true`, default `false`). Replaces the default
 > `RedisPubSubBroker` with a `ClusterBroker` over **direct node-to-node Netty TCP** — the message payload no longer
@@ -918,7 +918,7 @@ reaping).
 
 > The full `netty.cluster.mesh.*` meter set ships in RC4d (see *Mesh metrics* below).
 
-##### Interest-routed broadcast (RC4b)
+#### Interest-routed broadcast (RC4b)
 
 > **Since V1.10.0-RC4b.** On by default once the mesh is enabled (`cluster.mesh.interest-routing.enable=true`).
 > `publish(uri)` now routes only to peers that **currently host a live session** for that URI, instead of all peers —
@@ -945,7 +945,7 @@ and reserved/control channels (`PRESENCE_CHANNEL`) **bypass pruning** entirely �
 **Config** (`server.netty.websocket.cluster.mesh.interest-routing.*`): `enable` (`true`), `node-set-cache-ttl-ms`
 (`5000` — a freshly-subscribed node may be missed by remote publishers for up to this window, RC1 parity).
 
-##### Hot-path robustness (RC4c)
+#### Hot-path robustness (RC4c)
 
 > **Since V1.10.0-RC4c.** No new API and no config required — these harden the existing mesh paths.
 
@@ -966,7 +966,7 @@ and reserved/control channels (`PRESENCE_CHANNEL`) **bypass pruning** entirely �
 **Config** (`server.netty.websocket.cluster.mesh.*`): `reconnect-backoff-base-ms` (`1000`), `reconnect-backoff-max-ms`
 (`30000`), `idle-timeout-ms` (`60000`, now active).
 
-##### Mesh metrics (RC4d)
+#### Mesh metrics (RC4d)
 
 > **Since V1.10.0-RC4d.** When the mesh transport is the active broker AND `micrometer-core` is on the classpath,
 > nine aggregate `netty.cluster.mesh.*` meters are registered on every `MeterRegistry` (no config; the existing
@@ -1264,7 +1264,7 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 | `cluster.offline.drain-lock-ms` | `5000` | *(since V1.10.0-RC2)* Per-userId drain lock TTL (`SET NX PX`); auto-expires so a crashed drainer can't wedge the queue (prevents multi-device double-delivery). |
 | `cluster.presence.enable` | `false` | *(since V1.10.0-RC3)* Enable multi-device aggregate presence + presence-change events. Activates the shared identity path (`UserIdResolver` + `UserRegistry`) even if `offline.enable=false`. `false` = no presence beans, byte-identical to RC1/RC2. Standalone-Redis only. See [§9.6 Multi-Device Presence](#96-multi-device-presence-presenceoperations--多设备在线状态). |
 | `cluster.presence.publish-changes` | `true` | *(since V1.10.0-RC3)* Broadcast aggregate transitions as `PRESENCE_CHANGE` events. `false` = the local `PresenceChangeListener` still fires but no cross-node event is published (query-only deployments). |
-| `cluster.mesh.enable` | `false` | *(since V1.10.0-RC4a)* Replace the Redis Pub/Sub broker with the node-to-node TCP `MeshBroker` (messages ride TCP; registry/heartbeat stay on Redis for discovery). Standalone-Redis only (not `cluster-nodes`, not all-NATS). `false` = byte-identical to RC1/RC2/RC3. **RC4a = transport foundation: direct unicast + naive broadcast, NO fan-out reduction (interest routing = RC4b).** See [§9.7 Node-to-Node Mesh](#node-to-node-mesh-transport-meshbroker). |
+| `cluster.mesh.enable` | `false` | *(since V1.10.0-RC4a)* Replace the Redis Pub/Sub broker with the node-to-node TCP `MeshBroker` (messages ride TCP; registry/heartbeat stay on Redis for discovery). Standalone-Redis only (not `cluster-nodes`, not all-NATS). `false` = byte-identical to RC1/RC2/RC3. **RC4a = transport foundation: direct unicast + naive broadcast, NO fan-out reduction (interest routing = RC4b).** See [§9.7 Node-to-Node Mesh](#97-node-to-node-mesh-transport-meshbroker--节点间-mesh-传输). |
 | `cluster.mesh.port` | `9700` | *(since V1.10.0-RC4a)* TCP port this node listens on AND advertises to peers. |
 | `cluster.mesh.advertised-host` | *(auto-detect)* | *(since V1.10.0-RC4a)* Host advertised to peers. Auto-detects a non-loopback site-local IPv4; **fails fast at startup if only loopback resolves** — containers/NAT/k8s **must** set this explicitly. |
 | `cluster.mesh.bind-address` | `0.0.0.0` | *(since V1.10.0-RC4a)* Local bind interface for the inbound TCP server. |
@@ -1276,7 +1276,7 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 | `cluster.mesh.idle-timeout-ms` | `60000` | *(since V1.10.0-RC4a; **active since RC4c**)* Reaps an outbound peer connection after this long with no WRITE (WRITER_IDLE — a write-only channel, so READ-idle never fires); the next send transparently re-dials. `0` = disabled. Inert in RC4a/RC4b. |
 | `cluster.mesh.reconnect-backoff-base-ms` | `1000` | *(since V1.10.0-RC4c)* Initial per-peer **send-path** reconnect backoff after a failed dial (doubles per failure). The membership tick dials raw (un-gated), so a backoff never strands a recoverable peer. |
 | `cluster.mesh.reconnect-backoff-max-ms` | `30000` | *(since V1.10.0-RC4c)* Cap on the per-peer send-path reconnect backoff. |
-| `cluster.mesh.interest-routing.enable` | `true` | *(since V1.10.0-RC4b)* When the mesh is enabled, route `publish(uri)` only to peers that currently host a live session for the URI (session-grained fan-out reduction). `false` = RC4a all-peers (escape hatch). See [§9.7 Node-to-Node Mesh](#node-to-node-mesh-transport-meshbroker). |
+| `cluster.mesh.interest-routing.enable` | `true` | *(since V1.10.0-RC4b)* When the mesh is enabled, route `publish(uri)` only to peers that currently host a live session for the URI (session-grained fan-out reduction). `false` = RC4a all-peers (escape hatch). See [§9.7 Node-to-Node Mesh](#97-node-to-node-mesh-transport-meshbroker--节点间-mesh-传输). |
 | `cluster.mesh.interest-routing.node-set-cache-ttl-ms` | `5000` | *(since V1.10.0-RC4b)* Send-side cache TTL (ms) for the per-URI interested-node set; a freshly-subscribed node may be missed by remote publishers for up to this window (RC1 parity). |
 
 ---
