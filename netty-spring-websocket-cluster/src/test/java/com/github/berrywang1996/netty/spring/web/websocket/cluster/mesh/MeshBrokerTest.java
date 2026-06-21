@@ -17,6 +17,7 @@
 package com.github.berrywang1996.netty.spring.web.websocket.cluster.mesh;
 
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterRuntimeStats;
+import com.github.berrywang1996.netty.spring.web.websocket.cluster.InMemoryMeshInterestRegistry;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.InMemoryMeshNodeDirectory;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.auth.NoOpMessageAuthenticator;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.codec.SimpleTextEnvelopeCodec;
@@ -25,19 +26,27 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterEn
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterSubscription;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MeshNodeDirectory;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelOutboundHandlerAdapter;
+import io.netty.channel.ChannelPromise;
+import io.netty.channel.embedded.EmbeddedChannel;
+import io.netty.util.ReferenceCountUtil;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -165,5 +174,80 @@ class MeshBrokerTest {
         assertNotNull(live, "a live channel to node-B was dialed");
         assertTrue(live.isActive(), "the returned channel is live");
         assertSame(live, a.outboundForTest().get("node-B"), "the dead entry was replaced by the live channel (no leak)");
+    }
+
+    /** RC4d: writeFramed's async write-FAILURE branch increments mesh.send.failures (not frames.sent). The peer
+     *  channel is writable (passes the backpressure guard) but its write completes exceptionally. */
+    @Test
+    void writeFramed_asyncWriteFailure_countsSendFailureNotFrameSent() {
+        EmbeddedChannel failing = new EmbeddedChannel(new ChannelOutboundHandlerAdapter() {
+            @Override
+            public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
+                ReferenceCountUtil.release(msg);
+                promise.setFailure(new IOException("forced write failure"));
+            }
+        });
+        assertTrue(failing.isWritable(), "an empty EmbeddedChannel is writable (so we hit the write path, not backpressure)");
+        long sent0 = a.runtimeStats().getMeshFramesSent();
+        long fail0 = a.runtimeStats().getMeshSendFailures();
+
+        a.writeFramed("node-Z", failing, "payload");
+        failing.runPendingTasks();
+
+        assertEquals(fail0 + 1, a.runtimeStats().getMeshSendFailures(), "a failed async write increments send.failures");
+        assertEquals(sent0, a.runtimeStats().getMeshFramesSent(), "a failed write does NOT increment frames.sent");
+    }
+
+    /** A unicast to this node's own id is a no-op (origin self-suppression on the send side) — no send, no failure. */
+    @Test
+    void unicast_toSelf_isNoOp() {
+        long fail0 = a.runtimeStats().getMeshSendFailures();
+        a.unicast("node-A", unicast("node-A", "/ws/x", "s1", "self-dm"));   // target == own nodeId
+        assertEquals(fail0, a.runtimeStats().getMeshSendFailures(), "unicast to self sends nothing and counts no failure");
+    }
+
+    /** connectionTo with a malformed address (no host:port colon) returns null rather than throwing. */
+    @Test
+    void connectionTo_malformedAddress_returnsNull() {
+        assertNull(a.connectionTo("node-X", "no-colon-here"), "a malformed peer address yields no channel");
+    }
+
+    /** onNodeLeft with no interest router wired is a harmless no-op (the router is nullable). */
+    @Test
+    void onNodeLeft_withoutRouter_isNoOp() {
+        a.onNodeLeft("ghost-node");   // no interest router on this broker → no-op, no NPE
+        assertEquals(BrokerState.ACTIVE, a.state());
+    }
+
+    /** onNodeLeft delegates the dead-node reap to the interest router (which clears the node from the registry). */
+    @Test
+    void onNodeLeft_withRouter_reapsTheNodeFromInterest() throws Exception {
+        InMemoryMeshInterestRegistry reg = new InMemoryMeshInterestRegistry();
+        reg.subscribe("/ws/x", "s1", "node-Z").toCompletableFuture().join();
+        a.setInterestRouter(new MeshInterestRouter(reg, Set.of(), 50L, 2000L));
+        assertTrue(reg.nodesForUri("/ws/x").toCompletableFuture().join().contains("node-Z"));
+
+        a.onNodeLeft("node-Z");
+
+        assertFalse(reg.nodesForUri("/ws/x").toCompletableFuture().join().contains("node-Z"),
+                "onNodeLeft delegates to the interest router's dead-node reap");
+    }
+
+    /** deliver routes a CLOSE-kind envelope to the unicast listener (kind-based routing, not URI-based). */
+    @Test
+    void deliver_closeKind_routesToUnicastListener() {
+        List<String> kinds = new CopyOnWriteArrayList<>();
+        a.subscribeUnicast("node-A", env -> kinds.add(env.getKind().name()));
+        ClusterEnvelope close = new ClusterEnvelope("node-B", "/ws/x", ClusterEnvelope.MessageKind.CLOSE,
+                "bye".getBytes(StandardCharsets.UTF_8), "s1", null, 1L);
+        a.deliver(close);
+        assertTrue(kinds.contains("CLOSE"), "a CLOSE envelope routes to the unicast listener");
+    }
+
+    /** deliver of a BROADCAST whose URI has no local listener is a silent drop (RC4a naive-broadcast no-op). */
+    @Test
+    void deliver_broadcastWithNoLocalListener_isSilentDrop() {
+        a.deliver(broadcast("node-B", "/ws/nobody-listening", "x"));   // no subscriber for this URI → no-op, no throw
+        assertEquals(BrokerState.ACTIVE, a.state());
     }
 }

@@ -54,4 +54,12 @@ class MeshAddressResolverTest {
                 () -> MeshAddressResolver.resolve(null, candidates));
         assertEquals(true, ex.getMessage().contains("advertised-host"));
     }
+
+    /** The public single-arg entry point returns an explicit host verbatim (trimmed) WITHOUT touching NIC detection —
+     *  the common production path (containers/NAT/k8s set the host explicitly). */
+    @Test
+    void publicResolve_explicitHost_usedVerbatim() {
+        assertEquals("203.0.113.7", MeshAddressResolver.resolve("203.0.113.7"));
+        assertEquals("mesh.internal", MeshAddressResolver.resolve("  mesh.internal  "));
+    }
 }
