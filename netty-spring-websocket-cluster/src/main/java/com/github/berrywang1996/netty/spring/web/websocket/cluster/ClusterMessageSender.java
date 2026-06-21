@@ -20,7 +20,6 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterN
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.NodeState;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.*;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterTraceContext;
-import java.util.concurrent.atomic.AtomicLong;
 import com.github.berrywang1996.netty.spring.web.websocket.context.*;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageSessionClosedException;
 import com.github.berrywang1996.netty.spring.web.websocket.exception.MessageUriNotDefinedException;
@@ -746,7 +745,7 @@ public class ClusterMessageSender implements MessageSender, RoomOperations, User
             return;
         }
 
-        // 3. Resolve the room's node-set (cached, minus self) — the routing primitive.
+        // 3. Resolve the room's node-set (cached node-set; self is excluded in the send loop below) — the routing primitive.
         Set<String> targets = nodesForRoomCached(uri, room);
 
         // 4. Build the ROOM_BROADCAST envelope once (HMAC + traceparent applied per-broker on publish).

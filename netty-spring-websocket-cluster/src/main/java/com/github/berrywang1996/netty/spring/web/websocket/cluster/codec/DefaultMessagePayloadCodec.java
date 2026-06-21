@@ -25,7 +25,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 /**
- * Zero-dependency default implementation of {@link MessagePayloadCodec}.
+ * Default implementation of {@link MessagePayloadCodec} (the {@code J:} JSON path delegates to the message's
+ * own Jackson mapper; no extra dependency beyond what {@code netty-spring-websocket} already pulls in).
  *
  * <p>Wire format: single-character type prefix + colon + content.
  * <ul>

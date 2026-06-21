@@ -124,20 +124,17 @@ public class RedisPresenceRegistry implements PresenceRegistry {
 
     @Override
     public CompletionStage<PresenceTransition> setPresence(String userId, String nodeId, String sessionId, PresenceStatus status) {
-        RedisFutureEval eval = evalMulti(SET_LUA, key(userId), field(nodeId, sessionId), status.name());
-        return eval.asTransition(null);
+        return evalTransition(SET_LUA, key(userId), field(nodeId, sessionId), status.name());
     }
 
     @Override
     public CompletionStage<PresenceTransition> setPresenceForUser(String userId, PresenceStatus status) {
-        RedisFutureEval eval = evalMulti(SET_USER_LUA, key(userId), status.name());
-        return eval.asTransition(null);
+        return evalTransition(SET_USER_LUA, key(userId), status.name());
     }
 
     @Override
     public CompletionStage<PresenceTransition> clearPresence(String userId, String nodeId, String sessionId) {
-        RedisFutureEval eval = evalMulti(CLEAR_LUA, key(userId), field(nodeId, sessionId));
-        return eval.asTransition(null);
+        return evalTransition(CLEAR_LUA, key(userId), field(nodeId, sessionId));
     }
 
     @Override
@@ -214,23 +211,17 @@ public class RedisPresenceRegistry implements PresenceRegistry {
 
     // ---- eval helper ----
 
-    private RedisFutureEval evalMulti(String script, String key, String... argv) {
-        return new RedisFutureEval(connection.async().eval(script, ScriptOutputType.MULTI, new String[]{key}, argv));
-    }
-
-    /** Wraps the eval RedisFuture<List<Object>> and maps {old,new} to a PresenceTransition. */
-    private static final class RedisFutureEval {
-        private final io.lettuce.core.RedisFuture<List<Object>> future;
-        RedisFutureEval(io.lettuce.core.RedisFuture<List<Object>> future) {
-            this.future = future;
-        }
-        CompletionStage<PresenceTransition> asTransition(String userId) {
-            return future.thenApply(res -> {
-                PresenceStatus old = PresenceStatus.valueOf(String.valueOf(res.get(0)));
-                PresenceStatus now = PresenceStatus.valueOf(String.valueOf(res.get(1)));
-                return new PresenceTransition(userId, old, now);
-            }).toCompletableFuture();
-        }
+    /** Runs a {old,new}-returning Lua eval and maps the [old, new] reply to a PresenceTransition. The transition's
+     *  userId is left null here — it is only populated on the dead-node reap path (which builds the transition
+     *  directly), and {@code ClusterMessageSender.firePresenceTransition} carries the userId explicitly. */
+    private CompletionStage<PresenceTransition> evalTransition(String script, String key, String... argv) {
+        io.lettuce.core.RedisFuture<List<Object>> future =
+                connection.async().eval(script, ScriptOutputType.MULTI, new String[]{key}, argv);
+        return future.thenApply(res -> {
+            PresenceStatus old = PresenceStatus.valueOf(String.valueOf(res.get(0)));
+            PresenceStatus now = PresenceStatus.valueOf(String.valueOf(res.get(1)));
+            return new PresenceTransition(null, old, now);
+        }).toCompletableFuture();
     }
 
     // ---- key / field helpers ----

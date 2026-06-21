@@ -29,11 +29,11 @@ public enum BrokerState {
 
     /**
      * The broker has lost its connection to the transport (e.g. Redis disconnected).
-     * In 1.8.0 cross-node publishes are <b>dropped</b> while degraded (NOT buffered —
-     * at-most-once); local fan-out continues unaffected (degrade-to-local). The number
-     * of cross-node broadcasts skipped while degraded is counted in
+     * Cross-node publishes are <b>dropped</b> while degraded (NOT buffered — at-most-once);
+     * local fan-out continues unaffected (degrade-to-local). The number of cross-node
+     * broadcasts skipped while degraded is counted in
      * {@code ClusterRuntimeStats.broadcastsSkippedDegraded}. (Buffering / replay is the
-     * reliable-stream path, roadmap for 1.9.x.)
+     * separate reliable-stream path — {@code reliableBroadcast}, since V1.9.0.)
      */
     DEGRADED,
 
