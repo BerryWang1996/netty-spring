@@ -235,9 +235,11 @@ public class ClusterRuntimeStats {
      * {@link #getMeshFanoutTargetsAvg()} against the broker's {@code knownPeerCount()}.
      */
     public void recordMeshFanoutTargets(int targets) {
+        // Increment count BEFORE total (mirrors recordRoomFanoutTargets): a concurrent getMeshFanoutTargetsAvg
+        // reader (count then total) can then at worst UNDER-estimate, never report an avg above the true fan-out.
+        meshFanoutSampleCount.incrementAndGet();
         meshFanoutTargetsTotal.addAndGet(targets);
         meshFanoutTargetsLast.set(targets);
-        meshFanoutSampleCount.incrementAndGet();
     }
 
     public double getMeshFanoutTargetsAvg() {

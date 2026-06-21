@@ -174,7 +174,8 @@ public class NettyClusterMeterBinder implements MeterBinder {
             counter(registry, "netty.cluster.mesh.frames.received", meshStats,
                     ClusterRuntimeStats::getMeshFramesReceived, "Frames received over the mesh TCP transport");
             counter(registry, "netty.cluster.mesh.frames.sent", meshStats,
-                    ClusterRuntimeStats::getMeshFramesSent, "Frames successfully written to a peer channel (one per peer per fan-out)");
+                    ClusterRuntimeStats::getMeshFramesSent,
+                    "Frames written to a peer channel on async write-success (one per peer per fan-out; excludes backpressure drops and backoff skips)");
             counter(registry, "netty.cluster.mesh.send.failures", meshStats,
                     ClusterRuntimeStats::getMeshSendFailures, "Mesh sends that failed (no/dead channel, dial failure, async write failure)");
             counter(registry, "netty.cluster.mesh.send.dropped_backpressure", meshStats,
