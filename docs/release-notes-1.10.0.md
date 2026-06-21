@@ -1,7 +1,7 @@
 # Release Notes — 1.10.0
 
-> **Status: 1.10.0 GA — cut + tagged (`v1.10.0`) and FF-merged to master; push + deploy to Maven Central are
-> user-driven and pending.** 1.10.0 is the IM-platform line built on top of 1.9.0 GA. The per-RC history (RC1–RC4d)
+> **Status: 1.10.0 GA — released to Maven Central on 2026-06-21** (tagged `v1.10.0`, FF-merged to master).
+> 1.10.0 is the IM-platform line built on top of 1.9.0 GA. The per-RC history (RC1–RC4d)
 > follows the overview below.
 
 ---
@@ -859,8 +859,8 @@ hot-path disjoint-counter test + the real-broker BL6 end-to-end test) were folde
 
 # 发布说明 — 1.10.0（中文）
 
-> **状态：1.10.0 GA——已在 master 上切版并打标签（`v1.10.0`）、FF 合并;推送 + 部署到 Maven Central 由用户驱动,
-> 尚待执行。** 1.10.0 是构建在 1.9.0 GA 之上的 IM 平台线。各 RC（RC1–RC4d）的历史在下方总览之后。
+> **状态：1.10.0 GA——2026-06-21 已发布到 Maven Central**（tag `v1.10.0`、已 FF 合并到 master）。
+> 1.10.0 是构建在 1.9.0 GA 之上的 IM 平台线。各 RC（RC1–RC4d）的历史在下方总览之后。
 
 ---
 
