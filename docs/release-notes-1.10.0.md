@@ -28,7 +28,7 @@ at-most-once (no replay); all four families are opt-in and default-off. Deferred
 approach-C interest-change notifications, sharded pub/sub, Redis-Cluster broadcast beyond the RC7 client, and the
 Micrometer Observation API / W3C trace propagation.
 
-**636 tests / 11 modules / 0 skips green** at the GA cut.
+**644 tests / 11 modules / 0 skips green** (636 at the GA cut + 8 from a post-cut, JaCoCo-guided mesh-broker coverage pass). All integration tests (Redis + Testcontainers Redis-Cluster / NATS / JetStream) run, 0 skips.
 
 ---
 
@@ -838,7 +838,9 @@ No envelope/wire change. No Micrometer Observation/trace propagation yet (2.0.0)
 
 **636 tests / 11 modules green** (RC4c's 629 + RC4d's: the `ClusterRuntimeStats` sampler unit, the disjoint-counter +
 accessor + fan-out + idle-reap + frames-sent broker tests, the binder mesh-meter unit, and a real-broker→binder→registry
-BL6 integration test).
+BL6 integration test). A subsequent **JaCoCo-guided GA coverage pass** added 8 deterministic mesh-broker tests
+(`writeFramed` async-failure → `send.failures`, `onNodeLeft`, `deliver` CLOSE/no-listener routing, unicast-to-self,
+`connectionTo` malformed-address, the public `MeshAddressResolver.resolve`) → **644 total**.
 
 RC4d's **design review** ran four lenses; its Verify+Synthesis phases hit an account session-limit and were adjudicated
 against the tree — **9 findings** (1 BLOCKER on the BL6 start-ordering, 4 MAJOR, 2 MINOR, 2 NIT) folded into the spec
@@ -882,7 +884,7 @@ hot-path disjoint-counter test + the real-broker BL6 end-to-end test) were folde
 (无重放);四个特性族均为可选、默认关闭。推迟到之后 / 2.0.0:mesh 通道 mTLS、approach-C 兴趣变更通知、sharded
 pub/sub、超出 RC7 客户端的 Redis-Cluster 广播,以及 Micrometer Observation API / W3C trace 传播。
 
-**636 个测试 / 11 个模块 / 0 跳过全绿**(GA 切版时)。
+**644 个测试 / 11 个模块 / 0 跳过全绿**(GA 切版 636 + 切版后 JaCoCo 引导的 mesh broker 覆盖率补强 +8)。所有集成测试(Redis + Testcontainers Redis-Cluster / NATS / JetStream)全部运行,0 跳过。
 
 ---
 
@@ -1512,7 +1514,9 @@ broadcast.published` 是同一个经验扇出。
 
 **636 个测试 / 11 个模块全绿**(RC4c 的 629 + RC4d 的:`ClusterRuntimeStats` 采样器单测、不相交计数器 + 访问器 +
 扇出 + idle 回收 + frames-sent broker 测试、binder mesh 指标单测,以及一个 real-broker→binder→registry 的 BL6
-集成测试)。
+集成测试)。其后一轮 **JaCoCo 引导的 GA 覆盖率补强**新增 8 个确定性 mesh broker 测试(`writeFramed` 异步失败 →
+`send.failures`、`onNodeLeft`、`deliver` CLOSE/无监听路由、unicast 自发、`connectionTo` 畸形地址、公开
+`MeshAddressResolver.resolve`)→ **644 总计**。
 
 RC4d 的**设计审查**跑了四个镜头;其 Verify+Synthesis 阶段撞上账户会话上限,改为对照代码树裁定——**9 项发现**
 (1 个 BLOCKER 是 BL6 启动顺序、4 个 MAJOR、2 个 MINOR、2 个 NIT)在写代码**之前**折叠进规格 v2。对抗式**实现审查**
