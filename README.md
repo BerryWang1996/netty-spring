@@ -168,6 +168,8 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 
 > The mesh pushes the ~10-node Redis Pub/Sub broadcast ceiling **for interest-partitioned live audiences** — a global or high-population topic under random load-balancing still saturates the fleet (the honest caveat). See [API Guide §9.4–§9.7](docs/api-guide.md#9-websocket-cluster) and [Cluster Design](docs/cluster-design.md).
 
+**See it run multi-node** — [`docker-demo/`](docker-demo/) is a checked-in proof you can start yourself: two netty-spring nodes behind an nginx load balancer + Redis, with a headless smoke test (`smoke.js`) that opens WebSocket sessions through the LB and asserts a cross-node round-trip. `cd docker-demo && docker compose up --build`, then `node smoke.js`. A runnable chat UI (with the crypto/auth profiles) ships in the [`demo-netty-web-spring-boot-starter`](demo-netty-web-spring-boot-starter/) module.
+
 #### Performance Benchmarks
 
 **Methodology** — measured 2026-06-08 on Intel i9-14900HX (24c/32t), 64 GB RAM, Windows 11; JDK 17 GraalVM 17.0.11+7, Maven 3.9.16; Docker Desktop 29.5.2 running Redis 7-alpine + NATS 2.10 with JetStream, both on loopback. Zero-dependency `SimpleTextEnvelopeCodec`. 500-message warmup discarded before measurement; main runs of 5,000 (fan-out paths) and 2,000 (cross-node + reliable) messages. Reproduce with `mvn -pl netty-spring-websocket-cluster test -Dtest=PerformanceBenchmark` (9 ordered tests).
@@ -675,6 +677,8 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 - **节点间 mesh 传输**——`MeshBroker` 走直连 Netty TCP 取代 Redis Pub/Sub（Redis 仅用于发现），含**按兴趣路由**的扇出削减、热路径健壮性（Redis 移出广播热路径）、以及九个 `netty.cluster.mesh.*` 指标含 `fanout.target_nodes` 削减 gauge。`cluster.mesh.enable=true`。
 
 > mesh 突破 ~10 节点 Redis Pub/Sub 广播上限**仅对按兴趣分区的活跃受众**成立——全局或高并发人口话题在随机 LB 下仍会饱和整个集群（诚实前提）。详见 [API 指南 §9.4–§9.7](docs/api-guide.md#9-websocket-cluster) 与 [集群方案设计](docs/cluster-design.md)。
+
+**多节点跑给你看**——[`docker-demo/`](docker-demo/) 是已入库、可自行启动的证明：两个 netty-spring 节点 + nginx 负载均衡 + Redis，附带无头冒烟测试（`smoke.js`）——经 LB 打开 WebSocket 会话并断言跨节点往返投递。`cd docker-demo && docker compose up --build`，然后 `node smoke.js`。可运行的聊天界面（含加密/鉴权 profile）在 [`demo-netty-web-spring-boot-starter`](demo-netty-web-spring-boot-starter/) 模块中。
 
 #### 性能基准
 

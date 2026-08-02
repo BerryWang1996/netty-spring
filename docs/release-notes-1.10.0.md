@@ -30,6 +30,8 @@ Micrometer Observation API / W3C trace propagation.
 
 **644 tests / 11 modules / 0 skips green** (636 at the GA cut + 8 from a post-cut, JaCoCo-guided mesh-broker coverage pass). All integration tests (Redis + Testcontainers Redis-Cluster / NATS / JetStream) run, 0 skips.
 
+**Multi-node proof** — [`docker-demo/`](../docker-demo/) ships in this tag (and every tag since v1.9.0): two netty-spring nodes behind nginx + Redis, with a headless smoke test asserting a cross-node round-trip (`docker compose up --build`, then `node smoke.js`).
+
 ---
 
 ## 1.10.0-RC1 — ClusterRoomRegistry: per-room node-targeted routing
