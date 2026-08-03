@@ -81,6 +81,12 @@ import java.util.Map;
  * <p>The SPI beans ({@code ClusterBroker}, {@code SessionRegistry}) default to Redis
  * implementations but can be overridden by the user via {@code @ConditionalOnMissingBean}.
  *
+ * <p><b>Optional-dependency contract:</b> {@code io.nats:jnats} is an optional dependency, so NO
+ * method in THIS class may take or return an {@code io.nats.client.*} type — all NATS beans live
+ * in the nested {@link NatsClusterConfiguration}, which is gated by a class-level
+ * {@code @ConditionalOnClass} and therefore never class-loaded when jnats is absent. Violating
+ * this crashes every default (jnats-less) deployment at introspection (1.10.0 GA regression).
+ *
  * @author berrywang1996
  * @since V1.8.0
  */
@@ -213,8 +219,9 @@ public class NettyWebSocketClusterConfigure {
         return sb.toString();
     }
 
-    /** Warns when the NATS server list carries no TLS scheme and no inline credentials (insecure transport). */
-    private static void warnIfInsecureNats(String csv) {
+    /** Warns when the NATS server list carries no TLS scheme and no inline credentials (insecure transport).
+     *  Package-private (not private) so the nested {@link NatsClusterConfiguration} can call it too. */
+    static void warnIfInsecureNats(String csv) {
         if (csv == null || csv.trim().isEmpty()) {
             return;
         }
@@ -444,138 +451,168 @@ public class NettyWebSocketClusterConfigure {
                 + "Use exactly one transport: unset cluster-nodes/nats.servers for the mesh, or set mesh.enable=false.");
     }
 
-    // ---- NATS broker (active only when nats.servers is set; ADR-001 scaling tier) ----
+    // ---- NATS transport (ADR-001 scaling tier) ----
+    // ALL NATS-typed beans live in the nested NatsClusterConfiguration below — see its javadoc.
+    // The outer class must NEVER declare a method signature referencing io.nats.client.* types:
+    // jnats is an OPTIONAL dependency, and an optional type in an outer method signature breaks
+    // class introspection (NoClassDefFoundError → "Failed to introspect Class") on every classpath
+    // without jnats — i.e. every default Redis/mesh deployment. This crashed the 1.10.0 GA
+    // docker-demo at startup; the fix moved the beans into the class-level-gated nested class
+    // below. Per-method @ConditionalOnClass did NOT prevent the crash (introspection fails before
+    // bean-method conditions are evaluated). The signature-safe "nats.servers set but jnats absent"
+    // fail-fast guard stays in the outer class (natsTransportClasspathGuard, above).
 
-    @Bean(destroyMethod = "shutdown")
+    /**
+     * NATS broker + all-NATS JetStream-KV registry beans (ADR-001 scaling tier), isolated in a
+     * nested class for optional-dependency classpath safety.
+     *
+     * <p><b>Why nested + class-level {@code @ConditionalOnClass}:</b> {@code io.nats:jnats} is an
+     * OPTIONAL dependency. A class-level condition is evaluated from ASM metadata BEFORE this
+     * nested class is class-loaded, so on a classpath without jnats it is skipped entirely and its
+     * NATS-typed method signatures are never introspected. Declaring these beans in the outer
+     * {@link NettyWebSocketClusterConfigure} instead would break its reflective method enumeration
+     * / CGLIB enhancement with {@code NoClassDefFoundError} on every default (Redis/mesh)
+     * deployment — exactly the 1.10.0 GA docker-demo startup crash. Do not move these beans out.
+     *
+     * <p>The fail-fast guard for the opposite misconfiguration ({@code nats.servers} set but jnats
+     * ABSENT) must stay in the outer class
+     * ({@link NettyWebSocketClusterConfigure#natsTransportClasspathGuard}): it is signature-safe
+     * ({@code @ConditionalOnMissingClass}) and runs exactly when this nested class is suppressed.
+     *
+     * <p>Regression-pinned by {@code NettyWebSocketClusterConfigureOptionalDependencyTest}.
+     */
+    @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(io.nats.client.Connection.class)
-    @ConditionalOnExpression(NATS_TRANSPORT)
-    @ConditionalOnMissingBean(ClusterBroker.class)
-    public ClusterBroker clusterBrokerNats(ClusterProperties properties, EnvelopeCodec envelopeCodec,
-            MessageAuthenticator messageAuthenticator) throws Exception {
-        com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsClusterBroker broker =
-                new com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsClusterBroker(
-                        envelopeCodec, messageAuthenticator);
-        // 2-phase init: build the NATS connection with the broker's ConnectionListener (set at build time),
-        // then attach it. The broker owns + closes the connection (destroyMethod="shutdown").
-        io.nats.client.Connection connection = io.nats.client.Nats.connect(io.nats.client.Options.builder()
-                .server(properties.getNats().getServers())
-                .connectionListener(broker::onConnectionEvent)
-                .maxReconnects(-1)
-                .build());
-        broker.attach(connection);
-        int maxOut = properties.getMessageMaxSizeBytes();
-        broker.setInboundMaxBytes(maxOut > 0 ? (int) Math.min((long) maxOut * 2L, Integer.MAX_VALUE) : 0);
-        // Never log the raw server list — it may carry inline credentials (nats://user:pass@host).
-        warnIfInsecureNats(properties.getNats().getServers());
-        log.info("Cluster broker = NATS ({}) — registry/heartbeat remain on Redis (ADR-001 mixed model)",
-                redactServerUris(properties.getNats().getServers()));
-        return broker;
-    }
+    static class NatsClusterConfiguration {
 
-    // ---- NATS JetStream KV registry/heartbeat/reaper (all-NATS: nats.servers set AND nats.registry=true) ----
+        // ---- NATS broker (active only when nats.servers is set) ----
 
-    @Bean(name = "nettyClusterNatsKvConnection", destroyMethod = "close")
-    @ConditionalOnClass(io.nats.client.Connection.class)
-    @ConditionalOnExpression(ALL_NATS)
-    @ConditionalOnMissingBean(name = "nettyClusterNatsKvConnection")
-    public io.nats.client.Connection nettyClusterNatsKvConnection(ClusterProperties properties) throws Exception {
-        io.nats.client.Connection conn = io.nats.client.Nats.connect(io.nats.client.Options.builder()
-                .server(properties.getNats().getServers())
-                .maxReconnects(-1)
-                .build());
-        // Idempotent bucket bootstrap (create-if-absent). Requires a JetStream-enabled NATS server (-js).
-        ensureBucket(conn, "netty-sessions", null);
-        ensureBucket(conn, "netty-nodes", null);
-        ensureBucket(conn, "netty-reaping", java.time.Duration.ofSeconds(30)); // claim window
-        warnIfInsecureNats(properties.getNats().getServers());
-        log.info("Cluster registry = NATS JetStream KV (all-NATS; no Redis) at {}",
-                redactServerUris(properties.getNats().getServers()));
-        return conn;
-    }
-
-    private static void ensureBucket(io.nats.client.Connection conn, String name, java.time.Duration ttl) throws Exception {
-        if (conn.keyValueManagement().getBucketNames().contains(name)) {
-            return;
+        @Bean(destroyMethod = "shutdown")
+        @ConditionalOnExpression(NATS_TRANSPORT)
+        @ConditionalOnMissingBean(ClusterBroker.class)
+        public ClusterBroker clusterBrokerNats(ClusterProperties properties, EnvelopeCodec envelopeCodec,
+                MessageAuthenticator messageAuthenticator) throws Exception {
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsClusterBroker broker =
+                    new com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsClusterBroker(
+                            envelopeCodec, messageAuthenticator);
+            // 2-phase init: build the NATS connection with the broker's ConnectionListener (set at build time),
+            // then attach it. The broker owns + closes the connection (destroyMethod="shutdown").
+            io.nats.client.Connection connection = io.nats.client.Nats.connect(io.nats.client.Options.builder()
+                    .server(properties.getNats().getServers())
+                    .connectionListener(broker::onConnectionEvent)
+                    .maxReconnects(-1)
+                    .build());
+            broker.attach(connection);
+            int maxOut = properties.getMessageMaxSizeBytes();
+            broker.setInboundMaxBytes(maxOut > 0 ? (int) Math.min((long) maxOut * 2L, Integer.MAX_VALUE) : 0);
+            // Never log the raw server list — it may carry inline credentials (nats://user:pass@host).
+            warnIfInsecureNats(properties.getNats().getServers());
+            log.info("Cluster broker = NATS ({}) — registry/heartbeat remain on Redis (ADR-001 mixed model)",
+                    redactServerUris(properties.getNats().getServers()));
+            return broker;
         }
-        io.nats.client.api.KeyValueConfiguration.Builder b =
-                io.nats.client.api.KeyValueConfiguration.builder().name(name);
-        if (ttl != null) {
-            b.ttl(ttl);
+
+        // ---- NATS JetStream KV registry/heartbeat/reaper (all-NATS: nats.servers set AND nats.registry=true) ----
+
+        @Bean(name = "nettyClusterNatsKvConnection", destroyMethod = "close")
+        @ConditionalOnExpression(ALL_NATS)
+        @ConditionalOnMissingBean(name = "nettyClusterNatsKvConnection")
+        public io.nats.client.Connection nettyClusterNatsKvConnection(ClusterProperties properties) throws Exception {
+            io.nats.client.Connection conn = io.nats.client.Nats.connect(io.nats.client.Options.builder()
+                    .server(properties.getNats().getServers())
+                    .maxReconnects(-1)
+                    .build());
+            // Idempotent bucket bootstrap (create-if-absent). Requires a JetStream-enabled NATS server (-js).
+            ensureBucket(conn, "netty-sessions", null);
+            ensureBucket(conn, "netty-nodes", null);
+            ensureBucket(conn, "netty-reaping", java.time.Duration.ofSeconds(30)); // claim window
+            warnIfInsecureNats(properties.getNats().getServers());
+            log.info("Cluster registry = NATS JetStream KV (all-NATS; no Redis) at {}",
+                    redactServerUris(properties.getNats().getServers()));
+            return conn;
         }
-        try {
-            conn.keyValueManagement().create(b.build());
-        } catch (io.nats.client.JetStreamApiException alreadyExists) {
-            // raced with another node — fine.
+
+        private static void ensureBucket(io.nats.client.Connection conn, String name, java.time.Duration ttl) throws Exception {
+            if (conn.keyValueManagement().getBucketNames().contains(name)) {
+                return;
+            }
+            io.nats.client.api.KeyValueConfiguration.Builder b =
+                    io.nats.client.api.KeyValueConfiguration.builder().name(name);
+            if (ttl != null) {
+                b.ttl(ttl);
+            }
+            try {
+                conn.keyValueManagement().create(b.build());
+            } catch (io.nats.client.JetStreamApiException alreadyExists) {
+                // raced with another node — fine.
+            }
         }
-    }
 
-    @Bean(destroyMethod = "shutdown")
-    @ConditionalOnClass(io.nats.client.Connection.class)
-    @ConditionalOnExpression(ALL_NATS)
-    @ConditionalOnMissingBean(SessionRegistry.class)
-    public SessionRegistry natsKvSessionRegistry(
-            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterNatsKvConnection")
-            io.nats.client.Connection conn) throws Exception {
-        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsKvSessionRegistry(
-                conn.keyValue("netty-sessions"));
-    }
+        @Bean(destroyMethod = "shutdown")
+        @ConditionalOnExpression(ALL_NATS)
+        @ConditionalOnMissingBean(SessionRegistry.class)
+        public SessionRegistry natsKvSessionRegistry(
+                @org.springframework.beans.factory.annotation.Qualifier("nettyClusterNatsKvConnection")
+                io.nats.client.Connection conn) throws Exception {
+            return new com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsKvSessionRegistry(
+                    conn.keyValue("netty-sessions"));
+        }
 
-    @Bean
-    @ConditionalOnClass(io.nats.client.Connection.class)
-    @ConditionalOnExpression(ALL_NATS)
-    @ConditionalOnMissingBean(ClusterNodeHeartbeat.class)
-    public ClusterNodeHeartbeat natsKvNodeHeartbeat(
-            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterNatsKvConnection")
-            io.nats.client.Connection conn) throws Exception {
-        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsKvNodeHeartbeat(
-                conn.keyValue("netty-nodes"));
-    }
+        @Bean
+        @ConditionalOnExpression(ALL_NATS)
+        @ConditionalOnMissingBean(ClusterNodeHeartbeat.class)
+        public ClusterNodeHeartbeat natsKvNodeHeartbeat(
+                @org.springframework.beans.factory.annotation.Qualifier("nettyClusterNatsKvConnection")
+                io.nats.client.Connection conn) throws Exception {
+            return new com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsKvNodeHeartbeat(
+                    conn.keyValue("netty-nodes"));
+        }
 
-    @Bean
-    @ConditionalOnClass(io.nats.client.Connection.class)
-    @ConditionalOnExpression(ALL_NATS)
-    @ConditionalOnMissingBean(ClusterReaper.class)
-    public ClusterReaper natsKvReaper(
-            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterNatsKvConnection")
-            io.nats.client.Connection conn) throws Exception {
-        return new com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsKvReaper(
-                conn.keyValue("netty-reaping"));
-    }
+        @Bean
+        @ConditionalOnExpression(ALL_NATS)
+        @ConditionalOnMissingBean(ClusterReaper.class)
+        public ClusterReaper natsKvReaper(
+                @org.springframework.beans.factory.annotation.Qualifier("nettyClusterNatsKvConnection")
+                io.nats.client.Connection conn) throws Exception {
+            return new com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsKvReaper(
+                    conn.keyValue("netty-reaping"));
+        }
 
-    /** SpEL: reliable.enable=true AND nats.registry=true → activate the all-NATS JetStream reliable broker.
-     *  The existing {@link #reliableBroker} bean ({@code RedisStreamsReliableBroker}) carries the
-     *  {@code STANDALONE_REDIS_REGISTRY} SpEL gate which evaluates to false when {@code nats.registry=true},
-     *  so the two beans are mutually exclusive by construction (verified by context test #i + #ii in
-     *  {@code NettyWebSocketClusterConfigureTest}). The {@code @ConditionalOnMissingBean(ReliableBroker.class)}
-     *  on both beans further allows a user-supplied override to win across every deployment tier. */
-    static final String ALL_NATS_RELIABLE =
-            "${server.netty.websocket.cluster.reliable.enable:false} and " + ALL_NATS;
+        /** SpEL: reliable.enable=true AND nats.registry=true → activate the all-NATS JetStream reliable broker.
+         *  The existing {@link NettyWebSocketClusterConfigure#reliableBroker} bean ({@code RedisStreamsReliableBroker})
+         *  carries the {@code STANDALONE_REDIS_REGISTRY} SpEL gate which evaluates to false when
+         *  {@code nats.registry=true}, so the two beans are mutually exclusive by construction (verified by
+         *  context test #i + #ii in {@code NettyWebSocketClusterConfigureTest}). The
+         *  {@code @ConditionalOnMissingBean(ReliableBroker.class)} on both beans further allows a user-supplied
+         *  override to win across every deployment tier. */
+        static final String ALL_NATS_RELIABLE =
+                "${server.netty.websocket.cluster.reliable.enable:false} and " + ALL_NATS;
 
-    @Bean(destroyMethod = "shutdown")
-    @ConditionalOnClass(io.nats.client.Connection.class)
-    @ConditionalOnExpression(ALL_NATS_RELIABLE)
-    @ConditionalOnMissingBean(ReliableBroker.class)
-    public ReliableBroker natsJetStreamReliableBroker(
-            @org.springframework.beans.factory.annotation.Qualifier("nettyClusterNatsKvConnection")
-            io.nats.client.Connection nats,
-            EnvelopeCodec envelopeCodec,
-            ClusterProperties properties,
-            MessageAuthenticator messageAuthenticator) {
-        ClusterProperties.Reliable r = properties.getReliable();
-        log.info("Reliable broadcast ENABLED (NATS JetStream; maxMsgs={}, fetchBlock={}ms, fetchCount={}, groupDestroyIdleMs={})",
-                r.getStreamMaxLen(), r.getPollBlockMs(), r.getPollCount(), r.getGroupDestroyIdleMs());
-        com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsJetStreamReliableBroker broker =
-                new com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsJetStreamReliableBroker(
-                        nats, envelopeCodec, messageAuthenticator, properties.getNodeId(),
-                        r.getStreamMaxLen(), r.getPollBlockMs(), r.getPollCount(), r.getDedupWindow());
-        // Inbound guard: reject envelopes larger than the outbound cap + headroom (Base64 ~+33% +
-        // envelope metadata). 0 (unlimited) → unlimited. Mirrors RedisStreamsReliableBroker wiring.
-        int maxOut = properties.getMessageMaxSizeBytes();
-        broker.setInboundMaxBytes(maxOut > 0 ? (int) Math.min((long) maxOut * 2L, Integer.MAX_VALUE) : 0);
-        // Idle window before a dead node's consumer may be reaped (heartbeat-expiry) — protects a
-        // crashed-and-restarting node's durable cursor + PEL (and thus its backlog replay).
-        broker.setGroupDestroyIdleMs(r.getGroupDestroyIdleMs());
-        return broker;
+        @Bean(destroyMethod = "shutdown")
+        @ConditionalOnExpression(ALL_NATS_RELIABLE)
+        @ConditionalOnMissingBean(ReliableBroker.class)
+        public ReliableBroker natsJetStreamReliableBroker(
+                @org.springframework.beans.factory.annotation.Qualifier("nettyClusterNatsKvConnection")
+                io.nats.client.Connection nats,
+                EnvelopeCodec envelopeCodec,
+                ClusterProperties properties,
+                MessageAuthenticator messageAuthenticator) {
+            ClusterProperties.Reliable r = properties.getReliable();
+            log.info("Reliable broadcast ENABLED (NATS JetStream; maxMsgs={}, fetchBlock={}ms, fetchCount={}, groupDestroyIdleMs={})",
+                    r.getStreamMaxLen(), r.getPollBlockMs(), r.getPollCount(), r.getGroupDestroyIdleMs());
+            com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsJetStreamReliableBroker broker =
+                    new com.github.berrywang1996.netty.spring.web.websocket.cluster.nats.NatsJetStreamReliableBroker(
+                            nats, envelopeCodec, messageAuthenticator, properties.getNodeId(),
+                            r.getStreamMaxLen(), r.getPollBlockMs(), r.getPollCount(), r.getDedupWindow());
+            // Inbound guard: reject envelopes larger than the outbound cap + headroom (Base64 ~+33% +
+            // envelope metadata). 0 (unlimited) → unlimited. Mirrors RedisStreamsReliableBroker wiring.
+            int maxOut = properties.getMessageMaxSizeBytes();
+            broker.setInboundMaxBytes(maxOut > 0 ? (int) Math.min((long) maxOut * 2L, Integer.MAX_VALUE) : 0);
+            // Idle window before a dead node's consumer may be reaped (heartbeat-expiry) — protects a
+            // crashed-and-restarting node's durable cursor + PEL (and thus its backlog replay).
+            broker.setGroupDestroyIdleMs(r.getGroupDestroyIdleMs());
+            return broker;
+        }
     }
 
     @Bean(destroyMethod = "shutdown")
