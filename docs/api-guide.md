@@ -1039,11 +1039,11 @@ With `spring-boot-actuator` on the classpath, `GET /actuator/health` includes a 
 
 ### Multi-node proof (`docker-demo/`)
 
-A checked-in, self-startable demonstration of the cluster running for real: **two netty-spring nodes behind an nginx load balancer + Redis**, with a headless smoke test (`smoke.js`) that opens WebSocket sessions through the LB and asserts a cross-node round-trip (a message published on node A is delivered to a session connected to node B). Ships in every tag since v1.9.0:
+A checked-in, self-startable demonstration of the cluster running for real: **two netty-spring nodes behind an nginx load balancer + Redis**, with a headless smoke test (`smoke.js`) that opens WebSocket sessions through the LB and asserts cross-node delivery (a broadcast published on node A is delivered to a session connected to node B, with the correct origin-node stamp). Ships in every tag since v1.9.0:
 
 ```bash
 cd docker-demo && docker compose up --build   # starts node-1, node-2, nginx, redis
-node smoke.js                                  # cross-node round-trip assertion
+node smoke.js                                  # cross-node delivery assertion
 ```
 
 See [`docker-demo/README.md`](../docker-demo/README.md) for the topology and what the smoke test checks.
