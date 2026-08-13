@@ -167,7 +167,7 @@ RC1 **最初设计**为「一致性哈希房间分片」（shard 环，S=256）�
 - `javax.*` → `jakarta.*`（webmvc / cookie / activation）。`javax.activation` 已被 JDK 11+ 移除，本项目目前仍在用 `javax.activation:activation:1.1.1` 显式补回；2.0 切到 `jakarta.activation:jakarta.activation-api` + `org.eclipse.angus:angus-activation`。
 - 自动配置从 `spring.factories` 迁移到 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`。
 - JDK 基线：当前已是 JDK 17（`<java.version>17</java.version>`），保留 17；是否随 Spring Boot 3.x 升至 21 在 RC 阶段视上游决定。**无需 1.8.x 维护分支**——1.x 用户已经在 JDK 17 上。
-- GraalVM native-image 基础支持：为 `@MessageMapping` / `@AutowiredMessageSender` / 反射式 controller 扫描提供 `RuntimeHintsRegistrar`，CI 跑 demo 的 native-image smoke。完整性能调优推迟到 `2.1.x`。
+- GraalVM native-image 基础支持：为 `@MessageMapping` / 反射式 controller 扫描提供 `RuntimeHintsRegistrar`，CI 跑 demo 的 native-image smoke。完整性能调优推迟到 `2.1.x`。
 - 迁移基线测试矩阵：Spring Boot 3.2+ / 3.3+ × JDK 17 / JDK 21。
 - 配置 / API 兼容：保留所有 1.x 用户面对的配置键和注解。
 

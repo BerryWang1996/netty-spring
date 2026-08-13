@@ -19,9 +19,8 @@ import java.util.Set;
  *   <li>Inspect runtime statistics via {@link #getRuntimeStats()}</li>
  * </ul>
  *
- * <p>Inject an instance into handler beans via the
- * {@link com.github.berrywang1996.netty.spring.web.websocket.bind.annotation.AutowiredMessageSender @AutowiredMessageSender}
- * annotation, or obtain it from the Spring context as a
+ * <p>Inject an instance into handler beans via constructor injection (see {@code docs/api-guide.md} §5),
+ * or obtain it from the Spring context as a
  * {@link com.github.berrywang1996.netty.spring.web.websocket.support.MessageSenderSupport} bean.
  *
  * @author berrywang1996

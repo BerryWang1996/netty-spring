@@ -78,8 +78,7 @@ meters this crossover; it does not auto-switch.
 ### API
 
 ```java
-@AutowiredMessageSender
-private MessageSender sender; // the @Primary ClusterMessageSender when cluster mode is on
+private MessageSender sender; // constructor-injected (see api-guide §5) — the @Primary ClusterMessageSender when cluster mode is on
 
 // Membership (call on connect/subscribe and disconnect):
 ((RoomOperations) sender).joinRoom("/ws/chat", "room-42", sessionId);
@@ -227,8 +226,7 @@ SAML NameID), never a raw client-controllable value.
 ### API
 
 ```java
-@AutowiredMessageSender
-private MessageSender sender; // the @Primary ClusterMessageSender when cluster mode is on
+private MessageSender sender; // constructor-injected (see api-guide §5) — the @Primary ClusterMessageSender when cluster mode is on
 
 // Deliver to a user by stable identity — realtime if online, else queued for backfill:
 ((UserOperations) sender).sendToUser("user-42", new TextMessage("hi user"));
@@ -1007,8 +1005,7 @@ userId 必须派生自会话的**已认证**主体（验签的 JWT `sub`、OAuth
 ### API
 
 ```java
-@AutowiredMessageSender
-private MessageSender sender; // 集群模式开启时即 @Primary 的 ClusterMessageSender
+private MessageSender sender; // 构造器注入（见 api-guide §5）——集群模式开启时即 @Primary 的 ClusterMessageSender
 
 // 按稳定身份投递——在线则实时，否则入队等待回填：
 ((UserOperations) sender).sendToUser("user-42", new TextMessage("hi user"));

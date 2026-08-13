@@ -184,7 +184,7 @@ server.netty.websocket.enable=true
 
 ### MessageSender
 
-`MessageSender` is the primary API for sending messages to WebSocket clients. Inject it via constructor or `@AutowiredMessageSender`.
+`MessageSender` is the primary API for sending messages to WebSocket clients. Inject it via constructor.
 
 **Constructor injection (recommended):**
 
@@ -196,16 +196,6 @@ public class MyController {
     public MyController(MessageSender messageSender) {
         this.messageSender = messageSender;
     }
-}
-```
-
-**Field injection (alternative):**
-
-```java
-@Controller
-public class MyController {
-    @AutowiredMessageSender
-    private MessageSender messageSender;
 }
 ```
 
@@ -253,7 +243,7 @@ messageSender.closeSessions("/ws/chat");
 
 | MessageType | When | Handler Signature |
 | --- | --- | --- |
-| `ON_HANDSHAKE` | Before WebSocket upgrade | `boolean onHandshake(MessageSession)` — return `false` to reject |
+| `ON_HANDSHAKE` | Before WebSocket upgrade | `boolean onHandshake(HttpRequest)` — return `false` to reject (the session does not exist yet) |
 | `ON_CONNECTED` | Connection established | `void onConnected(MessageSession)` |
 | `TEXT_MESSAGE` | Text frame received | `void onMessage(String text, MessageSession)` or `void onMessage(MyPojo pojo, MessageSession)` |
 | `BINARY_MESSAGE` | Binary frame received | `void onBinary(byte[] data, MessageSession)` |
@@ -1316,8 +1306,6 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 ```java
 @MessageMapping(value = "/ws/path", messageType = MessageType.TEXT_MESSAGE)
 // Map WebSocket events by URI and message type
-
-@AutowiredMessageSender             // Inject MessageSender into a field
 ```
 
 ---

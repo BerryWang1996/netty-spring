@@ -80,7 +80,7 @@
 | 4 | `README.md` | Central versions 列表（搜 `1.4.0`、`1.6.2`...） | 已发布版本清单 | 每次 GA |
 | 5 | `README.md` | 性能基准表 | 测试/跑分数字 | 仅 benchmark 刷新时 |
 | 6 | `docs/development-plan.md` | 「当前结论」首段 + 「历史版本一览」表 | **单一权威状态源** + 历史 | 每次发布/RC |
-| 7 | `docs/api-guide.md` | Maven 依赖示例（搜 `<version>`）+ §9/§11 配置参考 | 依赖版本 + 新配置项 | GA + 新配置项时 |
+| 7 | `docs/api-guide.md` | 标题头版本戳（搜 `> Version:`）+ Maven 依赖示例（搜 `<version>`）+ §9/§11 配置参考 | 版本戳 + 依赖版本 + 新配置项 | GA + 新配置项时 |
 | 8 | `docs/cluster-design.md` | scope 表（✅/⏳ 标记） | feature 实现状态 | 集群 feature 落地时 |
 | 9 | `docs/release-notes-<version>.md` | 标题状态行 + 全文 | 该版本权威记录（新建文件） | 每次发布/RC |
 | 10 | `.claude/CLAUDE.md` | Current version 行 | 项目上下文 | 每次 GA |
