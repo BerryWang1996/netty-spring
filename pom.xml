@@ -64,6 +64,8 @@
         <jnats.version>2.20.4</jnats.version>
         <!-- Jakarta Activation runtime implementation; API version is managed by Boot. -->
         <angus-activation.version>2.0.3</angus-activation.version>
+        <!-- Security fixes beyond Boot 4.1.2's Logback 1.5.38 baseline. -->
+        <logback.version>1.6.5</logback.version>
         <!-- Keep the annotation processor aligned with Boot 4.1.2's managed Lombok. -->
         <lombok.version>1.18.48</lombok.version>
         <!-- build -->
@@ -109,7 +111,20 @@
                 <version>2.7</version>
             </dependency>
 
-            <!-- Boot manages Spring Framework, Netty, logging, Lettuce, Micrometer and tests. -->
+            <!-- Keep core/classic aligned: fixes MDC/SiftingAppender path traversal
+                 CVE-2026-19880 and CVE-2026-104721. Java 11+/SLF4J 2.0 compatible. -->
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-core</artifactId>
+                <version>${logback.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-classic</artifactId>
+                <version>${logback.version}</version>
+            </dependency>
+
+            <!-- Boot manages the remaining framework, transport, logging and test dependencies. -->
             <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
