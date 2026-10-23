@@ -39,6 +39,8 @@
 - HTTP/WebSocket 服务及 mesh 的 NIO 线程组改用 `MultiThreadIoEventLoopGroup` 配合 `NioIoHandler.newFactory()`，保留 NIO transport 和现有生命周期职责。线程退出、连接关闭与资源回收的运行结果尚待记录。
 - Netty 4.2 暴露出旧表单预解析会消费 JSON 正文的问题。现在仅对 `application/x-www-form-urlencoded` / `multipart/form-data` 启用表单 decoder，移除重复 `offer` 并恢复正文读取位置；保留 query/form 优先级、文件上传路径及原始正文。HTTP 绑定错误测试同时检查实际错误原因，避免把空正文误判为 JSON 类型校验成功。
 
+Boot 4 的 Maven repackage 默认不再打入应用直接声明为 `optional` 的依赖。使用 NATS 的应用应将 `io.nats:jnats` 作为普通运行依赖显式加入；确需打入应用所有 optional 依赖时再有意配置 `includeOptional=true`。库自身的可选 NATS 边界保持不变，当前 Redis demo 无需该开关。应用若解析 Boot 默认日志，还应核对 ISO-8601 时间格式及日志字符集变化；本项目自有 `/netty/health`、`/netty/status` 不由 Actuator 新默认的探针分组替代。[Boot 4 迁移指南](https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-4.0-Migration-Guide)
+
 ## Jackson 3：公开接口与 JSON 行为
 
 Jackson Maven 坐标与 Java 包迁到 `tools.jackson`；`com.fasterxml.jackson.annotation` 中的注解继续保留原包。来自 `jackson-databind` 的注解（如 `JsonSerialize`、`JsonDeserialize`）属于迁移范围，应用不能仅因旧依赖仍能编译就保留其旧 import。mapper 构建后不可变，配置应在 builder 中完成。原 `JsonProcessingException` 对应 `tools.jackson.core.JacksonException`，后者是运行时异常，不再继承 `IOException`。[Jackson 官方迁移指南](https://github.com/FasterXML/jackson/blob/main/jackson3/MIGRATING_TO_JACKSON_3.md)
@@ -128,7 +130,7 @@ Lettuce 7 默认开启 Redis Cluster 自适应拓扑刷新。本项目自动创�
 | 自动配置发现 / 可选依赖 / MIME | 8 项新增真实发现测试、2 项 MIME 测试通过；另有 3 项真实 javac 参数元数据、4 项请求体解析和 4 项 allocator 指标回归 |
 | 依赖一致性 / SBOM | CycloneDX JSON/XML 已生成；根版本 `2.0.0-SNAPSHOT`、64 个组件，同坐标无多版本；未见 Spring 5、Netty 4.1 或 Jackson 2 core/databind 残留，详见下方证据 |
 | 漏洞扫描 | Dependency-Check `12.2.2` 本地扫描退出 0，CVSS 7.0 门禁通过；38 条聚合依赖记录、0 条漏洞告警、0 条抑制、无 analysisExceptions；OSS Index 未启用，覆盖限制见下方 |
-| JDK 17 / 21 / 25 与远端 CI | 本地 JDK 17 全量通过；CI 已配置三版本矩阵、零跳过门禁和报告上传，远端结果待补 |
+| JDK 17 / 21 / 25 与远端 CI | 本地 JDK 17 全量通过；首轮远端 JDK 21/25 通过，JDK 17 捕获出站帧测试竞态，已修正并定向 21 tests 全通过；最终矩阵待重跑 |
 | 单机、双节点与真实中间件 | 单机 smoke 16 项通过；2.0.0 双节点 Redis Pub/Sub 双向 JSON 广播通过；集群模块 336 项真实中间件/单测全部通过，无跳过 |
 | 1.10.1 混部及完整应用回滚 | 旧/新各一节点 → 双新节点 → 完整 1.10.1 双节点镜像，三阶段双向 JSON 广播通过，回滚保留 Redis 容器；覆盖边界见下方 |
 | 内存 / 延迟 / 资源回收 | allocator 指标已适配并新增汇总、去重和未知值测试；负载比较与运行证据待补 |

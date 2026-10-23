@@ -379,7 +379,7 @@ class DefaultMessageSenderTest {
             assertTrue(awaitLatch(failedWriteLatch, activeSession, failingSession));
             awaitSessionAbsent(resolver, "failing", activeSession, failingSession);
 
-            Object outbound = activeSession.channel.readOutbound();
+            Object outbound = awaitOutbound(activeSession);
             try {
                 assertTrue(outbound instanceof TextWebSocketFrame);
                 assertEquals("hello", ((TextWebSocketFrame) outbound).text());
@@ -387,6 +387,7 @@ class DefaultMessageSenderTest {
                 ReferenceCountUtil.release(outbound);
             }
         } finally {
+            sender.shutdown();
             cleanup(resolver, activeSession, failingSession);
         }
     }

@@ -54,7 +54,7 @@ Jakarta 改名只处理 Jakarta EE API；目前源码的直接迁移落点是 ac
 ### 阶段 1：锁定基线与依赖方案
 
 - [x] 从已验证的 `1.10.1` 建立 `2.0.0-SNAPSHOT` 开发分支，保留基线制品、验证记录和旧版 JSON/crypto 样本；生成新基线 effective POM。
-- [ ] 锁定 Boot 4.1.x 补丁，按 Boot 2.7 → 3.x → 4.0 → 4.1 升级说明检查删除的 API、属性与构建行为。
+- [x] 锁定 Boot 4.1.2，按 [Boot 3.0 迁移指南](https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-3.0-Migration-Guide)、Boot 4.0 / 4.1 和 Framework 7 升级说明，逐项对照当前 API、配置及打包资源；已检查自动配置、模块拆分、参数名、日志默认值和可选依赖打包差异。运行矩阵验收仍单独保留。
 - [x] 记录 Spring、Netty、Jackson、Lettuce、Micrometer、jnats、Testcontainers、JUnit、Mockito、Lombok 和日志组件的最终解析版本，每个手动覆盖说明原因。
 - [x] 使用 Boot BOM 管理的 Netty 4.2，移除旧 Spring/Netty/Logback/Testcontainers 覆盖；保留 Jackson 3.1.8 与 SnakeYAML 2.7 安全覆盖并注明原因。
 - [ ] 检查 Maven Wrapper、Compiler、Surefire 和 Boot Maven Plugin 与新测试/打包链的兼容性。
