@@ -180,7 +180,7 @@ Javadoc 已设置 `failOnError=true`，并按 [Maven Javadoc 官方说明](https
 
 同一制品另完成 8 项 TLS/gzip/分片检查：临时 CA 签发含 `localhost` / `127.0.0.1` SAN 的测试证书，HTTPS 的 TLS 1.2/1.3 与 WSS 均保留信任链和主机名校验；HTTPS/WSS 错误主机名都被拒绝。gzip 解压后逐字节一致。显式设 `max-frame-aggregation-buffer-size=8192` 后，跨 UTF-8 字符边界的三段 TEXT/CONTINUATION 帧中途无回包，最终恰好一条完整回显；该功能默认仍关闭。24/24 项和完整 runner 均成功，容器、网络、卷及临时私钥已清理，证据为 `.m2/smoke-ga-200/`。此前两次验证脚本的日志路径/PowerShell 汇总故障另行保留，最终结果没有忽略其错误。
 
-混部演练复用 `docker-demo/` 的 nginx + Redis 7 和同一集群配置；每个阶段入口验证节点实际 jar 版本，`smoke.js` 验证两个不同节点之间双向 JSON 广播及 `originNode`。顺序为 `1.10.1 / 2.0.0-SNAPSHOT`、`2.0.0-SNAPSHOT / 2.0.0-SNAPSHOT`、恢复 `1.10.1 / 1.10.1`；恢复完整应用镜像，未替换单个库 jar，也未通过清空 Redis 规避兼容问题。切换后刷新 LB 并重新建立测试连接，因此**不证明已有连接无中断或零停机**。
+历史 SNAPSHOT 的 nginx + Redis 三阶段旧新、双新及双旧回滚保留于 `.m2/compat-*-200-*`，确认跨节点双向 JSON 与 `originNode`；最终候选使用下述更完整的 6 阶段演练。
 
 最终 `2.0.0` 候选完成 6/6 阶段 HMAC strict 演练：旧新双向 JSON、重建新节点并保留旧节点已有连接/重连新节点、双方密钥不匹配时拒绝跨节点消息、恢复密钥、双新节点和完整双旧回滚。共 10 次正向投递、2 次负向拒绝；负向场景本地回显正常，两端日志明确拒绝 invalid HMAC。全程验证同一 Redis 容器和测试 sentinel 数据保留。新节点原连接在重建时中断，不将重连成功描述为零停机。证据为 `.m2/mixed-ga-200/2026-10-23T17-11-53-742Z/`；自建容器、网络已清理，两个测试端口均可重用。此前 SNAPSHOT 对照保留在 `.m2/mixed-advanced-200/`。
 
@@ -205,6 +205,10 @@ Javadoc 已设置 `failOnError=true`，并按 [Maven Javadoc 官方说明](https
 **覆盖边界：** Redis standalone harness 调用公开持久化 API，`LocalSender` 记录本地投递边界，未验证真实浏览器上线触发回填；其 TTL 结论限于离线 key、条目年龄和 drain lock。Redis Cluster harness 注册实际版本的配置类并绑定属性，未运行 HTTP/WebSocket 服务；三主节点无副本，未测试 failover、resharding 或浏览器连接。JetStream 本轮覆盖尚未消费的 durable backlog，未覆盖回调处理中强杀后的未 ACK 重投。Mesh 本轮验证传输及 framing，未覆盖跨版本 interest/room/presence；all-NATS KV 跨版本自动装配亦未覆盖。这些 harness 支撑上方矩阵的协议/状态兼容范围，不替代完整应用混部、持续容量或生产 SLI 验收；持续负载下的资源/性能和最终发布门禁仍单独保留。
 
 ### 持续与目标连接规模负载（2026-10-23 UTC）
+
+最终候选的首轮负载在旧版对照恢复检查中停止：前三个快照为 `16387/16388`，最后为 `16386/16388`，同时 active task 从 1 变为 2，队列和会话始终为 0。恢复每约 5.4 秒的任务增量却为 3/4/4，与每 2 秒一次的 Docker 健康请求吻合；它和状态请求共用 handler permit。原始快照不能标识第二任务的 URL，故按探针干扰排查，未直接认定资源泄漏。失败和清理证据完整保存在 `.m2/load-acceptance-2026-10-23T17-21-02-686Z/`，不计为完成的验收轮次。
+
+运行器现显式关闭镜像/Compose 的周期 healthcheck，启动阶段以 60 秒总限串行检查健康，首次 UP 后停止；分析器独立检查实际容器 `Test=[NONE]`、检查时序、原始结果与记录一致性及开始计量前已就绪。恢复仍取最后快照并保留 `availablePermits >= permitLimit - 1`、会话/队列/拒绝/写失败断言，未挑选最优快照或放宽许可阈值。相关 Node.js 回归共 52 项通过；新旧各 8 连接短测的四个恢复快照全部为 `16387/16388`、active=1，任务数每次只增加自身的 1 个状态请求，清理通过。短测证据在 `.m2/load-acceptance-2026-10-23T17-27-36-424Z/`；2 秒计量仅验证工具功能，不能通过正式资源/规模门禁。新分析格式为 `load-evidence-v2-readiness`，历史负载没有该隔离证据，继续保留其原检查器和边界。
 
 本组证据固定对应 `e47891d3fe96a18f59360d724cfe3d04f17c19e9` 的生产源码和 `netty-spring-200-acceptance:2.0.0-SNAPSHOT` 镜像，image ID 为 `sha256:3263b7dfbe2d60ba45aae8c6385f9315d57deafdcd70a6c0c67ca7015a9b9293`，fat jar SHA-256 为 `f5e12e04b753b5abd1df634845329d1c2ba4f5b32e2e841c8bf87a2b2be417d9`。对照为上方跨版本演练所用的固定 `1.10.1` 制品。每轮入口验证 POM 版本、fat jar 哈希和实际 JRE；后续资源异常路径修复形成的新候选须另行验证，不能沿用本组结果宣称 GA 最终验收。
 
@@ -244,7 +248,9 @@ Javadoc 已设置 `failOnError=true`，并按 [Maven Javadoc 官方说明](https
 
 <a id="dependency-scan-evidence"></a>
 
-### 依赖与扫描证据（2026-10-23）
+### 依赖与扫描证据
+
+以下扫描与 SBOM 段落为 2026-10-23 的历史 SNAPSHOT 证据。最终候选 `0e15576` 的两轮 CI 因测试/下载失败跳过了这两个 job；测试修正后 `467444b` 的完整手动 CI 正在重新运行，待核验其实际报告后更新本节。
 
 本轮 clean 构建后的 SBOM 生成于 `2026-10-23T15:00:33Z`，包含 64 个组件（9 个项目子模块、55 个外部组件）。已核对 Spring 的 5 个组件统一为 `7.0.10`、Boot 的 12 个组件统一为 `4.1.2`、Netty 的 11 个组件统一为 `4.2.19.Final`；Jackson core/databind 均为 `tools.jackson.core:3.1.8`，Lettuce 为 `7.5.2.RELEASE`、SnakeYAML 为 `2.7`、SLF4J 为 `2.0.20`、Logback core/classic 均为 `1.6.5`。SBOM 未发现同一 Maven 坐标同时出现多个版本，也未发现 Spring 5、Netty 4.1、旧 `com.fasterxml.jackson.core:jackson-core/jackson-databind` 或 Jackson 2 datatype/module/dataformat 组件。仍存在的 `com.fasterxml.jackson.core:jackson-annotations:2.21` 是 Jackson 3 沿用的注解库，不是旧 databind 残留。
 
@@ -254,11 +260,11 @@ Dependency-Check 报告时间为 `2026-10-23T15:00:40Z`。38 条顶层依赖记�
 
 NVD 使用 [Dependency-Check 官方镜像](https://dependency-check.github.io/DependencyCheck/data/mirrornvd.html)。扫描前于 `2026-10-23T14:19:23Z` 独立读取 `cache.properties`，其 `lastModifiedDate=2026-10-22T15:44:59Z`，年龄约 22.57 小时，满足不超过 72 小时且不超前 5 分钟的 CI 规则。本次扫描复用本地数据库：报告的最近检查时间为 `2026-10-23T13:22:12Z`，数据修改时间与镜像一致；日志因检查间隔未到而复用 NVD 和 CISA KEV 缓存，没有声称重新全量导入。
 
-同日以只读 GitHub API 核对默认分支的 7 条 open Dependabot 告警（1 high、2 medium、4 low），并逐项比较本轮 SBOM 的 `SnakeYAML 2.7`、`logback-core/classic 1.6.5`。这 7 条已知告警的受影响版本范围均不包含当前解析版本；未修改或关闭仓库告警。具体范围如下，Logback 多维护线均已核对：
+当时以只读 GitHub API 核对默认分支的 7 条 open Dependabot 告警（1 high、2 medium、4 low），其受影响范围均不包含 `SnakeYAML 2.7`、`logback-core/classic 1.6.5`。2026-10-24 CST 再核对时，当前 open 为下表 6 条 Logback 告警（2 medium、4 low），均指向默认分支 `logback-core:1.2.13`；本任务未修改或关闭告警。原始响应和摘要在 `.m2/ci-0e15576/`。下表保留历史 SnakeYAML 对照，Logback 多维护线均已核对：
 
 | 告警 / 严重度 | 组件与受影响范围 | 已发布修复版本 |
 |---|---|---|
-| [CVE-2022-1471](https://github.com/advisories/GHSA-mjmj-j48q-9wg2) / high | SnakeYAML `<= 1.33`；该条是 push 提示中的唯一 high | `2.0` |
+| [CVE-2022-1471](https://github.com/advisories/GHSA-mjmj-j48q-9wg2) / high（历史对照） | SnakeYAML `<= 1.33`；最新 open 列表中已无此项 | `2.0` |
 | [CVE-2026-10532](https://github.com/advisories/GHSA-jhq6-gfmj-v8fx) / low | Logback core `< 1.5.34` | `1.5.34` |
 | [CVE-2026-9828](https://github.com/advisories/GHSA-p47f-322f-whfh) / low | Logback core `<= 1.5.32` | `1.5.33` |
 | [CVE-2026-1225](https://github.com/advisories/GHSA-qqpg-mvqg-649v) / low | Logback core `< 1.5.25` | `1.5.25` |
@@ -272,7 +278,7 @@ NVD 使用 [Dependency-Check 官方镜像](https://dependency-check.github.io/De
 
 本轮最终 clean 构建证据已复制到忽略目录 `.m2/scan-2.0.0-logback165/`，包括扫描 JSON/HTML/SARIF、`dependency-scan-2.0.0-logback165-clean.log`、SBOM JSON/XML、镜像输入、官方告警记录和含实际 jar 校验的汇总，避免后续 `clean` 删除。扫描 JSON 的 SHA-256 为 `035a74ed0e37b660650bf9839de7639004af5dde6f2c8fb62a658454be85af52`；SBOM JSON 的 SHA-256 为 `e9d3445841416ab11b1e440a2249499b3b762ddec36222dff2a3ed0687ff258b`。升级前证据另保留于 `.m2/scan-2.0.0/`。
 
-最新远端 [CI 39983448870](https://github.com/BerryWang1996/netty-spring/actions/runs/39983448870) 验证提交 `e47891d3fe96a18f59360d724cfe3d04f17c19e9`，三份 XML 汇总确认 JDK `17.0.20.1`、`21.0.12.1`、`25.0.4.1` 各 694 项、120 份报告，零失败/错误/跳过。SBOM 时间为 `2026-10-23T16:08:11Z`，64 个组件坐标和版本与此前 `2c2d61a` 完全一致；Dependency-Check `12.2.2` 报告时间为 `2026-10-23T16:08:35.695558148Z`，38 条顶层与 27 条相关依赖，0 漏洞/0 抑制/0 分析异常。上述 UTC 时间对应北京时间 10 月 24 日。
+历史 SNAPSHOT [CI 39983448870](https://github.com/BerryWang1996/netty-spring/actions/runs/39983448870) 验证提交 `e47891d3fe96a18f59360d724cfe3d04f17c19e9`，三份 XML 汇总确认 JDK `17.0.20.1`、`21.0.12.1`、`25.0.4.1` 各 694 项、120 份报告，零失败/错误/跳过。SBOM 时间为 `2026-10-23T16:08:11Z`，64 个组件坐标和版本与此前 `2c2d61a` 完全一致；Dependency-Check `12.2.2` 报告时间为 `2026-10-23T16:08:35.695558148Z`，38 条顶层与 27 条相关依赖，0 漏洞/0 抑制/0 分析异常。上述 UTC 时间对应北京时间 10 月 24 日。
 
 该轮 NVD 源镜像新鲜度检查记录 `lastModifiedDate=2026-10-23T15:35:14Z`、年龄 0.5 小时并通过门禁；实际扫描报告的数据修改时间仍为 `2026-10-22T15:44:59Z`、最近检查为 `2026-10-23T14:54:08Z`，日志明确在 4 小时间隔内复用缓存，不能把源镜像时间当作已导入数据库的时间。OSS Index 仍因缺少凭据禁用。测试 XML、SBOM、扫描报告、两个工作流日志、汇总和完整 SHA-256 清单归档于 `.m2/ci-e47891d/`；后续验收脚本的更严格检查不改变本轮已核验的生产代码范围。
 

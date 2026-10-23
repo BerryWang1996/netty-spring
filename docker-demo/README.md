@@ -179,6 +179,15 @@ heap and 256 MiB maximum direct memory; the separate client gets 4 CPU cores and
 Docker needs headroom beyond those limits. Load projects are named
 `netty-spring-load-<timestamp>`, use a private Compose network, and expose no host ports.
 
+Readiness uses sequential `/netty/health` requests only during startup, within a 60-second
+deadline; polling stops at the first successful `UP` response. The runner disables Docker's
+periodic healthcheck, including any inherited image probe, and records the container's actual
+`Healthcheck.Test = ["NONE"]` in each round's `readiness.json`. This keeps probe requests out of
+measurement and recovery: management requests use the same handler permits as application work.
+Recovery still checks the **last** snapshot, requiring at least `permitLimit - 1` available
+permits (the status request itself holds one), zero sessions and an empty queue. It does not
+select a better earlier snapshot or relax the permit threshold for concurrent probes.
+
 Connections remain open with one request in flight per connection. Half use `/ws/test` and half
 use `/ws/json`; each message body is 1024 bytes with a unique connection/sequence token. JSON
 framing adds bytes around that body. Replies are checked individually, including JSON shape and

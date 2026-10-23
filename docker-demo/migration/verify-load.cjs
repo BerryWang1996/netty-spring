@@ -8,7 +8,49 @@ const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const root = path.resolve(__dirname, '../..');
-const args = process.argv.slice(2);
+
+// Startup probes end before any measurement; no timer keeps issuing HTTP work.
+async function waitForReadiness(probe, { timeoutMs = 60000, intervalMs = 500, now = Date.now, sleep = pause } = {}) {
+  const start = now(), deadline = start + timeoutMs;
+  const attempts = [];
+  while (now() < deadline) {
+    const commandTimeoutMs = Math.max(1, Math.min(3000, deadline - now()));
+    const attempt = { startedAt: new Date(now()).toISOString(), commandTimeoutMs, code: null, timedOut: null, healthStatus: null, ready: false };
+    try {
+      const response = await probe(commandTimeoutMs);
+      attempt.code = response.code;
+      attempt.timedOut = response.timedOut;
+      if (response.code === 0 && response.timedOut === false) {
+        attempt.healthStatus = JSON.parse(response.stdout).status;
+        attempt.ready = attempt.healthStatus === 'UP' && now() <= deadline;
+      }
+    } catch (error) { attempt.error = error.message; }
+    const finish = now();
+    attempt.finishedAt = new Date(finish).toISOString();
+    attempts.push(attempt);
+    if (attempt.ready) return { ready: true, timeoutMs, intervalMs, startedAt: new Date(start).toISOString(), finishedAt: attempt.finishedAt, elapsedMs: finish - start, attempts };
+    const remaining = deadline - now();
+    if (remaining <= 0) break;
+    await sleep(Math.min(intervalMs, remaining));
+  }
+  const finish = now();
+  return { ready: false, timeoutMs, intervalMs, startedAt: new Date(start).toISOString(), finishedAt: new Date(finish).toISOString(), elapsedMs: finish - start, attempts };
+}
+
+function verifyRecovery(recovery) {
+  const recovered = recovery.at(-1).status;
+  assert.equal(recovered.status, 'UP');
+  assert.equal(recovered.websocket.activeSessionCount, 0, 'sessions did not close');
+  assert.equal(recovered.handler.rejectedCount, 0, 'handler rejected load');
+  assert.equal(recovered.http.rejectedCount, 0, 'HTTP/handshake rejection');
+  assert.equal(recovered.http.writeFailureCount, 0, 'response write failure');
+  assert.equal(recovered.handler.executor.queueSize, 0, 'handler queue did not drain');
+  // The management request itself holds one handler permit while taking this snapshot.
+  assert.ok(recovered.handler.availablePermits >= recovered.handler.permitLimit - 1, 'handler permits leaked');
+  return recovered;
+}
+
+function main(args) {
 if (!args.includes('--run')) {
   console.log('Usage: node docker-demo/migration/verify-load.cjs --run --old-image IMAGE --new-image IMAGE [--connections 1024,8192] [--seconds 60] [--rounds 3] [--soak-seconds 600] [--workers 4]');
   process.exit(0);
@@ -23,7 +65,7 @@ const settings = {
   rounds: integer('rounds', 3, 1, 10), soakMs: integer('soak-seconds', 600, 0, 7200) * 1000,
   recoveryMs: integer('recovery-seconds', 20, 1, 120) * 1000, payloadBytes: 1024, drainMs: 30000,
   appCpus: 2, appMemoryMiB: 1536, heapMiB: 512, directMiB: 256, clientCpus: 4, clientImage: 'node:22-alpine',
-  checkStatusCounters: args.includes('--check-status-counters')
+  checkStatusCounters: args.includes('--check-status-counters'), readinessProtocol: 'bounded-health-readiness-v1'
 };
 settings.connections.forEach(n => assert.ok(Number.isInteger(n) && n >= settings.workers && n <= 25000, 'connection range'));
 const versions = {
@@ -151,7 +193,9 @@ async function execute(label, variant, connections, measureMs) {
         `actual=$$(unzip -p "$$jar" META-INF/maven/io.github.berrywang1996/demo-netty-web-spring-boot-starter/pom.properties | sed -n 's/^version=//p' | tr -d '\\r'); ` +
         `test "$$actual" = '${version.version}'; printf '%s  %s\\n' '${version.jarSha256}' "$$jar" | sha256sum -c -; java -version; ${java}`
       ],
-      healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8082/netty/health'], interval: '2s', timeout: '2s', retries: 30 }
+      // /netty/health uses the same handler permit pool as application traffic.
+      // Disable even an inherited image healthcheck so recovery has only its own status request.
+      healthcheck: { disable: true }
     },
     client: { image: settings.clientImageId, pull_policy: 'never', cpus: settings.clientCpus, mem_limit: '1536m', memswap_limit: '1536m', pids_limit: 128,
       ulimits: { nofile: { soft: 65536, hard: 65536 } }, working_dir: '/probe',
@@ -163,8 +207,19 @@ async function execute(label, variant, connections, measureMs) {
   const clientName = project + '-client';
   progress(`START ${label}: ${connections} connections, ${measureMs / 1000}s`);
   try {
-    await dc(['up', '-d', '--wait', '--wait-timeout', '60', 'app'], { timeout: 75000 });
+    await dc(['up', '-d', 'app'], { timeout: 75000 });
     const container = (await dc(['ps', '-q', 'app'])).stdout.trim();
+    assert.ok(container, 'application container missing');
+    const healthcheck = await docker(['inspect', '--format', '{{json .Config.Healthcheck}}', container]);
+    const readiness = { protocol: settings.readinessProtocol, requestTimeoutSeconds: 2,
+      healthcheckInspection: { containerId: container, inspectedAt: new Date().toISOString(), config: JSON.parse(healthcheck.stdout) } };
+    fs.writeFileSync(path.join(directory, 'readiness.json'), JSON.stringify(readiness));
+    assert.deepEqual(readiness.healthcheckInspection.config?.Test, ['NONE'], 'periodic image/Compose healthcheck is not disabled');
+    Object.assign(readiness, await waitForReadiness(timeout => dc(
+      ['exec', '-T', 'app', 'wget', '-T', '2', '-qO-', 'http://127.0.0.1:8082/netty/health'],
+      { timeout, allowFailure: true })));
+    fs.writeFileSync(path.join(directory, 'readiness.json'), JSON.stringify(readiness));
+    assert.equal(readiness.ready, true, 'application did not become UP within the bounded startup readiness window');
     sample = monitor(container);
     fs.writeFileSync(path.join(directory, 'status-before.json'), JSON.stringify(await appStatus()));
     const client = await dc(['run', '--name', clientName, '--rm', '--no-deps', 'client'], {
@@ -187,15 +242,7 @@ async function execute(label, variant, connections, measureMs) {
     const recovery = [];
     for (let i = 0; i < settings.recoveryMs; i += 5000) { recovery.push({ at: new Date().toISOString(), status: await appStatus() }); await pause(5000); }
     fs.writeFileSync(path.join(directory, 'recovery.json'), JSON.stringify(recovery));
-    const recovered = recovery.at(-1).status;
-    assert.equal(recovered.status, 'UP');
-    assert.equal(recovered.websocket.activeSessionCount, 0, 'sessions did not close');
-    assert.equal(recovered.handler.rejectedCount, 0, 'handler rejected load');
-    assert.equal(recovered.http.rejectedCount, 0, 'HTTP/handshake rejection');
-    assert.equal(recovered.http.writeFailureCount, 0, 'response write failure');
-    assert.equal(recovered.handler.executor.queueSize, 0, 'handler queue did not drain');
-    // The management request itself holds one handler permit while taking this snapshot.
-    assert.ok(recovered.handler.availablePermits >= recovered.handler.permitLimit - 1, 'handler permits leaked');
+    const recovered = verifyRecovery(recovery);
     if (variant === 'new' && settings.checkStatusCounters) {
       const counters = recovered.websocket.eventCounters;
       assert.equal(counters.handshakeTotal, connections);
@@ -264,3 +311,7 @@ run().catch(error => {
   save('summary.json', { complete: false, runId, project, settings, runs });
   console.error(error.stack); process.exitCode = 1;
 });
+}
+
+module.exports = { waitForReadiness, verifyRecovery };
+if (require.main === module) main(process.argv.slice(2));

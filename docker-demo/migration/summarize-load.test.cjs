@@ -61,7 +61,7 @@ function fixture(t) {
   const write = (name, value) => fs.writeFileSync(path.join(directory, name), typeof value === 'string' ? value : JSON.stringify(value));
   const change = (name, mutate) => { const value = JSON.parse(fs.readFileSync(path.join(directory, name), 'utf8')); mutate(value); write(name, value); };
   const settings = { connections: [8, 16], rounds: 1, workers: 1, measureMs: 60000, soakMs: 600000,
-    warmupMs: 1000, drainMs: 30000, payloadBytes: 1024, checkStatusCounters: false };
+    warmupMs: 1000, drainMs: 30000, payloadBytes: 1024, checkStatusCounters: false, readinessProtocol: 'bounded-health-readiness-v1' };
   const runs = [];
   for (const variant of ['old', 'new']) for (const connections of settings.connections) runs.push({
     label: `${connections}-${variant}-1`, variant, connections, measureMs: settings.measureMs });
@@ -78,6 +78,14 @@ function fixture(t) {
     const worker = { ...counts, index: 0, connected: run.connections, errors: [], measurementElapsedMs: run.measureMs,
       cpuMicros: { user: 1000, system: 500 }, ledger: Array.from({ length: run.connections }, () => ({ sent: 2, acked: 2 })) };
     write(run.label + '/input.json', input);
+    write(run.label + '/compose.json', { services: { app: { healthcheck: { disable: true } } } });
+    write(run.label + '/readiness.json', { protocol: settings.readinessProtocol, requestTimeoutSeconds: 2,
+      healthcheckInspection: { containerId: 'a'.repeat(64), inspectedAt: '2026-10-23T09:59:29.000Z', config: { Test: ['NONE'] } },
+      ready: true, timeoutMs: 60000, intervalMs: 500, startedAt: '2026-10-23T09:59:30.000Z', finishedAt: '2026-10-23T09:59:31.000Z', elapsedMs: 1000,
+      attempts: [
+        { startedAt: '2026-10-23T09:59:30.000Z', finishedAt: '2026-10-23T09:59:30.100Z', commandTimeoutMs: 3000, code: 1, timedOut: false, healthStatus: null, ready: false },
+        { startedAt: '2026-10-23T09:59:30.600Z', finishedAt: '2026-10-23T09:59:31.000Z', commandTimeoutMs: 3000, code: 0, timedOut: false, healthStatus: 'UP', ready: true }
+      ] });
     write(run.label + '/result.json', { valid: true, settings: input, ...counts, workers: [worker],
       ackPerSecond: run.connections * 1000 / run.measureMs, histogram: [run.connections, 0], histogramBucketMs: .1,
       latencyMsUpperBound: { p50: .1, p95: .1, p99: .1 } });
@@ -95,8 +103,48 @@ function fixture(t) {
 test('analyze accepts complete evidence with valid initialized GC logging and zero collections', t => {
   const f = fixture(t), a = analyze(f.directory);
   assert.equal(a.validation.allInstrumentedChecksPassed, true, JSON.stringify(a));
+  assert.equal(a.validation.readinessIsolationVerified, true);
+  assert.equal(a.analysisSchema, 'load-evidence-v2-readiness');
   assert.equal(a.runs[0].gc.pauseCount, 0); assert.equal(a.runs[0].gc.measurement.pauseCount, 0);
   assert.equal(a.runs.find(r => r.soak).resources.soakSegments.spanMs, 600000);
+});
+
+test('analyze rejects missing, periodic, overlapping, unbounded or failed readiness evidence', async t => {
+  const cases = {
+    'missing readiness': f => fs.unlinkSync(path.join(f.directory, 'soak-old/readiness.json')),
+    'missing compose disable': f => f.change('soak-old/compose.json', c => { delete c.services.app.healthcheck.disable; }),
+    'periodic container probe': f => f.change('soak-old/readiness.json', r => { r.healthcheckInspection.config.Test = ['CMD', 'wget', '/netty/health']; }),
+    'missing actual inspection': f => f.change('soak-old/readiness.json', r => { delete r.healthcheckInspection; }),
+    'overlapping serial attempts': f => f.change('soak-old/readiness.json', r => { r.attempts[1].startedAt = r.attempts[0].startedAt; }),
+    'probe after success': f => f.change('soak-old/readiness.json', r => { r.attempts[0].ready = true; }),
+    'raw UP outcome mislabeled unsuccessful': f => f.change('soak-old/readiness.json', r => { Object.assign(r.attempts[0], { code: 0, timedOut: false, healthStatus: 'UP', ready: false }); }),
+    'elapsed differs from timestamp window': f => f.change('soak-old/readiness.json', r => { r.elapsedMs += 1; }),
+    'failed final HTTP command': f => f.change('soak-old/readiness.json', r => { r.attempts.at(-1).code = 1; }),
+    'timed out final request': f => f.change('soak-old/readiness.json', r => { r.attempts.at(-1).timedOut = true; }),
+    'non-UP final response': f => f.change('soak-old/readiness.json', r => { r.attempts.at(-1).healthStatus = 'DOWN'; }),
+    'missing attempts': f => f.change('soak-old/readiness.json', r => { r.attempts = []; }),
+    'unbounded command': f => f.change('soak-old/readiness.json', r => { r.attempts[0].commandTimeoutMs = 300000; }),
+    'unbounded readiness deadline': f => f.change('soak-old/readiness.json', r => { r.timeoutMs = 600000; }),
+    'past bounded deadline': f => f.change('soak-old/readiness.json', r => { r.startedAt = '2026-10-23T09:58:00Z'; r.healthcheckInspection.inspectedAt = '2026-10-23T09:57:59Z'; r.elapsedMs = 91000; }),
+    'readiness at measurement start': f => f.change('soak-old/readiness.json', r => { r.finishedAt = new Date(measurementStart).toISOString(); r.attempts.at(-1).finishedAt = r.finishedAt; r.elapsedMs = 30000; }),
+    'invalid inspection timestamp': f => f.change('soak-old/readiness.json', r => { r.healthcheckInspection.inspectedAt = 'invalid'; }),
+    'historical settings lack gate': f => { for (const file of ['summary.json', 'environment.json']) f.change(file, r => { delete r.settings.readinessProtocol; }); }
+  };
+  for (const [name, mutate] of Object.entries(cases)) await t.test(name, t => {
+    const f = fixture(t); mutate(f);
+    const a = analyze(f.directory);
+    assert.equal(a.validation.allInstrumentedChecksPassed, false);
+    assert.equal(a.validation.readinessIsolationVerified, false);
+  });
+});
+
+test('readiness isolation does not relax the original final permit recovery threshold', t => {
+  const f = fixture(t);
+  f.change('soak-old/recovery.json', r => { r.at(-1).status.handler.availablePermits = 6; });
+  const a = analyze(f.directory);
+  assert.equal(a.validation.readinessIsolationVerified, true);
+  assert.equal(a.validation.allInstrumentedChecksPassed, false);
+  assert.equal(a.runs.find(r => r.label === 'soak-old').checks.find(c => c.name === 'recovery status and queues healthy').passed, false);
 });
 test('analyze rejects shortened soak and mismatched raw/input/manifest workload identity', async t => {
   const cases = {

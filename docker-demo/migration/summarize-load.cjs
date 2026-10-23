@@ -5,6 +5,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const ANALYSIS_SCHEMA = 'load-evidence-v2-readiness';
+const READINESS_PROTOCOL = 'bounded-health-readiness-v1';
 const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const mean = values => values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
@@ -124,6 +126,49 @@ function gcSummary(text, measurementStart, measureMs) {
       const t = Date.parse(p.at); return t >= measurementStart && t < measurementStart + measureMs;
     })) : null, pauses };
 }
+function readinessSummary(compose, readiness, measurementStart, protocol) {
+  const reasons = [];
+  const require = (condition, reason) => { if (!condition) reasons.push(reason); };
+  const utc = value => typeof value === 'string' && /T.*(?:Z|\+00:?00)$/.test(value)
+    && finite(Date.parse(value)) ? Date.parse(value) : null;
+  const start = utc(readiness?.startedAt), finish = utc(readiness?.finishedAt);
+  const inspection = readiness?.healthcheckInspection;
+  const inspected = utc(inspection?.inspectedAt);
+  require(protocol === READINESS_PROTOCOL && readiness?.protocol === READINESS_PROTOCOL, 'missing or unsupported readiness protocol');
+  require(compose?.services?.app?.healthcheck?.disable === true, 'Compose periodic healthcheck is not explicitly disabled');
+  require(typeof inspection?.containerId === 'string' && /^[0-9a-f]{64}$/.test(inspection.containerId)
+    && JSON.stringify(inspection?.config?.Test) === '["NONE"]', 'actual container healthcheck NONE inspection missing');
+  require(readiness?.timeoutMs === 60000 && readiness?.intervalMs === 500 && readiness?.requestTimeoutSeconds === 2,
+    'readiness request/deadline bounds differ from protocol');
+  require(readiness?.ready === true && start !== null && finish !== null && inspected !== null
+    && inspected <= start && finish >= start && finish - start <= 60000
+    && finite(readiness?.elapsedMs) && readiness.elapsedMs === finish - start && readiness.elapsedMs <= 60000,
+  'readiness did not finish UP within its bounded window');
+  require(finish !== null && finite(measurementStart) && finish < measurementStart, 'readiness overlaps or follows measurement');
+  const attempts = Array.isArray(readiness?.attempts) ? readiness.attempts : [];
+  require(attempts.length > 0 && attempts.length <= 121, 'readiness attempts missing or unbounded');
+  let previousFinish = start;
+  for (const [index, attempt] of attempts.entries()) {
+    const attemptStart = utc(attempt?.startedAt), attemptFinish = utc(attempt?.finishedAt);
+    require(attemptStart !== null && attemptFinish !== null && previousFinish !== null
+      && attemptStart >= previousFinish && attemptFinish >= attemptStart && start !== null
+      && finish !== null && attemptStart >= start && attemptFinish <= finish,
+    `readiness attempt ${index} is not serial or has invalid timestamps`);
+    require(Number.isInteger(attempt?.commandTimeoutMs) && attempt.commandTimeoutMs >= 1 && attempt.commandTimeoutMs <= 3000,
+      `readiness attempt ${index} has no bounded command timeout`);
+    require(typeof attempt?.ready === 'boolean' && (attempt?.code === null || Number.isInteger(attempt?.code))
+      && (attempt?.timedOut === null || typeof attempt?.timedOut === 'boolean'), `readiness attempt ${index} outcome is incomplete`);
+    if (index < attempts.length - 1) require(attempt?.ready === false
+      && !(attempt?.code === 0 && attempt?.timedOut === false && attempt?.healthStatus === 'UP'),
+    'readiness probes continued after success');
+    previousFinish = attemptFinish;
+  }
+  const last = attempts.at(-1);
+  require(last?.ready === true && last?.code === 0 && last?.timedOut === false && last?.healthStatus === 'UP'
+    && utc(last?.finishedAt) === finish && finish !== null, 'last readiness attempt is not a completed successful UP response');
+  return { protocol: readiness?.protocol ?? null, valid: reasons.length === 0, reasons, attempts: attempts.length,
+    containerId: inspection?.containerId ?? null, startedAt: readiness?.startedAt ?? null, finishedAt: readiness?.finishedAt ?? null };
+}
 function analyze(evidence) {
   const issues = [], inputs = {};
   function read(relative, fallback = null, required = true) {
@@ -146,7 +191,7 @@ function analyze(evidence) {
     }
   }
   const settings = summary.settings || environment.settings || {};
-  const settingsKeys = ['connections', 'rounds', 'workers', 'measureMs', 'soakMs', 'warmupMs', 'drainMs', 'payloadBytes'];
+  const settingsKeys = ['connections', 'rounds', 'workers', 'measureMs', 'soakMs', 'warmupMs', 'drainMs', 'payloadBytes', 'readinessProtocol'];
   if (!summary.settings || !environment.settings || settingsKeys.some(key =>
     JSON.stringify(summary.settings[key]) !== JSON.stringify(environment.settings[key]))) issues.push('Summary and environment workload settings differ or are missing.');
   const settingsValid = Array.isArray(settings.connections) && settings.connections.length > 0
@@ -154,6 +199,7 @@ function analyze(evidence) {
     && ['rounds', 'workers', 'measureMs', 'warmupMs', 'drainMs', 'payloadBytes'].every(k => Number.isInteger(settings[k]) && settings[k] > 0)
     && Number.isInteger(settings.soakMs) && settings.soakMs >= 0;
   if (!settingsValid) issues.push('Requested workload settings are invalid or incomplete.');
+  if (settings.readinessProtocol !== READINESS_PROTOCOL) issues.push('This analyzer requires bounded-health-readiness-v1 evidence. Historical results retain their original archived checker and do not satisfy the new isolation gate.');
   const expectedRuns = new Map();
   if (settingsValid) {
     for (const connections of settings.connections) for (let round = 1; round <= settings.rounds; round++) for (const variant of ['old', 'new']) {
@@ -168,6 +214,7 @@ function analyze(evidence) {
     const label = entry.label, result = read(label + '/result.json'), input = read(label + '/input.json'), rawResources = read(label + '/resources.json', []);
     const runCleanup = read(label + '/cleanup.json'), recovery = read(label + '/recovery.json', []);
     const stdout = read(label + '/client.stdout.jsonl', ''), gc = read(label + '/gc.log');
+    const compose = read(label + '/compose.json'), readiness = read(label + '/readiness.json');
     const checks = [], check = (name, passed) => checks.push({ name, passed: Boolean(passed) });
     const expected = expectedRuns.get(label), measureMs = expected?.measureMs ?? null;
     const row = { label, variant: expected?.variant ?? entry.variant, connections: expected?.connections ?? entry.connections, measureMs, soak: label.startsWith('soak-'), checks };
@@ -183,6 +230,8 @@ function analyze(evidence) {
     const phase = phaseEvents[0], phaseStart = phaseEvents.length === 1 && typeof phase.at === 'string'
       && /T.*(?:Z|\+00:?00)$/.test(phase.at) && finite(Date.parse(phase.at)) ? Date.parse(phase.at) : null;
     check('unique parseable client measurement phase matches connections', phaseStart !== null && phase.connections === row.connections);
+    row.readiness = readinessSummary(compose, readiness, phaseStart, settings.readinessProtocol);
+    check('bounded serial readiness completed before measurement with periodic probes disabled', row.readiness.valid);
     row.resources = summarizeResources(rawResources, measureMs, row.soak, phaseStart);
     if (!result) { check('raw client result present', false); runs.push(row); continue; }
     check('client result valid', result.valid === true);
@@ -262,13 +311,15 @@ function analyze(evidence) {
   const expectedLabels = [...expectedRuns.keys()];
   const matrixComplete = expectedLabels.length > 0 && expectedLabels.every(label => runs.some(r => r.label === label)) && runs.length === expectedLabels.length;
   const complete = summary.complete === true && cleanupVerified && matrixComplete && !issues.length && runs.every(r => r.checks.every(c => c.passed));
-  return { analyzedAt: new Date().toISOString(), evidence, inputFiles: inputs, issues, settings, artifacts: environment.versions,
+  return { analysisSchema: ANALYSIS_SCHEMA, analyzedAt: new Date().toISOString(), evidence, inputFiles: inputs, issues, settings, artifacts: environment.versions,
     environment: environment.host, docker: environment.docker,
     validation: { runnerComplete: summary.complete === true, requestedMatrixComplete: matrixComplete, cleanupVerified,
+      readinessIsolationVerified: runs.length > 0 && runs.every(r => r.readiness?.valid),
       allInstrumentedChecksPassed: complete, formalWorkloadRequested: [1024, 8192].every(n => (settings.connections || []).includes(n))
         && settings.rounds >= 3 && settings.measureMs >= 60000 && settings.soakMs >= 600000,
       quietWindowProvenByTheseFiles: false, gaCapacityGuarantee: false },
     definitions: {
+      readiness: 'Schema load-evidence-v2-readiness requires bounded-health-readiness-v1: explicit Compose healthcheck disable, actual container Test=[NONE], serial bounded startup probes ending in a successful UP response before measurement. Historical a35 evidence is not silently upgraded to this gate.',
       throughput: 'ACKs arriving inside each worker fixed measurement window / requested window seconds. Tail ACKs complete correctness but do not raise ACK/s.',
       latency: 'All ACKs for messages sent during measurement, including drain. Histogram bucket upper bounds (0.1 ms by default); overflow quantiles remain null.',
       comparison: 'Median and range of per-round metrics, never a pooled quantile. Null/overflow measurements are counted as unavailable, not zero.',
@@ -279,7 +330,7 @@ function analyze(evidence) {
 }
 const f = (value, digits = 2) => finite(value) ? value.toFixed(digits) : 'unavailable';
 function markdown(a) {
-  const lines = ['# Local load evidence analysis', '', `Evidence: \`${a.evidence}\``, '',
+  const lines = ['# Local load evidence analysis', '', `Evidence: \`${a.evidence}\``, '', `Analysis schema: \`${a.analysisSchema}\`. Startup probe isolation verified: **${a.validation.readinessIsolationVerified}**.`, '',
     `Runner complete: **${a.validation.runnerComplete}**. Requested matrix complete: **${a.validation.requestedMatrixComplete}**. Cleanup verified: **${a.validation.cleanupVerified}**. All instrumented evidence checks passed: **${a.validation.allInstrumentedChecksPassed}**.`, '',
     'These observations do not provide a GA capacity guarantee. A quiet host and deployment-specific load/SLI gates require separate evidence.', '',
     '## Per-connection-scale comparison', '',
@@ -318,7 +369,7 @@ function markdown(a) {
   lines.push('', '## Definitions and limits', '', ...Object.entries(a.definitions).map(([key, value]) => `- **${key}**: ${value}`), '');
   return lines.join('\n');
 }
-module.exports = { distribution, percentile, memoryMiB, parseResource, summarizeResources, gcSummary, analyze, markdown };
+module.exports = { distribution, percentile, memoryMiB, parseResource, summarizeResources, gcSummary, readinessSummary, analyze, markdown };
 if (require.main === module) {
   if (!process.argv[2]) { console.error('Usage: node docker-demo/migration/summarize-load.cjs PATH_TO_EVIDENCE'); process.exitCode = 2; }
   else {
