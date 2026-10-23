@@ -36,8 +36,8 @@ function memoryMiB(value) {
 }
 function parseResource(sample) {
   const reasons = [];
-  if (sample.stats?.code !== 0 || sample.stats?.timedOut) reasons.push('docker stats failed');
-  if (sample.process?.code !== 0 || sample.process?.timedOut) reasons.push('/proc sample failed');
+  if (sample.stats?.code !== 0 || sample.stats?.timedOut !== false) reasons.push('docker stats failed or timeout state unavailable');
+  if (sample.process?.code !== 0 || sample.process?.timedOut !== false) reasons.push('/proc sample failed or timeout state unavailable');
   if (sample.crossedPhase !== false || sample.endPhase !== sample.phase) reasons.push('crossed or unknown phase boundary');
   let stats;
   try { stats = JSON.parse(String(sample.stats?.stdout || '').replace(ANSI, '').trim()); }
@@ -62,39 +62,63 @@ function resourceSummary(samples) {
   return { samples: samples.length, cpuPercent: distribution(samples.map(s => s.cpuPercent)), rssMiB: distribution(samples.map(s => s.rssMiB)),
     threads: distribution(samples.map(s => s.threads)), dockerMemoryMiB: distribution(samples.map(s => s.dockerMemoryMiB)) };
 }
-function summarizeResources(raw, measureMs, soak) {
+function summarizeResources(raw, measureMs, soak, measurementStart = null) {
   const normalized = raw.map(parseResource), valid = normalized.filter(s => s.valid);
   const stages = {};
   for (const stage of new Set(normalized.map(s => s.phase))) {
     const all = normalized.filter(s => s.phase === stage);
     stages[stage] = { ...resourceSummary(all.filter(s => s.valid)), discarded: all.filter(s => !s.valid).length };
   }
-  const measured = valid.filter(s => s.phase === 'measure').sort((a, b) => a.midpointMs - b.midpointMs);
+  const measurementEnd = finite(measurementStart) && finite(measureMs) ? measurementStart + measureMs : null;
+  const measured = valid.filter(s => s.phase === 'measure' && finite(measurementStart)
+    && Date.parse(s.startedAt) >= measurementStart && Date.parse(s.at) <= measurementEnd)
+    .sort((a, b) => a.midpointMs - b.midpointMs);
+  if (stages.measure) stages.measure = { ...resourceSummary(measured), discarded: normalized.filter(s => s.phase === 'measure').length - measured.length };
   const required = measureMs >= 10000 ? Math.max(1, Math.floor(measureMs / 10000)) : 0;
+  const first = measured.length ? Date.parse(measured[0].startedAt) : null;
+  const last = measured.length ? Date.parse(measured.at(-1).at) : null;
+  const coverage = { start: finite(measurementStart) ? new Date(measurementStart).toISOString() : null,
+    end: finite(measurementEnd) ? new Date(measurementEnd).toISOString() : null, endpointToleranceMs: 15000,
+    firstSampleDelayMs: first === null ? null : first - measurementStart,
+    lastSampleGapMs: last === null ? null : measurementEnd - last,
+    largestSampleGapMs: measured.length ? Math.max(0, ...measured.slice(1).map((s, i) => Date.parse(s.startedAt) - Date.parse(measured[i].at))) : null,
+    sampledSpanMs: first === null ? null : last - first,
+    sampledSpanFraction: first === null ? null : (last - first) / measureMs,
+    endpointsCovered: first !== null && first - measurementStart <= 15000 && measurementEnd - last <= 15000 };
   const result = { rawCount: raw.length, validCount: valid.length, discardedCount: raw.length - valid.length,
     requiredMeasurementSamples: required, validMeasurementSamples: measured.length,
-    resourceEvidence: required > 0 && measured.length >= required, stages, normalized };
-  if (soak && measured.length) {
-    const begin = measured[0].midpointMs, end = measured.at(-1).midpointMs, third = (end - begin) / 3;
-    const first = measured.filter(s => s.midpointMs <= begin + third);
-    const last = measured.filter(s => s.midpointMs >= end - third);
-    result.soakSegments = { definition: 'First and last third of complete measurement sample midpoint timestamps; unweighted snapshots.',
-      first: resourceSummary(first), last: resourceSummary(last), spanMs: end - begin,
-      rssMeanDeltaMiB: mean(last.map(s => s.rssMiB)) - mean(first.map(s => s.rssMiB)),
-      cpuMeanDeltaPercentagePoints: mean(last.map(s => s.cpuPercent)) - mean(first.map(s => s.cpuPercent)) };
+    outsideMeasurementWindow: valid.filter(s => s.phase === 'measure').length - measured.length,
+    resourceEvidence: required > 0 && measured.length >= required && coverage.endpointsCovered
+      && coverage.largestSampleGapMs <= 15000, coverage, stages, normalized };
+  if (soak && finite(measurementStart)) {
+    const firstThird = measured.filter(s => s.midpointMs <= measurementStart + measureMs / 3);
+    const lastThird = measured.filter(s => s.midpointMs >= measurementEnd - measureMs / 3);
+    result.soakSegments = { definition: 'First and last third of the requested measurement window, anchored to the unique client measure phase UTC; unweighted complete snapshots.',
+      first: resourceSummary(firstThird), last: resourceSummary(lastThird), spanMs: measureMs,
+      rssMeanDeltaMiB: firstThird.length && lastThird.length ? mean(lastThird.map(s => s.rssMiB)) - mean(firstThird.map(s => s.rssMiB)) : null,
+      cpuMeanDeltaPercentagePoints: firstThird.length && lastThird.length ? mean(lastThird.map(s => s.cpuPercent)) - mean(firstThird.map(s => s.cpuPercent)) : null };
   }
   return result;
 }
 function gcSummary(text, measurementStart, measureMs) {
   const ids = new Set(), pauses = [];
+  let collectorHeader = false, initializationHeader = false;
   for (const line of text.split(/\r?\n/)) {
+    const record = /^\[([^\]]+)\]\[([\d.]+)s\]\[info\]\[([^\]]+)\]\s+(.+)$/.exec(line);
+    if (record && finite(Date.parse(record[1]))) {
+      if (record[3].trim() === 'gc' && /^Using \S/.test(record[4])) collectorHeader = true;
+      if (record[3].trim() === 'gc,init' && /^Version: \S/.test(record[4])) initializationHeader = true;
+    }
     const id = /\bGC\((\d+)\)/.exec(line); if (id) ids.add(Number(id[1]));
     const match = /^\[([^\]]+)\]\[([\d.]+)s\]\[\w+\]\[gc\s*\]\s+GC\((\d+)\)\s+(Pause .+?)\s+([\d.]+)ms\s*$/.exec(line);
     if (match) pauses.push({ at: match[1], uptimeSeconds: Number(match[2]), id: Number(match[3]), description: match[4], durationMs: Number(match[5]) });
   }
   const summarize = rows => ({ pauseCount: rows.length, pauseTotalMs: rows.reduce((sum, row) => sum + row.durationMs, 0),
     pauseMs: distribution(rows.map(p => p.durationMs)), fullPauseCount: rows.filter(p => /^Pause Full\b/.test(p.description)).length });
+  if (!collectorHeader || !initializationHeader) return { validLog: false, collectorHeader, initializationHeader,
+    uniqueGcIds: null, pauseCount: null, pauseTotalMs: null, pauseMs: distribution([]), fullPauseCount: null, measurement: null, pauses };
   return { scope: 'Whole JVM lifetime, including startup and recovery. Measurement subset uses client phase UTC timestamps.',
+    validLog: collectorHeader && initializationHeader, collectorHeader, initializationHeader,
     uniqueGcIds: ids.size, ...summarize(pauses),
     measurement: finite(measurementStart) ? summarize(pauses.filter(p => {
       const t = Date.parse(p.at); return t >= measurementStart && t < measurementStart + measureMs;
@@ -112,6 +136,7 @@ function analyze(evidence) {
   const summary = read('summary.json', {}), environment = read('environment.json', {}), cleanup = read('cleanup.json', {});
   const manifest = summary.runs || read('runs.json', []);
   const entries = new Map(manifest.map(run => [run.label, run]));
+  if (entries.size !== manifest.length) issues.push('Manifest contains duplicate run labels.');
   // Include unfinished/failed run directories omitted from the success manifest.
   for (const dir of fs.readdirSync(evidence, { withFileTypes: true }).filter(d => d.isDirectory())) {
     const inputFile = path.join(evidence, dir.name, 'input.json');
@@ -121,16 +146,44 @@ function analyze(evidence) {
     }
   }
   const settings = summary.settings || environment.settings || {};
+  const settingsKeys = ['connections', 'rounds', 'workers', 'measureMs', 'soakMs', 'warmupMs', 'drainMs', 'payloadBytes'];
+  if (!summary.settings || !environment.settings || settingsKeys.some(key =>
+    JSON.stringify(summary.settings[key]) !== JSON.stringify(environment.settings[key]))) issues.push('Summary and environment workload settings differ or are missing.');
+  const settingsValid = Array.isArray(settings.connections) && settings.connections.length > 0
+    && settings.connections.every(n => Number.isInteger(n) && n > 0) && new Set(settings.connections).size === settings.connections.length
+    && ['rounds', 'workers', 'measureMs', 'warmupMs', 'drainMs', 'payloadBytes'].every(k => Number.isInteger(settings[k]) && settings[k] > 0)
+    && Number.isInteger(settings.soakMs) && settings.soakMs >= 0;
+  if (!settingsValid) issues.push('Requested workload settings are invalid or incomplete.');
+  const expectedRuns = new Map();
+  if (settingsValid) {
+    for (const connections of settings.connections) for (let round = 1; round <= settings.rounds; round++) for (const variant of ['old', 'new']) {
+      expectedRuns.set(`${connections}-${variant}-${round}`, { variant, connections, measureMs: settings.measureMs });
+    }
+    if (settings.soakMs) for (const variant of ['old', 'new']) expectedRuns.set(`soak-${variant}`,
+      { variant, connections: Math.max(...settings.connections), measureMs: settings.soakMs });
+  }
   const runs = [];
   for (const entry of entries.values()) {
     assert.equal(path.basename(entry.label), entry.label, 'Run label must be a single directory name');
-    const label = entry.label, result = read(label + '/result.json'), rawResources = read(label + '/resources.json', []);
+    const label = entry.label, result = read(label + '/result.json'), input = read(label + '/input.json'), rawResources = read(label + '/resources.json', []);
     const runCleanup = read(label + '/cleanup.json'), recovery = read(label + '/recovery.json', []);
     const stdout = read(label + '/client.stdout.jsonl', ''), gc = read(label + '/gc.log');
     const checks = [], check = (name, passed) => checks.push({ name, passed: Boolean(passed) });
-    const measureMs = result?.settings?.measureMs || entry.measureMs;
-    const row = { label, variant: entry.variant, connections: entry.connections, measureMs, soak: label.startsWith('soak-'), checks };
-    row.resources = summarizeResources(rawResources, measureMs, row.soak);
+    const expected = expectedRuns.get(label), measureMs = expected?.measureMs ?? null;
+    const row = { label, variant: expected?.variant ?? entry.variant, connections: expected?.connections ?? entry.connections, measureMs, soak: label.startsWith('soak-'), checks };
+    check('manifest matches requested matrix parameters', expected && ['variant', 'connections', 'measureMs'].every(k => entry[k] === expected[k]));
+    const expectedInput = { runId: label, connections: expected?.connections, measureMs,
+      workers: settings.workers, warmupMs: settings.warmupMs, drainMs: settings.drainMs, payloadBytes: settings.payloadBytes };
+    check('input and raw result settings match requested run', expected && Object.entries(expectedInput)
+      .every(([key, value]) => input?.[key] === value && result?.settings?.[key] === value));
+    const phaseEvents = [];
+    for (const line of stdout.split(/\r?\n/)) {
+      try { const e = JSON.parse(line); if (e.phase === 'measure') phaseEvents.push(e); } catch {}
+    }
+    const phase = phaseEvents[0], phaseStart = phaseEvents.length === 1 && typeof phase.at === 'string'
+      && /T.*(?:Z|\+00:?00)$/.test(phase.at) && finite(Date.parse(phase.at)) ? Date.parse(phase.at) : null;
+    check('unique parseable client measurement phase matches connections', phaseStart !== null && phase.connections === row.connections);
+    row.resources = summarizeResources(rawResources, measureMs, row.soak, phaseStart);
     if (!result) { check('raw client result present', false); runs.push(row); continue; }
     check('client result valid', result.valid === true);
     const counters = ['sent', 'acked', 'inWindow', 'warmupSent', 'warmupAcked', 'duplicateOrCorrupt', 'disconnected', 'closeTimeouts', 'abnormalCloses'];
@@ -155,8 +208,9 @@ function analyze(evidence) {
     const workers = result.workers || [];
     check('worker counters sum to reported totals', counters.every(key => workers.every(w => Number.isInteger(w[key]))
       && workers.reduce((sum, w) => sum + w[key], 0) === result[key]));
-    check('all configured connections represented', workers.reduce((sum, w) => sum + w.connected, 0) === entry.connections);
-    check('all configured workers represented once', workers.length === result.settings.workers && new Set(workers.map(w => w.index)).size === workers.length);
+    check('all configured connections represented', workers.reduce((sum, w) => sum + w.connected, 0) === row.connections);
+    check('all configured workers represented once', workers.length === settings.workers && new Set(workers.map(w => w.index)).size === workers.length
+      && workers.every(w => Number.isInteger(w.index) && w.index >= 0 && w.index < settings.workers));
     check('all worker errors empty and sequence ledgers complete', workers.every(w => Array.isArray(w.errors) && !w.errors.length && Array.isArray(w.ledger)
       && w.ledger.length === w.connected && w.ledger.every(c => c.sent === c.acked)
       && w.ledger.reduce((sum, c) => sum + c.sent, 0) === w.sent + w.warmupSent));
@@ -168,12 +222,8 @@ function analyze(evidence) {
         drainElapsedMs: w.drainElapsedMs ?? null, drainCpuMicros: w.drainCpuMicros ?? null, eventLoopMs: w.eventLoopMs })) };
     row.workerCpu.totalPercent = row.workerCpu.workers.every(w => finite(w.percent)) ? row.workerCpu.workers.reduce((sum, w) => sum + w.percent, 0) : null;
     check('worker CPU denominators available', row.workerCpu.workers.every(w => finite(w.percent)));
-    let phaseStart = null;
-    for (const line of stdout.split(/\r?\n/)) {
-      try { const e = JSON.parse(line); if (e.phase === 'measure') { phaseStart = Date.parse(e.at); break; } } catch {}
-    }
     row.gc = gc === null ? null : gcSummary(gc, phaseStart, measureMs);
-    check('GC log available', gc !== null);
+    check('GC log has timestamped collector and initialization headers', row.gc?.validLog);
     row.recovery = recovery.at(-1)?.status || null;
     check('recovery status and queues healthy', row.recovery?.status === 'UP' && row.recovery?.websocket?.activeSessionCount === 0
       && row.recovery?.handler?.rejectedCount === 0 && row.recovery?.http?.rejectedCount === 0 && row.recovery?.http?.writeFailureCount === 0
@@ -209,9 +259,7 @@ function analyze(evidence) {
     comparisons.push(group);
   }
   const cleanupVerified = ['containers', 'networks'].every(key => cleanup[key]?.code === 0 && cleanup[key]?.timedOut === false && cleanup[key]?.stdout.trim() === '');
-  const expectedLabels = [];
-  for (const n of settings.connections || []) for (let round = 1; round <= (settings.rounds || 0); round++) for (const v of ['old', 'new']) expectedLabels.push(`${n}-${v}-${round}`);
-  if (settings.soakMs) expectedLabels.push('soak-old', 'soak-new');
+  const expectedLabels = [...expectedRuns.keys()];
   const matrixComplete = expectedLabels.length > 0 && expectedLabels.every(label => runs.some(r => r.label === label)) && runs.length === expectedLabels.length;
   const complete = summary.complete === true && cleanupVerified && matrixComplete && !issues.length && runs.every(r => r.checks.every(c => c.passed));
   return { analyzedAt: new Date().toISOString(), evidence, inputFiles: inputs, issues, settings, artifacts: environment.versions,
@@ -224,7 +272,7 @@ function analyze(evidence) {
       throughput: 'ACKs arriving inside each worker fixed measurement window / requested window seconds. Tail ACKs complete correctness but do not raise ACK/s.',
       latency: 'All ACKs for messages sent during measurement, including drain. Histogram bucket upper bounds (0.1 ms by default); overflow quantiles remain null.',
       comparison: 'Median and range of per-round metrics, never a pooled quantile. Null/overflow measurements are counted as unavailable, not zero.',
-      serverCpu: 'Unweighted arithmetic mean of complete Docker stats snapshots; 100% means one CPU core. Failed/cross-boundary samples are excluded and counted.',
+      serverCpu: 'Unweighted arithmetic mean of complete Docker stats snapshots; 100% means one CPU core. Failed/cross-boundary samples are excluded and counted. Measurement samples must lie inside the requested client UTC window and cover both endpoints within 15 seconds.',
       memory: 'RSS is /proc/1/status VmRSS. Docker MemUsage is a separate cgroup/cache-adjusted CLI measure. Neither is Java live heap.',
       limits: 'This local closed-loop workload has one outstanding message per connection. Client CPU, Docker virtualization and other host work can limit throughput. No automatic production SLI or capacity threshold is defined. Missing gates or uncontrolled conditions cannot establish GA capacity; soak resource growth alone neither proves nor disproves a leak.'
     }, comparisons, runs, cleanup };
@@ -249,6 +297,11 @@ function markdown(a) {
   }
   lines.push('', '## Resource stages and GC', '', '| Run / stage | Valid / discarded samples | CPU mean % | RSS mean / peak MiB | Threads min–max | Docker memory mean MiB |', '|---|---:|---:|---:|---:|---:|');
   for (const r of a.runs) for (const [stage, s] of Object.entries(r.resources.stages)) lines.push(`| ${r.label} / ${stage} | ${s.samples} / ${s.discarded} | ${f(s.cpuPercent.mean)} | ${f(s.rssMiB.mean)} / ${f(s.rssMiB.max)} | ${s.threads.min ?? '?'}–${s.threads.max ?? '?'} | ${f(s.dockerMemoryMiB.mean)} |`);
+  lines.push('', '| Run | Requested measurement seconds | Valid / required samples | First sample delay / last sample gap seconds | Observed resource span % | Endpoints covered |', '|---|---:|---:|---:|---:|---|');
+  for (const r of a.runs) {
+    const c = r.resources.coverage;
+    lines.push(`| ${r.label} | ${finite(r.measureMs) ? f(r.measureMs / 1000) : '?'} | ${r.resources.validMeasurementSamples} / ${r.resources.requiredMeasurementSamples} | ${finite(c.firstSampleDelayMs) ? f(c.firstSampleDelayMs / 1000) : '?'} / ${finite(c.lastSampleGapMs) ? f(c.lastSampleGapMs / 1000) : '?'} | ${finite(c.sampledSpanFraction) ? f(c.sampledSpanFraction * 100) : '?'} | ${c.endpointsCovered} |`);
+  }
   lines.push('', '| Run | Whole-process GC IDs / pauses / full pauses | Whole-process pause total / max ms | Measurement pause total ms |', '|---|---:|---:|---:|');
   for (const r of a.runs) lines.push(`| ${r.label} | ${r.gc?.uniqueGcIds ?? '?'} / ${r.gc?.pauseCount ?? '?'} / ${r.gc?.fullPauseCount ?? '?'} | ${f(r.gc?.pauseTotalMs)} / ${f(r.gc?.pauseMs.max)} | ${f(r.gc?.measurement?.pauseTotalMs)} |`);
   lines.push('', '## Sustained-run first and last thirds', '', '| Run | First / last samples | CPU mean first → last | RSS mean first → last MiB | RSS peak first → last MiB | Threads first → last |', '|---|---:|---:|---:|---:|---:|');

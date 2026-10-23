@@ -91,21 +91,34 @@ function monitor(container) {
   const interval = setInterval(sample, 5000); sample();
   return { setPhase(value) { phase = value; }, async stop() { stopped = true; clearInterval(interval); if (pending) await pending; return samples; } };
 }
-function verifyResourceEvidence(samples, measureMs) {
+function verifyResourceEvidence(samples, measureMs, measurementStart) {
   const valid = samples.filter(sample => {
-    if (sample.phase !== 'measure' || sample.crossedPhase || sample.stats.code !== 0 || sample.process.code !== 0) return false;
+    if (sample.phase !== 'measure' || sample.endPhase !== 'measure' || sample.crossedPhase !== false
+        || sample.stats.code !== 0 || sample.stats.timedOut !== false
+        || sample.process.code !== 0 || sample.process.timedOut !== false) return false;
     try {
       const stats = JSON.parse(sample.stats.stdout);
-      const cpu = Number(stats.CPUPerc.replace('%', ''));
+      const cpuText = /^([\d.]+)%$/.exec(String(stats.CPUPerc || '').trim());
+      const cpu = cpuText ? Number(cpuText[1]) : NaN;
       const rss = sample.process.stdout.match(/^VmRSS:\s+(\d+)\s+kB/m);
       const threads = sample.process.stdout.match(/^Threads:\s+(\d+)/m);
-      return Number.isFinite(cpu) && rss && Number(rss[1]) > 0 && threads && Number(threads[1]) > 0;
+      const start = Date.parse(sample.startedAt), end = Date.parse(sample.at);
+      return Number.isFinite(cpu) && cpu >= 0 && rss && Number(rss[1]) > 0 && threads && Number(threads[1]) > 0
+        && Number.isFinite(start) && Number.isFinite(end) && end >= start;
     } catch { return false; }
-  });
+  }).sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
   // Sub-10-second runs are functional probes and cannot establish resource behavior.
   const required = measureMs >= 10000 ? Math.max(1, Math.floor(measureMs / 10000)) : 0;
+  const coverage = valid.length && Number.isFinite(measurementStart) ? {
+    startLagMs: Date.parse(valid[0].startedAt) - measurementStart,
+    endLagMs: measurementStart + measureMs - Date.parse(valid.at(-1).at),
+    largestGapMs: Math.max(0, ...valid.slice(1).map((s, i) => Date.parse(s.startedAt) - Date.parse(valid[i].at)))
+  } : null;
+  const covered = coverage && coverage.startLagMs >= -5000 && coverage.startLagMs <= 15000
+    && coverage.endLagMs >= -5000 && coverage.endLagMs <= 15000 && coverage.largestGapMs <= 15000;
   return { validMeasurementSamples: valid.length, discardedSamples: samples.length - valid.length,
-    requiredMeasurementSamples: required, resourceEvidence: required > 0 && valid.length >= required };
+    requiredMeasurementSamples: required, coverage,
+    resourceEvidence: required > 0 && valid.length >= required && Boolean(covered) };
 }
 async function execute(label, variant, connections, measureMs) {
   const directory = path.join(output, label); fs.mkdirSync(directory);
@@ -146,7 +159,7 @@ async function execute(label, variant, connections, measureMs) {
       entrypoint: ['node'], command: ['/probe/load-client.cjs', '/evidence/input.json'] }
   } };
   fs.writeFileSync(composeFile, JSON.stringify(compose)); fs.writeFileSync(path.join(directory, 'compose.json'), JSON.stringify(compose));
-  let sample;
+  let sample, measurementStart;
   const clientName = project + '-client';
   progress(`START ${label}: ${connections} connections, ${measureMs / 1000}s`);
   try {
@@ -157,7 +170,11 @@ async function execute(label, variant, connections, measureMs) {
     const client = await dc(['run', '--name', clientName, '--rm', '--no-deps', 'client'], {
       timeout: settings.warmupMs + measureMs + settings.drainMs * 3 + 180000,
       onLine(line) {
-        try { const value = JSON.parse(line); if (value.phase) { sample.setPhase(value.phase); progress(`${label}: ${value.phase}`); } }
+        try {
+          const value = JSON.parse(line);
+          if (value.phase === 'measure') measurementStart = Date.parse(value.at);
+          if (value.phase) { sample.setPhase(value.phase); progress(`${label}: ${value.phase}`); }
+        }
         catch {}
       }
     });
@@ -189,10 +206,10 @@ async function execute(label, variant, connections, measureMs) {
     }
     const samples = await sample.stop(); sample = null;
     fs.writeFileSync(path.join(directory, 'resources.json'), JSON.stringify(samples));
-    const resourceEvidence = verifyResourceEvidence(samples, measureMs);
+    const resourceEvidence = verifyResourceEvidence(samples, measureMs, measurementStart);
     fs.writeFileSync(path.join(directory, 'resource-evidence.json'), JSON.stringify(resourceEvidence));
-    assert.ok(resourceEvidence.validMeasurementSamples >= resourceEvidence.requiredMeasurementSamples,
-      'insufficient valid measurement resource samples');
+    assert.ok(resourceEvidence.requiredMeasurementSamples === 0 || resourceEvidence.resourceEvidence,
+      'insufficient valid measurement resource samples or time coverage');
     runs.push({ label, variant, connections, measureMs, valid: true, resourceEvidence, sent: result.sent, acked: result.acked,
       ackPerSecond: result.ackPerSecond, latencyMsUpperBound: result.latencyMsUpperBound, directory });
     save('runs.json', runs); progress(`PASS ${label}: ${result.ackPerSecond.toFixed(1)} ACK/s, ${result.acked} checked replies`);

@@ -1,10 +1,10 @@
 # Release Notes — 2.0.0（开发中）
 
-更新时间：2026-10-23
+更新时间：2026-10-24
 
 ## 当前状态与范围
 
-**当前源码版本为 `2.0.0-SNAPSHOT`，尚未发布，不是 GA。** 已完成依赖与源码适配、JDK 17/21/25 全量运行矩阵、SBOM 和本地/远端依赖扫描；单机及 Redis Pub/Sub 双节点、1.10.1 HMAC 混部、节点重连和完整应用回滚 smoke 通过。本轮修复状态计数重复汇总，并补齐独立版本 JVM 的 Redis standalone 持久化、Redis Cluster 三主节点、NATS/JetStream 和 mesh 传输兼容演练。同机短时负载比较已有记录，其他未覆盖部署组合、持续及目标规模负载仍待验收；本页区分已测范围与剩余门禁，Maven Central 尚未提供 `2.0.0` 制品。
+**当前源码版本为 `2.0.0-SNAPSHOT`，尚未发布，不是 GA。** 已完成依赖与源码适配，候选提交 `e47891d` 的 JDK 17/21/25 全量运行矩阵、SBOM、依赖扫描及双节点 Docker smoke 均通过；单机、1.10.1 HMAC 混部、节点重连和完整应用回滚 smoke 亦通过。本轮修复状态计数重复汇总，并补齐独立版本 JVM 的 Redis standalone 持久化、Redis Cluster 三主节点、NATS/JetStream 和 mesh 传输兼容演练。四个视角的变更审查未发现迁移新增阻断，既有异常资源路径风险单列于下方；持续及目标规模负载仍待完成，Maven Central 尚未提供 `2.0.0` 制品。
 
 本页是本次实施结果、用户迁移差异和验证证据的唯一记录。执行顺序、剩余任务和验收门槛继续统一在[开发计划](development-plan.md)；发布操作沿用[发布清单](release-checklist.md)。本页不另建一套迁移计划。
 
@@ -113,28 +113,43 @@ Netty 4.2 的默认分配器由 `pooled` 改为 `adaptive`，客户端 TLS 默�
 
 Lettuce 7 默认开启 Redis Cluster 自适应拓扑刷新。本项目自动创建的 `RedisClusterClient` 已显式调用 `disableAllAdaptiveRefreshTriggers()`，并保持定期刷新关闭，保留 `1.10.1` 的拓扑固定策略，避免升级时自动改用容器或 NAT 后不可达的节点公告地址。该配置不是对所有 Redis 部署的通用建议；应用自定义 `RedisClusterClient` 时仍需自行配置可达地址、拓扑刷新及故障恢复策略，并进行演练。[Lettuce 7.0 发布说明](https://github.com/redis/lettuce/releases/tag/7.0.0.RELEASE)
 
+<a id="upgrade-rollback"></a>
+
 ## 用户升级与完整应用回滚
 
-以下是针对当前已识别差异的预发布操作说明。项目实施任务和完成条件只维护在[开发计划](development-plan.md)；正式支持范围以本页最终记录的实测结果为准。
+以下界定本次 Boot 4.1 纯迁移的验收范围，不代表 GA 已完成。同版本功能回归与跨版本部署验证分别记录：694 项是全 reactor 的单测、真实中间件、装配与 E2E 测试总数，不是 694 项完整应用混部测试。现有单机、Redis、NATS/JetStream、mesh 能力及可选功能继续按既有支持组合使用；缺少某条跨版本混部证据不等于删除该同版本能力。
 
-1. 保存可启动的完整 `1.10.1` 应用制品或镜像、依赖锁定信息、配置和所用中间件数据备份，记录自定义 mapper、codec、SPI、TLS、Redis/NATS 模式与可靠投递设置。先确认旧应用能够重新部署。
-2. 在隔离环境同步升级应用的 Boot/BOM、netty-spring 和相关第三方 starter。清理应用自身的 Spring 5、Netty 4.1、旧日志绑定及 Jackson 2 覆盖，检查完整依赖树；调整 Jakarta、health 和 mapper API 后重新编译、打包整个应用。不能仅替换一个 netty-spring jar。
-3. 使用实际配置验证 HTTP、WebSocket、JSON/加密消息、健康与指标，再验证所用 broker/registry、跨节点投递、离线数据、可靠重放和中间件重连。核对 TLS 证书及内存指标，保存结果和配置组合。
-4. 仅对已经实际完成 `1.10.1` / `2.0.0` 混部演练的部署模式安排滚动切换。单机、Redis standalone、Redis Cluster、NATS/JetStream、mesh 的结果不能相互替代；尚无证据的模式按整体切换或维护窗口设计，当前不承诺零停机升级。
-5. 回滚时停止新版本接流量，恢复完整旧应用镜像或制品、依赖和对应配置，核对旧版能否读取升级期间写入的数据及可靠投递状态，再恢复流量。若数据不兼容，按已演练的数据恢复方案处理并说明可能丢失的更新；不要只降一个 jar，也不要以清空共享数据代替回滚。重放仍按既有 at-least-once 语义处理重复。
+| 部署范围 | 同版本与跨版本证据 | 升级方式与保留数据回滚范围 |
+|---|---|---|
+| 单机 HTTP / MVC / WebSocket | 同版本回归及完整应用 smoke 通过，包括已测 crypto/auth/TLS 配置 | 整体切换、恢复完整旧应用；内存会话由客户端重连，不承诺会话迁移 |
+| Redis standalone 普通 Pub/Sub，附加功能关闭；HMAC 关闭或 strict 同密钥 | 完整应用旧新、双新、双旧及节点重建演练通过 | 可按已演练方式逐节点滚动升级/回退，保留同一 Redis；不是零停机，Pub/Sub 在途消息仍为 at-most-once |
+| Redis standalone 的 reliable / offline 等附加功能 | 同版本功能回归通过；跨版实测 Streams backlog/未 ACK 重放、离线 API/锁/TTL，未测浏览器上线回填及 room/presence 混部 | 完整应用整体切换；已验证旧 classpath 读取新版 Streams/离线数据，保留队列、consumer group/pending 和命名空间，不扩大为所有功能滚动兼容 |
+| Redis Cluster 普通 Pub/Sub + registry/heartbeat/reaper | 同版本客户端回归；跨版三主节点状态读写、消息及完整旧 classpath 回退通过 | 完整应用整体切换，保留同一集群；已测旧版读取新版注册状态。room/reliable/offline/presence 仍不支持，启用时的拒绝已验证 |
+| NATS Core + Redis registry（mixed） | 同版本装配及真实中间件回归；跨版 Core 传输/重启恢复已测 | 完整应用整体切换，保留 Redis；Core 无 backlog。启用 reliable 时仍使用 Redis Streams，数据回退范围见对应行 |
+| all-NATS KV registry + 可选 JetStream reliable | 同版本 KV/JetStream 及配置选型回归通过；跨版只验证 Core/JetStream 传输与 durable backlog，不含 KV 状态连续性 | 整体切换；保留 stream/durable consumer，已测旧版读取新版 backlog。需要延续活动 KV 状态的回退须在应用预发布环境补证，不能据 JetStream 结果推导 |
+| mesh + standalone Redis | 同版本实际 TCP、装配及 interest-routing 回归；跨版传输/framing/HMAC 已测，不含 interest/room/presence 混部 | 整体切换，保留 Redis，由重新连接重建会话/路由；mesh 本身无 backlog，附加持久化路径按对应 Redis 数据契约处理 |
+
+Sentinel、自定义 SPI 及未列出的配置没有本轮完整应用混部证据，使用整体切换并验证应用自身的数据恢复方案。本次不新增 failover、resharding 或全部可选配置组合的跨版本保证；详细实测样本与覆盖限制见下方记录。
+
+1. **准备完整应用与数据基线。** 保存可启动的 `1.10.1` 制品/镜像、完整依赖、配置和中间件一致性备份；记录自定义 mapper/codec/SPI、TLS、数据 prefix/URI、用户身份解析及 durable consumer/nodeId。保持中间件版本和拓扑不变，避免与 Boot 迁移同时切换。
+2. **重建并预验新应用。** 同步升级 Boot/BOM、netty-spring 和第三方 starter；处理前述 Jakarta、health、Jackson 与 `-parameters` 差异，清理冲突覆盖，重新编译和打包整个应用。用实际配置验证启动、HTTP/WebSocket、健康/指标以及所用消息和持久化路径；记录版本、配置、序号与 ACK 结果。
+3. **按矩阵切换。** 已演练的基础 Redis Pub/Sub/HMAC 模式逐节点摘流、drain、停止旧节点、启动新节点并验证双向消息，再处理下一节点。其余模式安排维护窗口，停止新连接和消息写入，drain 并停止全部旧应用，再启动新应用。活动节点 ID 不得冲突；同一 durable 订阅恢复时保持稳定 nodeId/consumer、URI/prefix、用户身份规则与 HMAC 密钥。
+4. **验证后恢复流量。** 确认健康、客户端重连、消息序号和适用的 backlog/pending/ACK 状态，再开放流量。保留 Redis/NATS 数据，不删除 stream、consumer group、bucket 或共享键；控制切换时间在消息保留窗口和 TTL 内。Pub/Sub/Core/mesh 停机窗口无补发保证，可靠路径仍按 at-least-once 处理重复。
+5. **完整回退。** 先停止新版接流量和写入，按上述滚动或整体方式恢复完整旧应用、依赖及对应配置，保留中间件数据，核对矩阵所列的数据读取/重放范围后再接流量。对未验证的数据状态先在预发布环境补证；如果新版已接受写入，不能直接覆盖旧备份并称为无损回滚，须先核对和处理这些更新。应用会话及路由通过重新连接恢复，不以清空共享数据代替回退。
 
 ## 验证记录
 
 | 检查 | 当前结果 |
 |---|---|
 | 源码版本 | `2.0.0-SNAPSHOT`；开发分支 `codex/2.0.0-spring-boot-4.1` |
+| 当前候选远端验证 | `e47891d` 的 [CI 39983448870](https://github.com/BerryWang1996/netty-spring/actions/runs/39983448870) 成功：JDK 17/21/25 各 120 份 XML、694 tests / 0 failures / 0 errors / 0 skipped，共 2,082 次测试；SBOM、Dependency Scan 成功。[Docker smoke 39983456618](https://github.com/BerryWang1996/netty-spring/actions/runs/39983456618) 的双向投递与该提交的 7 项 Node.js 断言测试通过 |
 | Reactor 编译 / 打包 | 11 个模块编译、打包成功，demo fat jar 已用于真实运行验证 |
 | JSON 契约测试 | 新增 17 项全部通过：JsonMessage 4、MVC 输出 3、HTTP 绑定 3、跨节点 codec 3、crypto 3、WebSocket 未知字段 1 |
-| 本地全量 `clean verify` | JDK 17.0.11：11 模块成功，120 份 Surefire 报告，694 tests / 0 failures / 0 errors / 0 skipped；2026-10-23 23:39 CST 完成，包含 Logback 1.6.5 和状态计数去重修复。日志与汇总保存在 `.m2/verification-200-status-fix/`；远端既有 689 项结果仍按对应提交单列 |
+| 本地全量 `clean verify` | JDK 17.0.11：11 模块成功，120 份 Surefire 报告，694 tests / 0 failures / 0 errors / 0 skipped；2026-10-23 23:39 CST 完成，包含 Logback 1.6.5 和状态计数去重修复。日志与汇总保存在 `.m2/verification-200-status-fix/` |
 | 自动配置发现 / 可选依赖 / MIME | 8 项新增真实发现测试、2 项 MIME 测试通过；另有 3 项真实 javac 参数元数据、4 项请求体解析和 4 项 allocator 指标回归 |
 | 依赖一致性 / SBOM | CycloneDX JSON/XML 已生成；根版本 `2.0.0-SNAPSHOT`、64 个组件，同坐标无多版本；未见 Spring 5、Netty 4.1 或 Jackson 2 core/databind 残留，详见下方证据 |
 | 漏洞扫描 | Logback core/classic 成对升级 `1.6.5` 后，clean 构建及 Dependency-Check `12.2.2` 复扫成功，CVSS 7.0 门禁通过；38 条聚合依赖记录、工具报告 0 条漏洞告警、0 条抑制、无 analysisExceptions；人工补充的 2 条 Logback 中危已通过该版本修复，OSS Index 未启用，详见[扫描证据与覆盖限制](#dependency-scan-evidence) |
-| JDK 17 / 21 / 25 与远端 CI | 源码与依赖提交 `2c2d61a` 的[完整 CI](https://github.com/BerryWang1996/netty-spring/actions/runs/39974771937)通过：每个 JDK 均 119 份 XML、689 tests / 0 failures / 0 errors / 0 skipped，共 2,067 次测试；SBOM、Dependency Scan 均成功。[双节点 Docker smoke](https://github.com/BerryWang1996/netty-spring/actions/runs/39974779070)双向投递通过 |
+| 变更审查 | 功能、资源、API/装配、安全四个视角均未发现本次迁移新增阻断；资源审查记录了 3 处既有静态风险，见下文。持续负载结果和最终 GA 制品门禁另行核验，不以源码读审代替 |
 | 单机、双节点与真实中间件 | 单机普通/crypto/auth 16 项及 TLS/gzip/分片 8 项通过；2.0.0 双节点 Redis Pub/Sub 双向 JSON 广播通过；集群模块 336 项真实中间件/单测全部通过，无跳过 |
 | 1.10.1 混部及完整应用回滚 | 基础三阶段及最终依赖上的 6 阶段 HMAC strict 演练通过：旧新双向、重建新节点后重连、错密钥拒绝/恢复、双新、完整双旧回滚；Redis 容器与验证数据保留，覆盖边界见下方 |
 | Redis standalone / Cluster / NATS / JetStream / mesh 跨版本 | 最终验收制品的 Redis 持久化 9 阶段、Redis Cluster 7 阶段、传输 70 组全部通过；双版本 JVM、实际中间件、积压顺序/ACK/回滚、协议及清理证据见下方，不能扩大为所有部署组合已验收 |
@@ -142,6 +157,8 @@ Lettuce 7 默认开启 Redis Cluster 自适应拓扑刷新。本项目自动创�
 | 内存 / 延迟 / 资源回收 | allocator 指标已适配并新增汇总、去重和未知值测试；同机 64 连接、旧新各 3 轮短时比较已记录，客户端序号核对无丢失/重复；持续/目标规模负载及泄漏结论仍待验证 |
 | Sources / Javadoc / 签名 | 本地 SNAPSHOT release profile 严格复验通过，34 份制品的签名均通过指定 fingerprint 的 `VALIDSIG` 校验；6 个含源码模块的 sources 与实际 Java 文件数一致，Javadoc 均有 HTML。最终 GA 版本仍须重新构建、签名和上传 |
 | GA 标签 / Maven Central | 未执行，未发布 |
+
+**资源审查边界：** 对照 `master` / `v1.10.1` 发现三处既有异常路径静态风险：`WebMappingSupporter` 调用线程池 `shutdownNow` 丢弃排队任务时未执行任务的 `finally`，可能遗留 retain/permit；`MeshBroker.start` 绑定失败时未清理刚创建的 event loop groups；mesh 出站连接的 `sync` 被 `InterruptedException` 中断后，未恢复中断标志或关闭仍待完成的连接 future。这三处并非本次迁移引入，本轮尚未实际复现；正常生命周期、重连和负载检查不覆盖这些强制失败边界，不能据此宣称所有异常路径无泄漏。已在[开发计划的候选工作](development-plan.md#21-候选工作)单列，先专项复现再作为独立缺陷修复，不扩大本次纯迁移的性能门禁。
 
 首次 release profile 检查触发跨模块 Javadoc offline link 探测，对无 Java 源的 starter 递归调用 Maven 时出现 JVM 初始化错误；旧配置 `failOnError=false` 随后忽略链接错误并输出 `BUILD SUCCESS`。现已设为 `failOnError=true`，并按 [Maven Javadoc 官方说明](https://maven.apache.org/plugins/maven-javadoc-plugin/examples/links-configuration.html) 用 `detectOfflineLinks=false` 关闭模块间自动离线链接，避免独立 Central 文档指向未发布的 reactor 路径。2026-10-23 23:51 CST 严格复验成功、日志无 `[ERROR]`，34 份制品及 34 份签名、清单和日志归档于 `.m2/release-artifacts-200-snapshot/`。6 个含源码模块的 Java 文件数分别为 26/30/26/69/8/5，sources 内容逐模块匹配，Javadoc HTML 数分别为 102/85/85/207/25/19；3 个依赖聚合 starter 无 Java 源，因此不生成 sources、Javadoc 为空包，沿用 1.10 已发布规则。`doclint=none` 仍保留，因此此次严格复验不等于所有注释 lint 或 warning 清零，也不替代最终 GA 制品的重新签名、上传和 Central 验证。
 
@@ -173,7 +190,7 @@ Lettuce 7 默认开启 Redis Cluster 自适应拓扑刷新。本项目自动创�
 
 协议检查确认 v2 envelope 的 9 字段、`H1:` HMAC-SHA256 包装、JSON 无二次编码，以及 mesh 的 4 字节大端长度前缀；拆包、粘包正向投递和错误 HMAC、未来版本 `99`、超过 8,192 字节上限的负向检查均实际执行。未来版本负向用例在同一 TCP 流后发送有效帧并等待其到达，再检查拒绝结果；可靠重放检查实际事件顺序及 ACK 状态。两套脚本将异常 worker 退出或清理/清单查询失败计为失败；本轮自建容器和网络已清理，传输演练的 6 个端口均可重新绑定。
 
-**覆盖边界：** Redis standalone harness 调用公开持久化 API，`LocalSender` 记录本地投递边界，未验证真实浏览器上线触发回填；其 TTL 结论限于离线 key、条目年龄和 drain lock。Redis Cluster harness 注册实际版本的配置类并绑定属性，未运行 HTTP/WebSocket 服务；三主节点无副本，未测试 failover、resharding 或浏览器连接。JetStream 本轮覆盖尚未消费的 durable backlog，未覆盖回调处理中强杀后的未 ACK 重投。Mesh 本轮验证传输及 framing，未覆盖跨版本 interest/room/presence；all-NATS KV 自动装配亦未覆盖。这些 harness 不替代完整应用部署、持续容量或生产 SLI 验收，阶段 5 整体门禁保持未完成。
+**覆盖边界：** Redis standalone harness 调用公开持久化 API，`LocalSender` 记录本地投递边界，未验证真实浏览器上线触发回填；其 TTL 结论限于离线 key、条目年龄和 drain lock。Redis Cluster harness 注册实际版本的配置类并绑定属性，未运行 HTTP/WebSocket 服务；三主节点无副本，未测试 failover、resharding 或浏览器连接。JetStream 本轮覆盖尚未消费的 durable backlog，未覆盖回调处理中强杀后的未 ACK 重投。Mesh 本轮验证传输及 framing，未覆盖跨版本 interest/room/presence；all-NATS KV 跨版本自动装配亦未覆盖。这些 harness 支撑上方矩阵的协议/状态兼容范围，不替代完整应用混部、持续容量或生产 SLI 验收；持续负载下的资源/性能和最终发布门禁仍单独保留。
 
 ### 同机短时负载比较（2026-10-23）
 
@@ -223,6 +240,10 @@ NVD 使用 [Dependency-Check 官方镜像](https://dependency-check.github.io/De
 
 本轮最终 clean 构建证据已复制到忽略目录 `.m2/scan-2.0.0-logback165/`，包括扫描 JSON/HTML/SARIF、`dependency-scan-2.0.0-logback165-clean.log`、SBOM JSON/XML、镜像输入、官方告警记录和含实际 jar 校验的汇总，避免后续 `clean` 删除。扫描 JSON 的 SHA-256 为 `035a74ed0e37b660650bf9839de7639004af5dde6f2c8fb62a658454be85af52`；SBOM JSON 的 SHA-256 为 `e9d3445841416ab11b1e440a2249499b3b762ddec36222dff2a3ed0687ff258b`。升级前证据另保留于 `.m2/scan-2.0.0/`。
 
-远端 [CI 39974771937](https://github.com/BerryWang1996/netty-spring/actions/runs/39974771937) 验证源码提交 `2c2d61a732ead13a12f071b54d294e1eac77c25b`，Maven Wrapper 为 `3.9.9`。已下载三份测试报告，XML 记录的 Temurin 版本分别为 `17.0.20.1+1`、`21.0.12.1+1-LTS`、`25.0.4.1+1-LTS`；每个均 689 项全执行通过。远端 SBOM（`15:07:58Z`）的 64 个组件坐标和版本与本地最终 SBOM 一致；扫描（`15:08:19Z`）同为 38 条顶层/27 条相关依赖、0 漏洞/0 抑制/0 分析异常。镜像新鲜度检查记录年龄 23.4 小时并通过门禁，随后复用缓存，OSS Index 同样未启用。五份 artifact、job 日志及独立汇总保存在 `.m2/ci-2c2d61a/`；CI 页面保留远端上传件。
+最新远端 [CI 39983448870](https://github.com/BerryWang1996/netty-spring/actions/runs/39983448870) 验证提交 `e47891d3fe96a18f59360d724cfe3d04f17c19e9`，三份 XML 汇总确认 JDK `17.0.20.1`、`21.0.12.1`、`25.0.4.1` 各 694 项、120 份报告，零失败/错误/跳过。SBOM 时间为 `2026-10-23T16:08:11Z`，64 个组件坐标和版本与此前 `2c2d61a` 完全一致；Dependency-Check `12.2.2` 报告时间为 `2026-10-23T16:08:35.695558148Z`，38 条顶层与 27 条相关依赖，0 漏洞/0 抑制/0 分析异常。上述 UTC 时间对应北京时间 10 月 24 日。
+
+该轮 NVD 源镜像新鲜度检查记录 `lastModifiedDate=2026-10-23T15:35:14Z`、年龄 0.5 小时并通过门禁；实际扫描报告的数据修改时间仍为 `2026-10-22T15:44:59Z`、最近检查为 `2026-10-23T14:54:08Z`，日志明确在 4 小时间隔内复用缓存，不能把源镜像时间当作已导入数据库的时间。OSS Index 仍因缺少凭据禁用。测试 XML、SBOM、扫描报告、两个工作流日志、汇总和完整 SHA-256 清单归档于 `.m2/ci-e47891d/`；后续验收脚本的更严格检查不改变本轮已核验的生产代码范围。
+
+历史对照：`2c2d61a` 的[上一轮 CI](https://github.com/BerryWang1996/netty-spring/actions/runs/39974771937)为每个 JDK 689 项/119 份报告，其证据保留在 `.m2/ci-2c2d61a/`，不与本轮 694 项混记。
 
 后续证据直接更新本页，不新增平行迁移报告。确认支持的模式须写明版本、配置、实际运行结果和未覆盖项；出现失败或跳过时保留事实，按[开发计划](development-plan.md)推进剩余验收。
