@@ -57,7 +57,7 @@ public final class WebSocketEventStats {
      * @param handshakeTotal                  total handshake attempts
      * @param handshakeSuccess                successful handshakes
      * @param handshakeRejectedByInterceptor  handshakes rejected by the interceptor
-     * @param messagesReceived                total inbound messages
+     * @param messagesReceived                inbound frames, including Ping, Pong and Close, accepted by a resolver
      * @param messagesSent                    total outbound messages
      * @param totalCloses                     total session close events
      * @param closesByReason                  close counts broken down by {@link CloseReason}
@@ -102,7 +102,7 @@ public final class WebSocketEventStats {
         return handshakeRejectedByInterceptor;
     }
 
-    /** @return total inbound messages received */
+    /** @return inbound frames received, including control frames that pass the resolver's session and size checks */
     public long getMessagesReceived() {
         return messagesReceived;
     }

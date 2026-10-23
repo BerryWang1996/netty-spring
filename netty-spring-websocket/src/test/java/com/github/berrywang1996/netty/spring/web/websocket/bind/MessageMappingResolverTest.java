@@ -252,6 +252,8 @@ class MessageMappingResolverTest {
         methods.put(MessageType.ON_CONNECTED, method(endpoint, "onConnected", HttpRequest.class, MessageSession.class));
         methods.put(MessageType.ON_CLOSE, method(endpoint, "onClose", CloseWebSocketFrame.class, MessageSession.class));
         MessageMappingResolver resolver = new MessageMappingResolver("/ws/test", methods, endpoint);
+        WebSocketEventRecorder recorder = new WebSocketEventRecorder();
+        resolver.setEventRecorder(recorder);
         TestChannel testChannel = new TestChannel();
         FullHttpRequest request = websocketRequest("/ws/test");
 
@@ -265,6 +267,7 @@ class MessageMappingResolverTest {
         PingWebSocketFrame pingFrame = new PingWebSocketFrame(Unpooled.copiedBuffer("ping", CharsetUtil.UTF_8));
         resolver.resolve(testChannel.ctx, pingFrame);
         pingFrame.release();
+        assertEquals(1L, recorder.getStats().getMessagesReceived(), "Ping counts as an inbound frame");
         Object pong = testChannel.channel.readOutbound();
         try {
             assertTrue(pong instanceof PongWebSocketFrame);
@@ -276,11 +279,13 @@ class MessageMappingResolverTest {
         PongWebSocketFrame inboundPong = new PongWebSocketFrame();
         resolver.resolve(testChannel.ctx, inboundPong);
         inboundPong.release();
+        assertEquals(2L, recorder.getStats().getMessagesReceived(), "Pong counts as an inbound frame");
         assertNull(testChannel.channel.readOutbound());
 
         CloseWebSocketFrame closeFrame = new CloseWebSocketFrame(1000, "bye");
         resolver.resolve(testChannel.ctx, closeFrame);
         closeFrame.release();
+        assertEquals(3L, resolver.getEventCounters().get("messagesReceived"), "Close counts as an inbound frame");
         Object closeResponse = testChannel.channel.readOutbound();
         try {
             assertTrue(closeResponse instanceof CloseWebSocketFrame);

@@ -104,7 +104,11 @@ public final class WebSocketEventRecorder {
 
     // ---- Message events ----
 
-    /** Records an inbound WebSocket message (any frame type). */
+    /**
+     * Records an inbound WebSocket frame, including Ping, Pong and Close.
+     * Called after the resolver's session and frame-size checks, before dispatch;
+     * it does not count only successful business-message callbacks.
+     */
     public void recordMessageReceived() {
         increment(messagesReceived);
     }

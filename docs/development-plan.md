@@ -49,7 +49,7 @@ Jakarta 改名只处理 Jakarta EE API；目前源码的直接迁移落点是 ac
 
 ## 分阶段迁移步骤
 
-按阶段顺序推进；阶段 2–4 可因编译依赖交叉实现，部署演练可提前暴露兼容问题，未完成门禁继续保留。当前已完成核心适配、本地回归、远端 JDK 17/21/25、Redis Pub/Sub/HMAC 混部与回滚，以及同机短时负载比较；下一重点为其他跨版本恢复组合、持续及目标规模负载。详细数字只以迁移说明为准；RC 标签只对通过对应门禁、可运行的切片建立。
+按阶段顺序推进；阶段 2–4 可因编译依赖交叉实现，部署演练可提前暴露兼容问题，未完成门禁继续保留。当前已完成核心适配、本地回归、远端 JDK 17/21/25、状态计数去重、Redis Pub/Sub/HMAC 混部与回滚，以及独立版本 JVM 的 Redis standalone 持久化、Redis Cluster 三主节点、NATS/JetStream 和 mesh 传输兼容演练；同机短时负载比较已有记录。下一重点为尚未覆盖的部署组合、持续及目标规模负载。详细数字和各轮源码范围只以迁移说明为准；RC 标签只对通过对应门禁、可运行的切片建立。
 
 ### 阶段 1：锁定基线与依赖方案
 
@@ -77,7 +77,7 @@ Jakarta 改名只处理 Jakarta EE API；目前源码的直接迁移落点是 ac
 - [x] 处理 mapper 构建/配置和异常 API，回归日期、枚举、空值、未知字段、Map/POJO/JsonNode 及二进制消息。
 - [x] 列出暴露 Jackson 类型的构造器、getter/setter、扩展点的前后签名，补自定义 mapper 的用户迁移示例。
 - [x] 用 `1.10.1` 固定样本验证 HTTP JSON、WebSocket JSON、本地/跨节点投递、crypto JSON；确认 `J:` 消息无二次 JSON 编码，错误回退语义一致。
-- [ ] 保留 envelope、HMAC、离线队列和 mesh 帧格式约束；若序列化默认差异不能消除，明确影响并修订迁移/混部方案。
+- [x] 保留 envelope、HMAC、离线队列和 mesh 帧格式约束：真实跨版本验证 v2 envelope、HMAC strict、持久化 JSON 及 Redis ID、mesh 长度前缀/拆包/粘包；错误 HMAC、未来版本和超长帧负向检查通过。此项确认已测格式，不替代阶段 5 的完整部署组合验收。
 
 **验收：**项目 JSON 路径适配 Jackson 3，消息契约回归通过，公开 Java API 变化均有替换方式。Boot 的兼容默认值开关不自动作用于源码中手工创建的 mapper，不能代替这些验证。改包与兼容策略参见 [Spring 官方 Jackson 3 说明](https://spring.io/blog/2025/10/07/introducing-jackson-3-support-in-spring/)。
 
@@ -88,7 +88,7 @@ Jakarta 改名只处理 Jakarta EE API；目前源码的直接迁移落点是 ac
 - [x] 在同版本测试中验证广播/单播/远程关闭、自投递抑制、房间、用户、离线、presence、HMAC、MDC trace 及可靠投递。
 - [x] 运行既有中断、重连、DEGRADED/RESYNC、下线和资源回收测试；显式保持原 Lettuce 刷新策略。跨版本恢复验证仍见阶段 5。
 - [ ] 同机器、负载和配置下比较旧版与迁移版连接数、吞吐、延迟、线程/内存及丢失/重复计数：64 连接、旧新各 3 轮短时比较已完成，未见明显端到端退化；客户端可能限制吞吐，持续及目标规模负载仍待验收。
-- [ ] 处置演练中确认的既有 `/netty/status` 共享 event recorder 重复汇总问题，并明确 received 包含控制帧的语义；在此之前不将该总数作为业务消息无丢失/重复的证明。
+- [x] 修复 `/netty/status` 共享 event recorder 重复汇总：按 recorder 实例去重，独立 recorder/自定义普通 Map 仍累加，会话数逐 URI 汇总；新增回归与真实 8 连接精确计数通过。received 保持包含控制帧，业务消息丢失/重复继续以客户端序号核对。
 
 **验收：**既有支持组合通过真实中间件测试，Netty 版本统一，关键资源无泄漏，协议语义无意外变化；性能结论附复现条件，不从依赖升级推导容量提升。
 
@@ -96,8 +96,8 @@ Jakarta 改名只处理 Jakarta EE API；目前源码的直接迁移落点是 ac
 
 - [x] CI 运行 Boot 4.1.2 × JDK 17/21/25，编译基线仍为 17；全 reactor、自动装配隔离和 demo smoke 通过，集成测试在有 Docker 的环境执行。
 - [x] demo 完成 YAML 启动、HTTP、WebSocket、crypto/auth profile、health/status smoke；默认 registry 实际指标绑定测试通过；双节点 + LB + Redis 双向 JSON smoke 通过。
-- [ ] 已通过 Redis Pub/Sub 双向 JSON、HMAC strict 正向/错密钥拒绝及节点重建后重连混部；继续补适用传输组合的可靠重放、离线数据读取和恢复，不能将已有 smoke 扩展为未测保证。
-- [ ] 已完成双新节点恢复完整 1.10.1 镜像，并保留 Redis 容器/验证数据，基础及 HMAC strict 路径通过；其他承诺组合仍待演练。不宣称零停机滚动升级。
+- [ ] 已通过 Redis Pub/Sub/HMAC 混部及重连；新增 Redis standalone 可靠积压/未 ACK 重放、离线读取/锁与 TTL，以及 NATS/JetStream/mesh 双向传输与重连演练。Redis Cluster 三主节点的注册、心跳/reaper、HMAC Pub/Sub 和不支持功能拒绝已跨版本验证；未覆盖副本/故障转移及其他承诺组合。独立 harness 不替代完整应用部署或浏览器上线回填验证。
+- [ ] 已完成双新节点恢复完整 1.10.1 镜像，另以完整旧版依赖 classpath 读取新版写入的 Redis standalone 持久数据、Redis Cluster 注册状态和 JetStream durable backlog；保留同一中间件和验证数据。其他承诺组合仍待演练，不宣称零停机滚动升级。
 - [ ] 汇总测试数、跳过原因、依赖树、协议样本、性能比较和演练结果；缺外部环境的用例仍是未完成门禁。
 
 **验收：**每个宣称支持的 JDK、starter 和部署模式均有证据，已知差异、支持矩阵与回滚限制明确。

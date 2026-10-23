@@ -278,6 +278,10 @@ public abstract class AbstractMappingResolver<T, K> {
      * module-specific metrics. The returned map is consumed by the management
      * endpoint and {@link WebSocketRuntimeStats}.
      *
+     * <p>Plain maps are treated as independent counters and summed per resolver.
+     * Return an {@link EventCounterSnapshot} when multiple resolvers expose the
+     * same complete counter set from a shared source, so it is counted only once.
+     *
      * @return an unmodifiable map of counter names to values, or an empty map
      * @since V1.3.0
      */

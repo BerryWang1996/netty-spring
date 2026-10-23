@@ -19,6 +19,7 @@ package com.github.berrywang1996.netty.spring.web.websocket.bind;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
+import com.github.berrywang1996.netty.spring.web.context.EventCounterSnapshot;
 import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitter;
 import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitterAware;
 import com.github.berrywang1996.netty.spring.web.handler.ServiceHandler;
@@ -991,13 +992,17 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
      * {@inheritDoc}
      *
      * <p>Returns a snapshot of WebSocket event counters including handshake totals,
-     * message counts, and close-reason breakdowns.
+     * message counts, and close-reason breakdowns. The recorder identity accompanies
+     * the snapshot so shared counters are aggregated once across URI mappings.
+     * {@code messagesReceived} includes data and control frames (Ping, Pong, Close)
+     * reaching this resolver after the session and frame-size checks.
      *
      * @return an unmodifiable map of counter names to their current values
      */
     @Override
     public Map<String, Object> getEventCounters() {
-        WebSocketEventStats stats = eventRecorder.getStats();
+        WebSocketEventRecorder recorder = this.eventRecorder;
+        WebSocketEventStats stats = recorder.getStats();
         Map<String, Object> counters = new java.util.LinkedHashMap<>();
         counters.put("handshakeTotal", stats.getHandshakeTotal());
         counters.put("handshakeSuccess", stats.getHandshakeSuccess());
@@ -1012,7 +1017,7 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             }
         }
         counters.put("closesByReason", closesByReason);
-        return Collections.unmodifiableMap(counters);
+        return new EventCounterSnapshot(recorder, counters);
     }
 
     /**

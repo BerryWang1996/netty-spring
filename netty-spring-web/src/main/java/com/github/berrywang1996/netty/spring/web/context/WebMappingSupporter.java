@@ -29,7 +29,9 @@ import org.springframework.util.PathMatcher;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.SynchronousQueue;
@@ -365,6 +367,7 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
 
     /**
      * Returns a snapshot of WebSocket runtime statistics aggregated across all WebSocket resolvers.
+     * Shared event counter sources are included once; session counts are summed for every resolver.
      *
      * @return the current {@link WebSocketRuntimeStats}, or an empty instance if no WebSocket resolvers exist
      */
@@ -375,11 +378,18 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
         }
         int activeSessionCount = 0;
         Map<String, Object> aggregatedEventCounters = null;
+        Set<Object> counterSources = Collections.newSetFromMap(new IdentityHashMap<>());
         // Aggregate session counts and event counters across all WebSocket resolvers
         for (AbstractMappingResolver resolver : this.webSocketMappingResolverMap.values()) {
             activeSessionCount += Math.max(0, resolver.getActiveSessionCount());
             Map<String, Object> resolverCounters = resolver.getEventCounters();
             if (!resolverCounters.isEmpty()) {
+                if (resolverCounters instanceof EventCounterSnapshot) {
+                    Object source = ((EventCounterSnapshot) resolverCounters).getSource();
+                    if (source != null && !counterSources.add(source)) {
+                        continue;
+                    }
+                }
                 if (aggregatedEventCounters == null) {
                     // First resolver — use its counters as the base (shallow copy to avoid mutation)
                     aggregatedEventCounters = new java.util.LinkedHashMap<>(resolverCounters);

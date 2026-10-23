@@ -48,6 +48,9 @@ jobs:
         working-directory: docker-demo
         run: npm install
 
+      - name: Verify migration load assertions
+        run: node --test docker-demo/migration/*.test.cjs
+
       - name: Start the cluster demo stack
         run: docker compose -f docker-demo/docker-compose.yml up -d --build
 

@@ -323,7 +323,10 @@
                         <configuration>
                             <!-- Be lenient about old-style Javadoc; project mixes Chinese + English comments -->
                             <doclint>none</doclint>
-                            <failOnError>false</failOnError>
+                            <failOnError>true</failOnError>
+                            <!-- Standalone Central jars must not link to unpublished reactor paths or
+                                 recursively invoke Maven for dependency-only starters without Java sources. -->
+                            <detectOfflineLinks>false</detectOfflineLinks>
                             <source>${java.version}</source>
                             <encoding>${project.build.sourceEncoding}</encoding>
                             <docencoding>${project.build.sourceEncoding}</docencoding>

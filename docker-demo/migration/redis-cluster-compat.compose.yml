@@ -1,0 +1,13 @@
+name: netty-spring-redis-cluster-compat-200
+x-redis: &redis
+  image: redis:7-alpine
+  command: ["redis-server", "--cluster-enabled", "yes", "--cluster-node-timeout", "2000", "--appendonly", "yes", "--appendfsync", "always"]
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 1s
+    timeout: 2s
+    retries: 30
+services:
+  redis-a: *redis
+  redis-b: *redis
+  redis-c: *redis

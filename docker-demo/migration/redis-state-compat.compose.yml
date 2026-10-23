@@ -1,0 +1,12 @@
+name: netty-spring-state-compat-200
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:16386:6379"
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "always"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 2s
+      retries: 30

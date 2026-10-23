@@ -4,7 +4,9 @@ import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupPrope
 import io.netty.channel.ChannelHandlerContext;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.util.Collections;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
@@ -18,6 +20,55 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WebMappingSupporterTest {
+
+    @Test
+    void customCounterMapsRemainIndependentEvenWhenTheMapsAreShared() throws Exception {
+        Map<String, Object> counters = Map.of("messagesReceived", 2L,
+                "closesByReason", Map.of("client_close", 1L));
+        Map<String, AbstractMappingResolver> resolvers = Map.of(
+                "/one", new CounterResolver(counters, 1),
+                "/two", new CounterResolver(counters, 2),
+                "/three", new CounterResolver(counters, 3));
+
+        WebSocketRuntimeStats stats = aggregateCounters(resolvers);
+
+        assertEquals(3, stats.getMappingCount());
+        assertEquals(6, stats.getActiveSessionCount());
+        assertEquals(6L, stats.getEventCounters().get("messagesReceived"));
+        assertEquals(Map.of("client_close", 3L), stats.getEventCounters().get("closesByReason"));
+    }
+
+    @Test
+    void sharedCounterSourcesUseIdentityAndDoNotDeduplicateSessionCounts() throws Exception {
+        Object firstSource = new String("equal-but-independent");
+        Object secondSource = new String("equal-but-independent");
+        Map<String, Object> counters = Map.of("messagesReceived", 2L);
+        Map<String, AbstractMappingResolver> resolvers = Map.of(
+                "/one", new CounterResolver(new EventCounterSnapshot(firstSource, counters), 1),
+                "/two", new CounterResolver(new EventCounterSnapshot(firstSource, counters), 2),
+                "/three", new CounterResolver(new EventCounterSnapshot(secondSource, counters), 3));
+
+        WebSocketRuntimeStats stats = aggregateCounters(resolvers);
+
+        assertEquals(3, stats.getMappingCount());
+        assertEquals(6, stats.getActiveSessionCount());
+        assertEquals(4L, stats.getEventCounters().get("messagesReceived"));
+    }
+
+    private static WebSocketRuntimeStats aggregateCounters(Map<String, AbstractMappingResolver> resolvers)
+            throws ReflectiveOperationException {
+        WebMappingSupporter supporter = new WebMappingSupporter(new NettyServerStartupProperties(),
+                null, resolvers, null, null);
+        try {
+            // Core has no WebSocket module to discover; supply its resolver subset explicitly.
+            Field field = WebMappingSupporter.class.getDeclaredField("webSocketMappingResolverMap");
+            field.setAccessible(true);
+            field.set(supporter, resolvers);
+            return supporter.getWebSocketRuntimeStats();
+        } finally {
+            supporter.shutdown();
+        }
+    }
 
     @Test
     void submitHandleRejectsImmediatelyWhenPermitIsUnavailable() throws Exception {
@@ -243,6 +294,35 @@ class WebMappingSupporterTest {
             Thread.sleep(10L);
         }
         assertEquals(expectedPermits, semaphore.availablePermits());
+    }
+
+    private static final class CounterResolver extends AbstractMappingResolver<Object, String> {
+        private final Map<String, Object> counters;
+        private final int sessions;
+
+        private CounterResolver(Map<String, Object> counters, int sessions) {
+            super("/test", Collections.emptyMap(), new Object());
+            this.counters = counters;
+            this.sessions = sessions;
+        }
+
+        @Override
+        public Map<String, Object> getEventCounters() {
+            return counters;
+        }
+
+        @Override
+        public int getActiveSessionCount() {
+            return sessions;
+        }
+
+        @Override
+        public void resolve(ChannelHandlerContext ctx, Object msg) {
+        }
+
+        @Override
+        public void removeSession(String sessionId) {
+        }
     }
 
     private static final class RecordingResolver extends AbstractMappingResolver<Object, String> {

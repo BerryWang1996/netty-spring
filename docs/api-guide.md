@@ -1085,6 +1085,10 @@ Add `spring-boot-starter-actuator` to your dependencies. Netty metrics are autom
 - `netty.websocket.broadcast.fanout` (DistributionSummary, sessions per broadcast) — *since V1.7.0*
 - `netty.websocket.handler.latency` (Timer) — *since V1.7.0*
 
+`netty.websocket.messages.received` and the status snapshot's `messagesReceived` count inbound frames that reach a resolver and pass its session and frame-size checks, including **Ping, Pong and Close**. Counting happens before handler dispatch, so these counters are not a measure of successful business-message callbacks. Fragments may already have been combined by the pipeline's frame aggregator.
+
+The status snapshot counts a shared event recorder once even when several URI mappings use it; independent recorders are summed. Mapping and active-session counts remain per-URI totals. Custom resolvers returning ordinary counter maps retain per-resolver aggregation; they can return `EventCounterSnapshot` with a shared source identity when exposing the same complete counter set.
+
 Distribution metrics (duration / size / fanout / latency) are routed to every bound `MeterRegistry`, so they work correctly alongside a `CompositeMeterRegistry` or multiple registries.
 
 **Cluster metrics** — *since V1.9.0* (requires cluster mode `server.netty.websocket.cluster.enable=true` with `micrometer-core` on the classpath; registered by `NettyClusterMeterBinder`):

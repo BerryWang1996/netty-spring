@@ -6,6 +6,7 @@ import java.util.Map;
 /**
  * Runtime snapshot for websocket mappings exposed through the lightweight status endpoint.
  * Since V1.3.0, includes aggregated event counters from all resolver instances.
+ * Shared recorder snapshots are counted once; independent counters are summed.
  *
  * @author berrywang1996
  * @since V1.0.0
@@ -74,6 +75,8 @@ public final class WebSocketRuntimeStats {
     /**
      * Returns aggregated event counters. Empty map if no resolvers are active
      * or event recording is disabled.
+     * {@code messagesReceived} includes control frames (Ping, Pong and Close)
+     * that pass the resolver's session and frame-size checks, as well as data frames.
      *
      * @return an unmodifiable map of counter names to values, or an empty map
      * @since V1.3.0
