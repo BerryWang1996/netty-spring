@@ -1,9 +1,17 @@
 # netty-spring — Promotion Playbook
 
-Updated 2026-10-23. This is the single promotion plan; product scope and sequencing live in the
+Updated 2026-10-24. This is the single promotion plan; product scope and sequencing live in the
 [development plan](development-plan.md). The useful distribution decisions from the August research
 are incorporated here. Historical star counts, competitor rankings, and speculative adoption figures
 are not current evidence and must be checked again before any public comparison.
+
+**Draft status:** the materials below target the **2.0.0 candidate / Spring Boot 4.1.2 / JDK 17**.
+Maven Central availability is pending confirmation. No external publication, submission, or promotion
+has been performed for this candidate. On 2026-10-24, the six Java blocks in the EN/ZH tutorials and
+two existing answers passed local compilation and eight single-node/two-node Redis scenarios using
+the frozen GA candidate's extracted libraries. SO fragments used explicit application DTO/service/target
+scaffolding. Independent Maven consumer resolution from Central remains pending; this local check
+does not validate every proposed scouting answer or every optional feature described in the articles.
 
 ## Positioning and audience
 
@@ -18,26 +26,30 @@ console, or a turnkey IM product.
 Every tutorial and launch post must include the operating limits: roughly ≤10 nodes for active
 Redis Pub/Sub broadcast, at-most-once cross-node delivery by default, and mesh fan-out reduction
 only when live audiences are distributed across a subset of nodes. Global or high-population topics
-under random load balancing can still reach the whole fleet. Published benchmark numbers must link
-to the method and reproduction commands in the README.
+under random load balancing can still reach the whole fleet. Published benchmark numbers must identify
+the tested version, method, configuration, and reproduction commands. Do not present 1.x measurements
+as 2.0.0 capacity or promise lossless local delivery during backpressure, shutdown, or connection failure.
 
 ## Release gates and sequence
 
-### Before 2.0.0
+### Candidate preparation
 
-1. Finish the 1.10.1 patch release. Its publication status and verification evidence live only in
-   [the release notes](release-notes-1.10.1.md). Cluster tutorials and Answer 2 must not be published
-   as usable examples until the 1.10.1 artifacts are available from Maven Central.
+1. Keep historical 1.10.1 publication evidence in [its release notes](release-notes-1.10.1.md).
+   The current drafts use 2.0.0; confirm its Central artifacts and final gates in the
+   [2.0.0 release notes](release-notes-2.0.0.md) before presenting them as released examples.
 2. Keep existing proof assets easy to find from the README, API guide, FAQ, and site. Reuse the
    checked-in chat application and Docker demo instead of building another demo from scratch.
 3. Review repository topics (`spring-boot`, `netty`, `websocket`, `spring-boot-starter`, `realtime`,
    `cluster`), About description, and site link. Confirm remote state before marking these done.
-4. Keep 1.x platform limits explicit. Prepare content while the main development effort completes
-   the Spring Boot 4.1 migration described in the development plan.
+4. Keep the candidate baseline explicit: Boot 4.1.2, JDK 17, handler compilation with `-parameters`,
+   and the application BOM security overrides in the migration notes. Preserve delivery and deployment
+   limits; all promotion remains draft preparation while final release validation proceeds.
 
 ### At the 2.0.0 GA window
 
-1. Update both tutorials and dependency examples to the released Boot 4.1 line, then reproduce them.
+1. After Central availability and independent consumer dependency verification, update candidate status to released in the
+   existing tutorials, answers, diagram, and submission text. Link the actual release evidence;
+   keep external publication status separate.
 2. Publish the English tutorial on dev.to and the Chinese tutorial on 掘金/CSDN; link the runnable demo.
 3. Submit relevant Awesome list entries and share the tutorial in Java/Spring communities.
 4. Schedule Reddit and a single Show HN launch when the maintainer can respond to questions.
@@ -56,9 +68,9 @@ that it has been published, submitted, or accepted externally.
 | Chat application | Present: [demo module](../demo-netty-web-spring-boot-starter/) | Optional standalone packaging after 2.0.0 |
 | Architecture diagram | Present: [architecture.svg](assets/architecture.svg) | Keep platform labels aligned with the release |
 | FAQ | Present: [FAQ](faq.md) | Review with each release |
-| English / Chinese tutorials | Drafts: [EN](tutorials/tutorial-en-clustered-websocket.md), [中文](tutorials/tutorial-zh-clustered-websocket.md) | Publication not recorded; obey the release gate |
-| Stack Overflow answers | [Two drafts](so-answer-drafts.md) and [question scouting](so-question-scouting.md) | Publication not recorded; disclose authorship |
-| Awesome list submissions | [Submission material](awesome-list-submissions.md) | Verify each submission/acceptance separately |
+| English / Chinese tutorials | 2.0.0 candidate drafts: [EN](tutorials/tutorial-en-clustered-websocket.md), [中文](tutorials/tutorial-zh-clustered-websocket.md); Java handlers checked locally in single-node/two-node modes | Not published; Central consumer check pending |
+| Stack Overflow answers | Two [draft answers](so-answer-drafts.md) have locally checked core Java fragments; [question scouting](so-question-scouting.md) still needs per-question implementation/verification | Not published; Central consumer check pending; disclose authorship |
+| Awesome list submissions | Candidate [submission material](awesome-list-submissions.md); remote rules/state need rechecking | Not submitted; verify each submission/acceptance separately |
 | Repository topics / About | Requires remote verification | Apply and record only after checking |
 
 ## Comparisons and Chinese content

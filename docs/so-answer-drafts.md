@@ -1,22 +1,18 @@
 # Stack Overflow 回答草稿（待你用自己的账号发布）
 
-> 状态：2026-08-03 起草，所有 API 签名/配置项/命令均已对照 1.10.0 代码树逐条核实；
-> 同日对抗性核实后修订 4 处措辞（BinaryMessage 绑定目标、跨节点"往返"→单向投递、两处语气）。
-> 发布的是**你的 SO 账号**（我这边没有也不应该有你的 SO 凭据）。
->
-> Answer 2 的发布门槛与验证状态统一见 [1.10.1 发布说明](release-notes-1.10.1.md)。
-> Maven Central 可用性确认前，不得照其依赖示例采用或发布 Answer 2。Answer 1 使用单机
-> WebSocket starter，不受这项集群发布门槛影响。
+> 状态：2026-10-24 更新为 **2.0.0 发布候选 / Spring Boot 4.1.2 / JDK 17** 草稿；两篇均未对外发表。Java 片段已在补齐文中省略的 DTO、服务与目标变量后，以冻结候选依赖通过单机/双节点 Redis 本地验证；独立消费者的 Central 依赖解析仍待完成。
+> 两篇依赖示例均须等待 [2.0.0 发布说明](release-notes-2.0.0.md)确认 Maven Central 可用，当前仅可先安装候选源码后本地测试。
+> handler 必须以 `-parameters` 编译；Maven Compiler 配置 `<release>17</release>`、`<parameters>true</parameters>`，并按迁移说明保留应用 BOM 中 Jackson、SnakeYAML、成对 Logback 的安全覆盖。
+> 题目热度、回答数和原始 API 核查来自 2026-08 历史快照；发布前复查当前问题与代码，不将这些数据视为当前事实。
 
 ## 发布须知（先读）
 
 1. **披露声明已内置在每篇草稿里**（"Full disclosure: I'm the author..."）。SO 的自我推广规则要求披露利益关系，删掉会有封号风险，不要删。
-2. **两篇不要同一天发**。先发 Q1（0 回答、竞争小，且不受 1.10.1 门槛约束）；Q2 等 1.10.1
-   发布后再发（见 Answer 2 检查清单第 1 条）。
+2. 两篇都先等待 Central 确认和独立消费者依赖解析，再根据问题当前状态与回答价值选择是否发表；不因完成本地验证而记录已发布。
 3. 回答以解决问题为主、库为辅——即使读者不用这个库，前半部分也应对他有用。不要加更多链接（每篇最多 2-3 个，已是最小集）。
 4. 发布后**盯评论**：有人指出 API 细节错误就立刻更正（响应速度是单人维护库最强的信任信号）。
 5. 不要用任何小号点赞（SO 有投票欺诈检测，会连坐封号）。
-6. 草稿里所有代码都按真实签名构造，但发布前建议你把示例在 demo 模块里跑一遍做最后确认。
+6. 本地复验覆盖两篇核心 Java 片段的真实装配、广播与定向发送；应用业务代码由夹具补齐，不等于所有代码块可独立复制运行。发布前仍须核对 Central 取得的 2.0.0 制品和应用实际依赖。
 
 ---
 
@@ -24,14 +20,14 @@
 
 - **链接**: https://stackoverflow.com/questions/42901062
 - **标题**: Spring websockets without STOMP and SockJs but with message broker and routing support
-- **数据**: 2017 年提问，score 8，2,381 views，**0 answers**（至今无人回答）
+- **数据（2026-08 快照）**: 2017 年提问，score 8，2,381 views，**0 answers**；当前状态待复查。
 - **提问者要什么**: 专有协议跑在标准 Text WebSocket 上（不能上 STOMP/SockJS），但要 Spring 的
   DI、每会话处理、以及"把一个端点收到的消息转发到另一端点的多个客户端"这种 broker/路由能力。
   他已试过 javax.websocket（太 hacky、没 DI）和 Spring `@MessageMapping`（被 STOMP 绑死）。
 
 ### 草稿正文（SO Markdown，直接粘贴）
 
-```
+````markdown
 Two honest parts to this answer: what Spring itself can and cannot do here, and an alternative if it can't.
 
 ## What Spring proper offers
@@ -92,7 +88,7 @@ If you *do* want JSON binding instead of raw text, declare the parameter as your
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-websocket-spring-boot-starter</artifactId>
-    <version>1.10.0</version>
+    <version>2.0.0</version>
 </dependency>
 ```
 
@@ -103,12 +99,14 @@ new WebSocket("ws://host:8080/trade?id=foo")   // plain browser WebSocket, nothi
 ## Where this won't fit (so you don't waste time)
 
 - It runs on its own Netty server (`server.netty.port`), not inside Tomcat — fine for a dedicated realtime service or a Netty-served app, wrong if the endpoint must live inside an existing servlet container.
-- Spring Boot 2.7.x and JDK 17 today (2.0.0 targets Boot 4.1; it is not released and does not promise Boot 3 compatibility).
-- If you genuinely need per-connection handler *instances* rather than per-session state in a singleton, Spring's own `PerConnectionWebSocketHandler` remains the in-container route.
-```
+- This draft targets the unpublished 2.0.0 candidate on Spring Boot 4.1.2 / JDK 17. Compile handlers with `-parameters` (Maven Compiler `<parameters>true</parameters>`); retain the application BOM security overrides documented in the 2.0.0 migration notes. Boot 3 compatibility is not promised.
+- If you need per-connection handler *instances* rather than per-session state in a singleton, Spring's own `PerConnectionWebSocketHandler` remains the in-container route.
+````
 
 ### 发布检查清单
 
+- [x] 核心 Java 片段已在候选依赖下验证构造器注入、连接、跨端点广播和定向文本发送。
+- [ ] 确认 2.0.0 Central 可用并验证独立消费者解析的依赖；更新正文中的候选状态。
 - [ ] 用你的账号粘贴到 Q42901062 的回答框
 - [ ] 预览确认代码块渲染正常（SO 的 ``` 围栏 + 语言标签）
 - [ ] 保留披露声明
@@ -120,13 +118,13 @@ new WebSocket("ws://host:8080/trade?id=foo")   // plain browser WebSocket, nothi
 
 - **链接**: https://stackoverflow.com/questions/26853745
 - **标题**: Spring Websocket in a tomcat cluster
-- **数据**: 2014 年提问，score 33，**21,158 views**，3 answers（已被采纳的是 2015 年的
+- **数据（2026-08 快照）**: 2014 年提问，score 33，**21,158 views**，3 answers（当时已被采纳的是 2015 年的
   Spring Session + STOMP broker relay 方案；41 分那篇讲清了 HTTP session ≠ WebSocket session，
   但**没有人提供可直接运行的多节点样例**——提问者明确要了 "a working sample"，这是切入点）。
 
 ### 草稿正文（SO Markdown，直接粘贴）
 
-```
+````markdown
 The existing answers (external STOMP broker relay; the HTTP-session-vs-WebSocket-session distinction) are still the right mental model, so this answer adds what's changed since and — since the question asks for one — a *runnable* multi-node sample.
 
 ## Recap: the two sub-problems
@@ -156,7 +154,7 @@ Clustering is switched on purely by configuration:
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-websocket-cluster-spring-boot-starter</artifactId>
-    <version>1.10.1</version>
+    <version>2.0.0</version>
 </dependency>
 ```
 
@@ -165,14 +163,14 @@ server.netty.websocket.cluster.enable=true
 server.netty.websocket.cluster.redis.uri=redis://your-redis:6379
 ```
 
-Semantics, stated plainly (they're documented this way in the repo too): local delivery always happens first and is never lost; the cross-node copy is at-most-once by default (Redis Pub/Sub is fire-and-forget); if Redis is lost the node degrades to local delivery after a grace period instead of dropping connections; a unicast to a session that no longer exists anywhere throws `MessageSessionClosedException` so callers learn about stale references.
+Local sending is attempted before cross-node publication; this ordering does not guarantee delivery during shutdown, backpressure, or connection failure. The cross-node copy is at-most-once by default (Redis Pub/Sub is fire-and-forget). If Redis is lost, the node degrades to local delivery after a grace period; a unicast to a session that no longer exists throws `MessageSessionClosedException`. Applications must still handle rejected work and failed writes.
 
 ## The working sample (what the question actually asked for)
 
-The repo ships a checked-in multi-node proof you can start yourself — two app nodes behind an nginx load balancer + Redis, plus a headless test that asserts cross-node delivery (a broadcast from one node reaches a session connected to the other, with the correct origin stamp):
+The repo contains a two-node application behind nginx with Redis. Its smoke test verifies JSON broadcasts in both directions between clients on distinct nodes, including content and the sender's origin stamp. Run it from the candidate checkout; use the release tag only after it exists and Central is confirmed:
 
 ```bash
-git clone https://github.com/BerryWang1996/netty-spring.git
+git clone --branch codex/2.0.0-spring-boot-4.1 https://github.com/BerryWang1996/netty-spring.git
 cd netty-spring
 ./mvnw -pl demo-netty-web-spring-boot-starter -am package -DskipTests
 docker compose -f docker-demo/docker-compose.yml up --build
@@ -182,19 +180,20 @@ Open `http://localhost:8080/chat` in two browser tabs — each tab shows which n
 
 ```bash
 cd docker-demo && npm install && node smoke.js
-# exit 0 = two clients on DIFFERENT nodes, broadcast delivered cross-node with correct origin stamp
+# exit 0 = two clients on DIFFERENT nodes, broadcasts verified in BOTH directions with correct origin stamps
 ```
 
 ## Where this won't fit
 
 - It replaces Tomcat with Netty as the server — this is a different route from clustering Tomcat itself, not a patch for it. If you must stay on Tomcat + STOMP, the broker-relay answers above remain the correct approach.
 - The Redis Pub/Sub transport is documented for roughly ≤ 10 nodes of active broadcast; it needs a dedicated, secured Redis (auth + TLS in production).
-- Spring Boot 2.7.x / JDK 17 today.
-```
+- This draft uses the unpublished 2.0.0 candidate / Spring Boot 4.1.2 / JDK 17. Compile handlers with `-parameters` and retain the application BOM security overrides in the migration notes. The core Java fragment has been exercised locally with candidate libraries; independent Central consumer resolution remains pending.
+````
 
 ### 发布检查清单
 
-- [ ] 核对 [1.10.1 发布说明](release-notes-1.10.1.md)中的 Central 可用性与冒烟验证，满足本文顶部发布门槛。
+- [x] 核心 Java 片段已在候选依赖下验证 DTO 绑定、双向 JSON 广播及跨节点定向 JSON。
+- [ ] 核对 [2.0.0 发布说明](release-notes-2.0.0.md)中的 Central 可用性和独立消费者解析结果，再把候选 checkout/状态切换为实际发布标签。
 - [ ] 用你的账号粘贴到 Q26853745 的回答框
 - [ ] 预览确认代码块渲染正常
 - [ ] 保留披露声明
@@ -204,17 +203,12 @@ cd docker-demo && npm install && node smoke.js
 
 ## 草稿依据（内部参考，不发布）
 
-- 全部 API 事实来自 1.10.0 代码树提取（3 代理并行核实，含文件行号）：
+- 2026-08 的原稿基于 1.10.0；当前候选更新对照下列接口与配置，并于 2026-10-24 完成核心 Java 片段本地复验：
   - `@MessageMapping`/`MessageType`/`MessageSender`/`MessageSession` 签名 → netty-spring-websocket 模块
   - `server.netty.websocket.cluster.*` 全量配置表、`ClusterMessageSender` drop-in 语义、投递语义原文引用 → netty-spring-websocket-cluster + 集群 starter
   - docker-demo 命令、smoke.js 断言、Maven 坐标、Boot/JDK 版本 → docker-demo/ + 各 pom
-- 已知不可引用项（草稿已规避）：`@AutowiredMessageSender` 字段注入（注解存在但树中无处理器，
-  疑似未接线——已另行报告）；WS 路径变量（不支持）；Boot 3 兼容（不承诺；2.0.0 目标为 Boot 4.1）。
-- 投递语义措辞逐字取自 `ClusterMessageSender`/`ClusterBroker` javadoc。
-- 修订记录（2026-08-03 对抗性核实）：① `BinaryMessage` 是发送侧包装器，二进制帧的真实绑定目标是
-  `byte[]`/`ByteBuf`/`BinaryWebSocketFrame`（MessageMappingResolver:867–876）；② smoke.js 断言的是
-  单向跨节点投递（含来源节点标记），不是"往返"；③ "built for exactly this shape of problem" 软化为
-  "covers this shape of problem"；④ "solves both sub-problems with one property" 改为
-  "once it is enabled"（启用集群实际要 enable + redis.uri 两项）；⑤ at-most-once 补 "by default"
-  （可靠重投路径是 NATS JetStream 另一条传输）。
+- 不应宣传 `@AutowiredMessageSender` 为有效字段注入能力；使用 Spring 构造器注入。WS 路径变量和 Boot 3 兼容也不作承诺。
+- 当前 `smoke.js` 检查双向 JSON 投递，不是延迟基准或可靠重放。可靠传输需按 Redis Streams/JetStream 的具体配置与保留窗口说明，不能从普通 Pub/Sub smoke 推导。
+- 当前修订补充参数元数据与应用 BOM 要求，并删除本地消息“绝不丢”的过度承诺；题目数据和外部规则尚未刷新。
+- 两篇教程与两篇回答共 6 个 Java 块，按原文抽取并补齐明确的应用支撑代码；JDK 17 的 `--release 17 -parameters` 编译与 8 个单机/双节点场景通过。12 个 JVM 正常退出，18 个 WebSocket 均以主动请求后的 1000 关闭；本地依赖来自冻结 GA 候选，未把该结果当作 Central 消费者 BOM 解析证据。
 - Answer 2 所涉 optional-NATS 缺陷、修复与验证记录统一见 [1.10.1 发布说明](release-notes-1.10.1.md)。
