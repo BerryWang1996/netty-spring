@@ -49,15 +49,15 @@ Jakarta 改名只处理 Jakarta EE API；目前源码的直接迁移落点是 ac
 
 ## 分阶段迁移步骤
 
-按阶段顺序推进；阶段 2–4 可因编译依赖交叉实现，部署演练可提前暴露兼容问题，未完成门禁继续保留。当前已完成核心适配、本地 689 项回归及基础混部/回滚 smoke，下一重点为远端 JDK 矩阵、跨版本恢复组合和性能比较。详细数字只以迁移说明为准；RC 标签只对通过对应门禁、可运行的切片建立。
+按阶段顺序推进；阶段 2–4 可因编译依赖交叉实现，部署演练可提前暴露兼容问题，未完成门禁继续保留。当前已完成核心适配、本地回归、远端 JDK 17/21/25、Redis Pub/Sub/HMAC 混部与回滚，以及同机短时负载比较；下一重点为其他跨版本恢复组合、持续及目标规模负载。详细数字只以迁移说明为准；RC 标签只对通过对应门禁、可运行的切片建立。
 
 ### 阶段 1：锁定基线与依赖方案
 
 - [x] 从已验证的 `1.10.1` 建立 `2.0.0-SNAPSHOT` 开发分支，保留基线制品、验证记录和旧版 JSON/crypto 样本；生成新基线 effective POM。
 - [x] 锁定 Boot 4.1.2，按 [Boot 3.0 迁移指南](https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-3.0-Migration-Guide)、Boot 4.0 / 4.1 和 Framework 7 升级说明，逐项对照当前 API、配置及打包资源；已检查自动配置、模块拆分、参数名、日志默认值和可选依赖打包差异。运行矩阵验收仍单独保留。
 - [x] 记录 Spring、Netty、Jackson、Lettuce、Micrometer、jnats、Testcontainers、JUnit、Mockito、Lombok 和日志组件的最终解析版本，每个手动覆盖说明原因。
-- [x] 使用 Boot BOM 管理的 Netty 4.2，移除旧 Spring/Netty/Logback/Testcontainers 覆盖；保留 Jackson 3.1.8 与 SnakeYAML 2.7 安全覆盖并注明原因。
-- [ ] 检查 Maven Wrapper、Compiler、Surefire 和 Boot Maven Plugin 与新测试/打包链的兼容性。
+- [x] 使用 Boot BOM 管理的 Netty 4.2，移除旧 Spring/Netty/Logback/Testcontainers 覆盖；保留 Jackson 3.1.8、SnakeYAML 2.7 和 Logback core/classic 1.6.5 安全覆盖并注明原因。
+- [x] 检查 Maven Wrapper、Compiler、Surefire 和 Boot Maven Plugin 与新测试/打包链的兼容性：远端三个 JDK 测试、SBOM 和实际 demo 打包/启动通过。
 
 **验收：**依赖方案与源码清单可复现，Jackson 公开 API 变化、可选依赖风险和基线测试通过/失败/跳过均有记录。切换 BOM 后识别的编译错误由后续适配阶段清零。
 
@@ -83,20 +83,21 @@ Jakarta 改名只处理 Jakarta EE API；目前源码的直接迁移落点是 ac
 
 ### 阶段 4：Netty 4.2 与集群客户端
 
-- [x] 适配 HTTP/WebSocket/mesh 线程组，运行既有 pipeline、ByteBuf、关闭、背压和超时回归；allocator 指标覆盖新默认实例并去重。
+- [x] 适配 HTTP/WebSocket/mesh 线程组，运行既有 pipeline、ByteBuf、关闭、背压和超时回归；真实 TLS 1.2/1.3、错误主机名拒绝、gzip 和分片聚合 smoke 通过；allocator 指标覆盖新默认实例并去重。
 - [x] 回归 Redis standalone / Redis Cluster、NATS / JetStream、mesh 的既有支持组合；保持原不支持组合的拒绝语义。
 - [x] 在同版本测试中验证广播/单播/远程关闭、自投递抑制、房间、用户、离线、presence、HMAC、MDC trace 及可靠投递。
 - [x] 运行既有中断、重连、DEGRADED/RESYNC、下线和资源回收测试；显式保持原 Lettuce 刷新策略。跨版本恢复验证仍见阶段 5。
-- [ ] 同机器、负载和配置下比较旧版与迁移版连接数、吞吐、延迟、线程/内存及丢失/重复计数；定位明显退化并记录取舍。
+- [ ] 同机器、负载和配置下比较旧版与迁移版连接数、吞吐、延迟、线程/内存及丢失/重复计数：64 连接、旧新各 3 轮短时比较已完成，未见明显端到端退化；客户端可能限制吞吐，持续及目标规模负载仍待验收。
+- [ ] 处置演练中确认的既有 `/netty/status` 共享 event recorder 重复汇总问题，并明确 received 包含控制帧的语义；在此之前不将该总数作为业务消息无丢失/重复的证明。
 
 **验收：**既有支持组合通过真实中间件测试，Netty 版本统一，关键资源无泄漏，协议语义无意外变化；性能结论附复现条件，不从依赖升级推导容量提升。
 
 ### 阶段 5：运行矩阵、示例与升级/回滚演练
 
-- [ ] CI 运行 Boot 4.1.x × JDK 17/21/25，编译基线仍为 17；全 reactor、自动装配隔离和 demo smoke 通过，集成测试在有 Docker 的环境执行。
+- [x] CI 运行 Boot 4.1.2 × JDK 17/21/25，编译基线仍为 17；全 reactor、自动装配隔离和 demo smoke 通过，集成测试在有 Docker 的环境执行。
 - [x] demo 完成 YAML 启动、HTTP、WebSocket、crypto/auth profile、health/status smoke；默认 registry 实际指标绑定测试通过；双节点 + LB + Redis 双向 JSON smoke 通过。
-- [ ] 已通过 Redis Pub/Sub 基础双向 JSON 混部；继续补适用传输组合的可靠重放、离线数据读取、HMAC 和节点切换，不能据基础 smoke 宣称这些均兼容。
-- [ ] 已完成双新节点恢复完整 1.10.1 镜像并保留 Redis 的基础 smoke；其他承诺组合仍待演练。不宣称零停机滚动升级。
+- [ ] 已通过 Redis Pub/Sub 双向 JSON、HMAC strict 正向/错密钥拒绝及节点重建后重连混部；继续补适用传输组合的可靠重放、离线数据读取和恢复，不能将已有 smoke 扩展为未测保证。
+- [ ] 已完成双新节点恢复完整 1.10.1 镜像，并保留 Redis 容器/验证数据，基础及 HMAC strict 路径通过；其他承诺组合仍待演练。不宣称零停机滚动升级。
 - [ ] 汇总测试数、跳过原因、依赖树、协议样本、性能比较和演练结果；缺外部环境的用例仍是未完成门禁。
 
 **验收：**每个宣称支持的 JDK、starter 和部署模式均有证据，已知差异、支持矩阵与回滚限制明确。
@@ -104,8 +105,9 @@ Jakarta 改名只处理 Jakarta EE API；目前源码的直接迁移落点是 ac
 ### 阶段 6：发布收口
 
 - [ ] 将演练验证的迁移步骤、API/配置差异、回滚方式写入 `2.0.0` 正式发布说明；本计划保留状态/索引，避免维护两份操作指南。
-- [ ] 同步 README、依赖治理、配置/API 文档、示例和发布清单；移除失效配置例子与旧 Boot 3 目标，历史发布记录标注其规划已被取代。
+- [x] 同步 README、依赖治理、配置/API 文档、示例和发布清单；移除失效配置例子与旧 Boot 3 目标，历史发布记录标注其规划已被取代。正式发布时再更新 GA 状态。
 - [ ] 完成发布清单中的审查、测试、SBOM、漏洞 triage、源码/Javadoc 制品和签名校验；满足门禁后再建 GA 标签和发布。
+- [x] 处置扫描工具未覆盖的 Logback CVE-2026-19880 / CVE-2026-104721：core/classic 成对升级 1.6.5，验证 Java 17 / SLF4J 2.0、实际滚动、MDC 路径拒绝回退、Boot 启动及 24 项应用 smoke，并重新生成 SBOM 和扫描；差异统一见迁移说明。
 - [ ] 确认 Central 坐标、示例可复现和升级链接可达，更新稳定版状态并启动对应推广材料。
 
 **2.0.0 完成条件：**各阶段门禁全部有结果；Boot 4.1.x 上现有单机/集群能力可用；用户可执行升级与回滚；没有未披露的关键测试跳过或兼容性断点。

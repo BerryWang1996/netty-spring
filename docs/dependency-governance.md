@@ -11,7 +11,7 @@
 
 ## 当前依赖基线与覆盖
 
-当前开发版本为 `2.0.0-SNAPSHOT`，根 POM 锁定 **Spring Boot 4.1.2 / JDK 17**，编译使用 `--release 17` 和 `-parameters`。Spring Framework、Netty、日志组件、Lettuce、Micrometer、JUnit、Mockito 和 Testcontainers 统一由 Boot BOM 管理；旧 Spring 5、Netty 4.1、Jackson 2、Logback、Log4j 和 Testcontainers 独立覆盖已移除。历史版本及漏洞处置依据集中保留在 [1.10.1 发布说明](release-notes-1.10.1.md)，迁移状态见[开发计划](development-plan.md)。
+当前开发版本为 `2.0.0-SNAPSHOT`，根 POM 锁定 **Spring Boot 4.1.2 / JDK 17**，编译使用 `--release 17` 和 `-parameters`。Spring Framework、Netty、SLF4J、Log4j、Lettuce、Micrometer、JUnit、Mockito 和 Testcontainers 统一由 Boot BOM 管理；旧 Spring 5、Netty 4.1、Jackson 2 和日志组件等独立覆盖已清理，当前必要的安全覆盖单列如下。历史版本及漏洞处置依据集中保留在 [1.10.1 发布说明](release-notes-1.10.1.md)，本轮依赖与安全验证事实见 [2.0.0 发布说明](release-notes-2.0.0.md#dependency-scan-evidence)，迁移状态见[开发计划](development-plan.md)。
 
 当前保留的显式版本如下；升级 Boot 时逐项复核，BOM 纳入对应修复后移除安全覆盖。
 
@@ -19,6 +19,7 @@
 |---|---|
 | `tools.jackson:jackson-bom` | **3.1.8**，在 Boot BOM 之前导入，覆盖 Boot 4.1.2 的 3.1.7。修复 CVE-2026-110879 多态类型校验绕过；影响包含基于注解的类名多态，不能仅因未启用 default typing 就排除风险。依据：[Jackson 官方安全公告](https://github.com/FasterXML/jackson-databind/security/advisories/GHSA-m8xf-2cr7-77ph)。 |
 | `org.yaml:snakeyaml` | **2.7**，覆盖 Boot 4.1.2 的 2.6，保留移除绕过 `TagInspector` 的 `CompactConstructor` / `PackageCompactConstructor` 的修复；YAML 配置加载仍需回归。依据：[SnakeYAML 变更记录](https://github.com/snakeyaml/snakeyaml/blob/master/src/changes/changes.xml)。 |
+| `ch.qos.logback:logback-core` / `logback-classic` | **1.6.5**，成对覆盖 Boot 4.1.2 的 1.5.38，修复 CVE-2026-19880 / CVE-2026-104721：不可信 MDC discriminator 经 `SiftingAppender` 进入文件路径；1.6.3 首轮修复仍可绕过。两个组件必须同版，SLF4J 继续由 Boot 管理为 2.0.20。官方要求 Java 11+ / SLF4J 2.0.x，满足本项目基础版本要求；具体打包、扫描及日志兼容验证以发布说明证据为准。依据：[Logback 官方修复记录](https://logback.qos.ch/news.html#1.6.5)、[1.6.5 官方 POM](https://github.com/qos-ch/logback/blob/v_1.6.5/pom.xml)。 |
 | `org.eclipse.angus:angus-activation` | **2.0.3**，Boot BOM 未管理此实现；作为 `netty-spring-web` 的 runtime 依赖，为 MIME 类型解析提供 Jakarta Activation 实现。`jakarta.activation-api` 版本由 Boot 管理。 |
 | `io.nats:jnats` | **2.20.4**，Boot BOM 未管理的可选 NATS 客户端，沿用既有传输基线；使用 NATS 的应用需显式引入，Redis 默认路径不应依赖它。 |
 | `org.projectlombok:lombok` | **1.18.48**，与 Boot 4.1.2 一致；根属性同时供依赖和编译器 annotation processor 使用，避免处理器与依赖版本不一致。 |
@@ -43,7 +44,7 @@ Runtime 继续按需引入 Netty 模块，不使用 `netty-all`。每次变更�
 ### 漏洞扫描
 
 ```powershell
-.\mvnw.cmd -Pdependency-scan -DskipTests package org.owasp:dependency-check-maven:12.2.2:aggregate
+.\mvnw.cmd -Pdependency-scan -DskipTests clean package org.owasp:dependency-check-maven:12.2.2:aggregate
 ```
 
 输出位置：
@@ -52,7 +53,7 @@ Runtime 继续按需引入 Netty 模块，不使用 `netty-all`。每次变更�
 - `target/dependency-check/dependency-check-report.json`
 - `target/dependency-check/dependency-check-report.sarif`
 
-`dependency-scan` 默认 `failBuildOnCVSS=7.0`、`failOnError=true`，高危及以上漏洞或扫描错误都会导致失败。命令先执行 `package`，确保扫描当前 reactor 构建的实际制品；`-DskipTests` 只避免重复执行已由独立测试门禁完成的测试，不跳过扫描。第一次扫描需要下载漏洞数据库，耗时会明显长于普通测试；建议配置 `NVD_API_KEY` 环境变量和可复用缓存。
+`dependency-scan` 默认 `failBuildOnCVSS=7.0`、`failOnError=true`，高危及以上漏洞或扫描错误都会导致失败。本地依赖变更后先执行 `clean package`，并核对 fat jar 内嵌依赖与 SBOM 一致：非 clean 构建可能在依赖解析已更新时仍保留旧的 repackage 制品。执行 clean 前将需要留档的测试/扫描报告复制到 target 之外。CI 使用干净 checkout，可直接 package；`-DskipTests` 只避免重复执行已由独立测试门禁完成的测试，不跳过扫描。第一次扫描需要下载漏洞数据库，耗时会明显长于普通测试；建议配置 `NVD_API_KEY` 环境变量和可复用缓存。
 
 ```powershell
 $env:NVD_API_KEY='replace-with-ci-secret'
@@ -76,7 +77,7 @@ Dependency-Check data cache 已固定到 `${settings.localRepository}/../depende
 
 1. 高危及以上漏洞必须在企业安全发布前处理：优先升级依赖，其次记录无法升级原因和规避措施。
 2. 中低危漏洞需要记录影响范围：是否只在 test scope、是否可被当前运行路径触发、是否已有上游修复版本。
-3. Dependabot 与 Dependency-Check 结果不一致时，以更严格的结论进入人工 triage。
+3. Dependabot、Dependency-Check 与官方安全公告结果不一致时，以更严格的结论进入人工 triage；扫描器未报告不能替代对官方受影响版本范围的核对。
 4. 误报只能写入 `dependency-check-suppressions.xml`，不能通过降低 `failBuildOnCVSS` 绕过。
 5. 每条 suppression 必须包含依赖/CVE、理由和后续清理计划；长期 suppression 需要在发布前重新复核。
 
@@ -85,8 +86,8 @@ Dependency-Check data cache 已固定到 `${settings.localRepository}/../depende
 企业安全发布前至少需要完成：
 
 - `.\mvnw.cmd test`
-- `.\mvnw.cmd -Psbom -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom`
-- `.\mvnw.cmd -Pdependency-scan -DskipTests package org.owasp:dependency-check-maven:12.2.2:aggregate`（无 API key 时先验证镜像新鲜度并附加 `-DnvdDatafeedUrl=...`）
+- `.\mvnw.cmd -Pdependency-scan -DskipTests clean package org.owasp:dependency-check-maven:12.2.2:aggregate`（先归档测试报告；无 API key 时先验证镜像新鲜度并附加 `-DnvdDatafeedUrl=...`）
+- `.\mvnw.cmd -Psbom -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom`（在 clean 构建之后生成，并核对实际制品）
 - GitHub Actions `CI` workflow 中的三项 `Maven Test`、`Generate SBOM` 和发布门禁 `Dependency Scan`
 - GitHub Dependabot 或等效扫描告警已处理、记录或明确延期
 
