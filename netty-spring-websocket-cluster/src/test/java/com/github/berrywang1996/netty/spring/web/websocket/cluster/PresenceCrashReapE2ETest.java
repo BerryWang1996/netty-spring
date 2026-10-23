@@ -89,6 +89,12 @@ class PresenceCrashReapE2ETest {
             a.start();
             b.start();
 
+            // start() queues asynchronous SUBSCRIBE commands. Pub/Sub has no replay, so publishing
+            // the only ONLINE transition before Redis installs both subscriptions loses it forever.
+            String channel = "netty:broadcast:" + ClusterMessageSender.PRESENCE_CHANNEL;
+            assertTrue(waitFor(() -> a.conn.sync().pubsubNumsub(channel).getOrDefault(channel, 0L) == 2L, 4000),
+                    "both nodes must be subscribed to the presence channel before the first transition");
+
             // u's ONLY device connects on node-A via the sender's hook entry → the OFFLINE→ONLINE transition
             // fires the local listener + publishes on the reserved channel (mirrors the connect hook).
             a.sender.setPresenceFromHook("u", "A", "s1", PresenceStatus.ONLINE).toCompletableFuture().join();
