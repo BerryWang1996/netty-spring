@@ -61,8 +61,8 @@ class RedisClusterModeSessionRegistryTest {
         io.lettuce.core.RedisFuture<Long> saddFuture = rf(1L);
         when(async.hmset(anyString(), any())).thenReturn(hmsetFuture);
         // sadd/srem/del take varargs (V.../K...); the registry passes a SINGLE element, so match it
-        // element-wise with anyString() — any(String[].class) expects the whole array and would miss
-        // a one-element vararg call (stub returns null -> NPE on toCompletableFuture()).
+        // element-wise with anyString(). Mockito 5's any(String[].class) instead matches the whole
+        // varargs array; use that form for EVAL checks that must cover any argument count.
         when(async.sadd(anyString(), anyString())).thenReturn(saddFuture);
 
         registry.register("/ws/a", "sid-1", "node-A", Collections.emptyMap())
@@ -74,7 +74,7 @@ class RedisClusterModeSessionRegistryTest {
                 argThat((Map<String, String> m) -> "node-A".equals(m.get("nodeId"))));
         // Node-set membership added under the node key, member "b64url(uri)|sessionId".
         verify(async).sadd("netty:node:node-A:sessions", member("/ws/a", "sid-1"));
-        verify(async, never()).eval(anyString(), any(), any(String[].class), any());
+        verify(async, never()).eval(anyString(), any(), any(String[].class), any(String[].class));
     }
 
     @Test
@@ -94,7 +94,7 @@ class RedisClusterModeSessionRegistryTest {
         verify(async).del(sessionKey("/ws/a", "sid-1"));
         verify(async).srem("netty:node:node-A:sessions", member("/ws/a", "sid-1"));
         // Must NOT use a Lua EVAL (would be CROSSSLOT touching both keys in Redis Cluster).
-        verify(async, never()).eval(anyString(), any(), any(String[].class), any());
+        verify(async, never()).eval(anyString(), any(), any(String[].class), any(String[].class));
     }
 
     @Test
@@ -107,7 +107,7 @@ class RedisClusterModeSessionRegistryTest {
         verify(async).hget(sessionKey("/ws/a", "sid-x"), "nodeId");
         verify(async, never()).del(anyString());
         verify(async, never()).srem(anyString(), anyString());
-        verify(async, never()).eval(anyString(), any(), any(String[].class), any());
+        verify(async, never()).eval(anyString(), any(), any(String[].class), any(String[].class));
     }
 
     /** base64url(uri) — mirrors the registry's key/member encoding (FIX A). */

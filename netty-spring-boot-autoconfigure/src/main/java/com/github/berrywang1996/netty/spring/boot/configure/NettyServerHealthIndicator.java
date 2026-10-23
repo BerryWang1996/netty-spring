@@ -18,11 +18,11 @@ package com.github.berrywang1996.netty.spring.boot.configure;
 
 import com.github.berrywang1996.netty.spring.web.context.HandlerRuntimeStats;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
-import org.springframework.boot.actuate.health.AbstractHealthIndicator;
-import org.springframework.boot.actuate.health.Health;
+import org.springframework.boot.health.contributor.AbstractHealthIndicator;
+import org.springframework.boot.health.contributor.Health;
 
 /**
- * Spring Boot Actuator {@link org.springframework.boot.actuate.health.HealthIndicator}
+ * Spring Boot Actuator {@link org.springframework.boot.health.contributor.HealthIndicator}
  * for the Netty server.
  *
  * <p>Reports {@code UP} when the Netty server is running, and {@code DOWN} otherwise.

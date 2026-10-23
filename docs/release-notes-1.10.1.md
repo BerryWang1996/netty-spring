@@ -4,7 +4,7 @@
 
 ## 发布状态（本版唯一记录）
 
-**兼容依赖升级、本地/远端全量测试、SBOM、单机/双节点冒烟及新版签名验证已完成；本地和远端扫描均完成，仍有 43 项 Boot/Spring 告警，其中 21 项 CVSS ≥ 7.0，扫描未通过。** 本版按功能/稳定性补丁推进并公开披露已知风险，不能作为企业安全发布或宣称全部 CI 绿色。候选提交 `52206a5` 已推送至 `BerryWang1996/netty-spring`，远端扫描报告已保存。尚未创建 `v1.10.1` tag，未上传或发布到 Maven Central。上传、Central 发布、Git tag/远端 CI 均需分别记录，构建通过不代表已经发布。
+**`v1.10.1` 已推送，Central 上传校验已通过，正式发布请求已提交，当前仍为 `PUBLISHING`，尚未确认公共仓库可下载。** 标签指向 `002358b`，使用 `BerryWang1996` 账号发布。测试、SBOM、单机/双节点冒烟和最终 34 份签名验证完成；正式标签扫描仍有 43 项 Boot/Spring 告警，其中 21 项 CVSS ≥ 7.0。本版为公开披露风险的功能/稳定性补丁，不能作为企业安全发布或宣称全部 CI 绿色。2.0.0 开发已转入独立分支，不等待 Central 传播。
 
 教程、FAQ、SO 草稿中使用 `1.10.1` 的依赖示例，须在 Central 可下载该版本后再对外发布。当前公开版本与下一步路线见[开发计划](development-plan.md)。
 
@@ -29,10 +29,10 @@
 | CycloneDX SBOM | 升级后的 JSON/XML 已生成；根组件版本 1.10.1，53 个依赖组件；四组升级版本解析正确 |
 | 默认无 jnats 的双节点 Docker 广播 | 本地 PASS；alice 在 node-a、bob 在 node-b，收到带正确 originNode 的广播；健康 UP。[远端 Docker Demo Smoke #39962106347](https://github.com/BerryWang1996/netty-spring/actions/runs/39962106347) 成功 |
 | 单机 demo / 外部 YAML | 真实外部 YAML 配置 `server.netty.port=8082`，应用成功启动；健康 UP，`/ws/test` 真实 WebSocket 回显 PASS，验证 SnakeYAML 2.7 配置加载路径 |
-| 发布制品 sources / Javadoc / GPG | 升级后的 release verify SUCCESS；10 个发布模块、版本精确为 1.10.1 的全部 34 份分离签名独立验证通过，尚未上传 |
+| 发布制品 sources / Javadoc / GPG | 10 个发布模块、34 个发布文件及其分离签名已上传；最终 deploy 后的 34 份签名独立验签通过，发布包 SHA-256 全量匹配。3 个无源码 starter 不生成 sources.jar，其余源码/Javadoc 附件齐全 |
 | Dependency Scan / 漏洞 triage | Dependency-Check 12.2.2 复扫生成 HTML/JSON/SARIF，无 analysisExceptions；43 项 Boot/Spring 告警，21 项 CVSS ≥ 7.0，扫描失败。四组升级依赖的原告警已不再出现；未添加 suppression。另由 Dependabot 补充 Logback 6 项，详见下文 |
-| Git 提交、v1.10.1 tag、远端 CI | 候选 `52206a5` 已推送；[push CI #39962106211](https://github.com/BerryWang1996/netty-spring/actions/runs/39962106211) SUCCESS，650 tests / 0 failures / 0 errors / 0 skipped，SBOM 通过；[dispatch CI #39962150122](https://github.com/BerryWang1996/netty-spring/actions/runs/39962150122) 的 Maven Test/SBOM 也通过，Dependency Scan 因上述漏洞失败，报告已上传；尚未创建 tag |
-| Central 上传及发布 | 待执行 |
+| Git 提交、v1.10.1 tag、远端 CI | `v1.10.1` → `002358b`；[正式标签 CI #39963415642](https://github.com/BerryWang1996/netty-spring/actions/runs/39963415642)：650 tests / 0 failures / 0 errors / 0 skipped，SBOM 通过，Dependency Scan 因上述漏洞失败，报告已上传。标签与已测候选 `52206a5` 仅发布记录不同 |
+| Central 上传及发布 | deployment `fedd63c8-f139-4a40-a0ef-9a9a4af1a4bc` 已 VALIDATED，正式发布请求已接受；状态 PUBLISHING，公开下载验证待完成，暂不标记已发布 |
 
 环境：GraalVM JDK 17.0.11、Maven 3.9.16、Docker Desktop；2026-10-23 执行。首轮 clean 构建暴露装配测试的端口竞争，修复后重新执行完整 `verify` 通过。项目 demo fat jar 的依赖清单确认没有 jnats。Docker 验证使用独立 Compose 项目 `netty-spring-1101-check` 和本机 18080/18081 端口，结束后已清理本次容器及网络。
 

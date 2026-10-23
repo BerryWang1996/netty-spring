@@ -20,34 +20,29 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterMessag
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterNodeManager;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.actuate.health.HealthIndicator;
-import org.springframework.boot.autoconfigure.AutoConfigureAfter;
+import org.springframework.boot.health.contributor.HealthIndicator;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 
 /**
  * Spring Boot Actuator auto-configuration for WebSocket cluster mode.
  *
- * <p>Activated when {@code spring-boot-actuator} is on the classpath, cluster mode is
+ * <p>Activated when {@code spring-boot-health} is on the classpath, cluster mode is
  * enabled, and the cluster beans are present. Registers a {@link ClusterHealthIndicator}
  * so operators can observe and alert on node state (DEGRADED/RESYNC) at
  * {@code /actuator/health}.
- *
- * <p>The full Micrometer meter-binder set is roadmap for 1.9.x; this 1.8.0 indicator
- * covers the essential "is this node healthy in the cluster?" question.
  *
  * @author berrywang1996
  * @since V1.8.0
  */
 @Slf4j
-@Configuration
+@AutoConfiguration(after = NettyWebSocketClusterConfigure.class)
 @ConditionalOnClass(HealthIndicator.class)
 @ConditionalOnProperty(prefix = "server.netty.websocket.cluster", name = "enable", havingValue = "true")
-@AutoConfigureAfter(NettyWebSocketClusterConfigure.class)
 public class NettyClusterActuatorConfigure {
 
     @Bean

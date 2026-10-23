@@ -28,7 +28,9 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelOption;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.EventLoopGroup;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -64,10 +66,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class NettyServerBootstrap {
 
     /** Netty boss event loop group for accepting incoming connections. */
-    private NioEventLoopGroup bossGroup;
+    private EventLoopGroup bossGroup;
 
     /** Netty worker event loop group for handling channel I/O. */
-    private NioEventLoopGroup workerGroup;
+    private EventLoopGroup workerGroup;
 
     private NettyServerStartupProperties startupProperties;
 
@@ -128,8 +130,8 @@ public final class NettyServerBootstrap {
             StartupPropertiesUtil.checkAndImproveProperties(startupProperties);
 
             // Create NIO event loop groups for boss (accept) and worker (I/O) threads
-            this.bossGroup = new NioEventLoopGroup();
-            this.workerGroup = new NioEventLoopGroup();
+            this.bossGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
+            this.workerGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
             ServerBootstrap bootstrap = new ServerBootstrap();
             bootstrap.option(ChannelOption.SO_BACKLOG, 1024);
 
@@ -249,7 +251,7 @@ public final class NettyServerBootstrap {
     }
 
     /** Gracefully shuts down an event loop group. Safe to call when the group is already terminated. */
-    private void shutdownEventLoopGroup(NioEventLoopGroup eventLoopGroup) {
+    private void shutdownEventLoopGroup(EventLoopGroup eventLoopGroup) {
         if (eventLoopGroup == null
                 || eventLoopGroup.isTerminated()
                 || eventLoopGroup.isShutdown()

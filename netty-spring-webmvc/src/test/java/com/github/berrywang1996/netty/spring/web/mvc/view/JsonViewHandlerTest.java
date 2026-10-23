@@ -6,12 +6,66 @@ import io.netty.handler.codec.http.HttpResponseStatus;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class JsonViewHandlerTest {
+
+    @Test
+    void preserves1101IsoDateEnumAndNullResponseValues() {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("createdAt", new Date(0));
+        data.put("state", State.READY);
+        data.put("optional", null);
+        FullHttpResponse response = new JsonViewHandler().handleView(data);
+        try {
+            // Literal produced by 1.10.1 / Jackson 2.18.12, including the UTC offset.
+            assertEquals("{\"createdAt\":\"1970-01-01T00:00:00.000+00:00\",\"state\":\"READY\",\"optional\":null}",
+                    response.content().toString(StandardCharsets.UTF_8));
+        } finally {
+            response.release();
+        }
+    }
+
+    @Test
+    void emptyBeansRemainEmptyJsonObjects() {
+        FullHttpResponse response = new JsonViewHandler().handleView(new Object());
+        try {
+            assertEquals("{}", response.content().toString(StandardCharsets.UTF_8));
+        } finally {
+            response.release();
+        }
+    }
+
+    @Test
+    void serializationFailureKeepsExistingEmptyResponseFallback() {
+        FullHttpResponse response = new JsonViewHandler().handleView(new BrokenPayload());
+        try {
+            assertEquals(HttpResponseStatus.OK, response.status());
+            assertEquals(0, response.content().readableBytes());
+        } finally {
+            response.release();
+        }
+    }
+
+    private enum State {
+        READY;
+
+        @Override
+        public String toString() {
+            return "ready";
+        }
+    }
+
+    public static class BrokenPayload {
+        public String getValue() {
+            throw new IllegalStateException("Cannot serialize this value");
+        }
+    }
 
     @Test
     void handleViewReturnsJsonResponse() {

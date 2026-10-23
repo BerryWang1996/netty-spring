@@ -1,6 +1,7 @@
 package com.github.berrywang1996.netty.spring.web.websocket.crypto;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import com.github.berrywang1996.netty.spring.web.util.StringUtil;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
@@ -75,7 +76,8 @@ public class AesGcmMessageCryptoCodec implements MessageCryptoCodec {
      */
     public AesGcmMessageCryptoCodec(NettyServerStartupProperties.WebSocket.Crypto cryptoProperties,
                                     MessageCryptoKeyProvider keyProvider) {
-        this(cryptoProperties, keyProvider, new SecureRandom(), new ObjectMapper());
+        this(cryptoProperties, keyProvider, new SecureRandom(),
+                JsonMapper.builder().configureForJackson2().build());
     }
 
     /**

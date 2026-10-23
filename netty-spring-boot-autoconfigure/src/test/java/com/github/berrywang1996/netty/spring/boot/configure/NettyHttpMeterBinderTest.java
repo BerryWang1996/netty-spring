@@ -4,9 +4,11 @@ import com.github.berrywang1996.netty.spring.web.context.ExecutorRuntimeInfo;
 import com.github.berrywang1996.netty.spring.web.context.HandlerRuntimeStats;
 import com.github.berrywang1996.netty.spring.web.context.HttpRuntimeStats;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
-import io.micrometer.core.instrument.FunctionCounter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.netty.buffer.ByteBufAllocator;
+import io.netty.buffer.ByteBufAllocatorMetric;
+import io.netty.buffer.ByteBufAllocatorMetricProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -113,8 +115,79 @@ class NettyHttpMeterBinderTest {
         Gauge directGauge = registry.find("netty.allocator.used.direct").gauge();
         assertNotNull(heapGauge);
         assertNotNull(directGauge);
-        // Allocator values come from PooledByteBufAllocator.DEFAULT — just verify non-negative
+        // Both built-in allocators expose memory usage.
         assertTrue(heapGauge.value() >= 0.0);
         assertTrue(directGauge.value() >= 0.0);
+    }
+
+    @Test
+    void allocatorGaugesAggregateDistinctInstancesAndRemainLive() {
+        ByteBufAllocator defaultAllocator = allocator(128, 256);
+        ByteBufAllocator sharedAllocator = allocator(512, 1024);
+        new NettyHttpMeterBinder(bootstrap, defaultAllocator, sharedAllocator).bindTo(registry);
+
+        Gauge heap = registry.get("netty.allocator.used.heap").gauge();
+        Gauge direct = registry.get("netty.allocator.used.direct").gauge();
+        assertEquals(640.0, heap.value());
+        assertEquals(1280.0, direct.value());
+        assertEquals("bytes", heap.getId().getBaseUnit());
+        assertEquals("bytes", direct.getId().getBaseUnit());
+
+        when(metric(defaultAllocator).usedHeapMemory()).thenReturn(256L);
+        when(metric(sharedAllocator).usedDirectMemory()).thenReturn(2048L);
+        assertEquals(768.0, heap.value());
+        assertEquals(2304.0, direct.value());
+    }
+
+    @Test
+    void allocatorGaugesCountSharedDefaultInstanceOnce() {
+        ByteBufAllocator sharedAllocator = allocator(128, 256);
+        new NettyHttpMeterBinder(bootstrap, sharedAllocator, sharedAllocator).bindTo(registry);
+
+        assertEquals(128.0, registry.get("netty.allocator.used.heap").gauge().value());
+        assertEquals(256.0, registry.get("netty.allocator.used.direct").gauge().value());
+        verify(metric(sharedAllocator)).usedHeapMemory();
+        verify(metric(sharedAllocator)).usedDirectMemory();
+    }
+
+    @Test
+    void allocatorGaugesReportUnknownPerMemoryTypeWithoutPartialTotals() {
+        ByteBufAllocator defaultAllocator = allocator(-1, 256);
+        ByteBufAllocator sharedAllocator = allocator(512, 1024);
+        new NettyHttpMeterBinder(bootstrap, defaultAllocator, sharedAllocator).bindTo(registry);
+
+        Gauge heap = registry.get("netty.allocator.used.heap").gauge();
+        Gauge direct = registry.get("netty.allocator.used.direct").gauge();
+        assertTrue(Double.isNaN(heap.value()));
+        assertEquals(1280.0, direct.value());
+
+        when(metric(defaultAllocator).usedHeapMemory()).thenReturn(128L);
+        when(metric(sharedAllocator).usedDirectMemory()).thenReturn(-1L);
+        assertEquals(640.0, heap.value());
+        assertTrue(Double.isNaN(direct.value()));
+    }
+
+    @Test
+    void allocatorWithoutMetricsMakesTotalsUnknown() {
+        ByteBufAllocator defaultAllocator = mock(ByteBufAllocator.class);
+        ByteBufAllocator sharedAllocator = allocator(512, 1024);
+        new NettyHttpMeterBinder(bootstrap, defaultAllocator, sharedAllocator).bindTo(registry);
+
+        assertTrue(Double.isNaN(registry.get("netty.allocator.used.heap").gauge().value()));
+        assertTrue(Double.isNaN(registry.get("netty.allocator.used.direct").gauge().value()));
+    }
+
+    private static ByteBufAllocator allocator(long heap, long direct) {
+        ByteBufAllocator allocator = mock(ByteBufAllocator.class,
+                withSettings().extraInterfaces(ByteBufAllocatorMetricProvider.class));
+        ByteBufAllocatorMetric metric = mock(ByteBufAllocatorMetric.class);
+        when(((ByteBufAllocatorMetricProvider) allocator).metric()).thenReturn(metric);
+        when(metric.usedHeapMemory()).thenReturn(heap);
+        when(metric.usedDirectMemory()).thenReturn(direct);
+        return allocator;
+    }
+
+    private static ByteBufAllocatorMetric metric(ByteBufAllocator allocator) {
+        return ((ByteBufAllocatorMetricProvider) allocator).metric();
     }
 }

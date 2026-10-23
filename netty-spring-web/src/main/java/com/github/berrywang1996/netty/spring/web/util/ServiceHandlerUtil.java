@@ -12,7 +12,7 @@ import io.netty.util.CharsetUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.activation.MimetypesFileTypeMap;
+import jakarta.activation.MimetypesFileTypeMap;
 import java.io.File;
 import java.io.IOException;
 import java.net.URLDecoder;
@@ -253,31 +253,37 @@ public class ServiceHandlerUtil {
             }
         }
 
-        // For non-GET requests, also parse form-encoded body parameters.
-        // Body parameters take precedence over query string parameters for duplicate keys.
-        if (request.method() != HttpMethod.GET) {
-            // Note: text/plain and other non-form content types are not supported for parameter parsing;
-            // only application/x-www-form-urlencoded and multipart/form-data are handled.
-            if (request instanceof HttpContent) {
-                HttpPostRequestDecoder decoder2 = null;
-                try {
-                    decoder2 = new HttpPostRequestDecoder(request);
-                    decoder2.offer((HttpContent) request);
-                    List<InterfaceHttpData> bodyHttpDatas2 = decoder2.getBodyHttpDatas();
-                    for (InterfaceHttpData bodyHttpData : bodyHttpDatas2) {
-                        // Only process Attribute data (form fields); skip FileUpload etc.
-                        if (bodyHttpData.getHttpDataType() == InterfaceHttpData.HttpDataType.Attribute) {
-                            try {
-                                requestParameterMap.put(bodyHttpData.getName(), ((Attribute) bodyHttpData).getValue());
-                            } catch (IOException e) {
-                                log.warn("Failed to read POST parameter '{}': {}", bodyHttpData.getName(), e.getMessage());
-                            }
+        // Only form media types belong in Netty's form decoder. In particular, decoding JSON
+        // here consumes its ByteBuf before MVC's @RequestBody binding gets to read it.
+        String contentType = request.headers().get(HttpHeaderNames.CONTENT_TYPE);
+        String mediaType = contentType == null ? "" : contentType.split(";", 2)[0].trim();
+        boolean formBody = "application/x-www-form-urlencoded".equalsIgnoreCase(mediaType)
+                || "multipart/form-data".equalsIgnoreCase(mediaType);
+        if (!HttpMethod.GET.equals(request.method()) && formBody && request instanceof HttpContent) {
+            ByteBuf content = ((HttpContent) request).content();
+            int readerIndex = content.readerIndex();
+            HttpPostRequestDecoder decoder = null;
+            try {
+                // The constructor already offers HttpContent, including a FullHttpRequest.
+                decoder = new HttpPostRequestDecoder(request);
+                for (InterfaceHttpData bodyHttpData : decoder.getBodyHttpDatas()) {
+                    // Body parameters override query values; file uploads are handled separately.
+                    if (bodyHttpData.getHttpDataType() == InterfaceHttpData.HttpDataType.Attribute) {
+                        try {
+                            requestParameterMap.put(bodyHttpData.getName(), ((Attribute) bodyHttpData).getValue());
+                        } catch (IOException e) {
+                            log.warn("Failed to read POST parameter '{}': {}", bodyHttpData.getName(), e.getMessage());
                         }
                     }
-                } finally {
-                    if (decoder2 != null) {
-                        decoder2.destroy();
+                }
+            } finally {
+                try {
+                    if (decoder != null) {
+                        decoder.destroy();
                     }
+                } finally {
+                    // Leave the original body available to raw-body and multipart binding.
+                    content.readerIndex(readerIndex);
                 }
             }
         }

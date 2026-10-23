@@ -20,9 +20,10 @@ import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.binder.MeterBinder;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.AutoConfigureAfter;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -41,9 +42,9 @@ import org.springframework.context.annotation.Configuration;
  * @since V1.3.0
  */
 @Slf4j
-@Configuration
+@AutoConfiguration(after = NettyServerBootstrapConfigure.class,
+        afterName = "org.springframework.boot.micrometer.metrics.autoconfigure.CompositeMeterRegistryAutoConfiguration")
 @ConditionalOnClass(MeterRegistry.class)
-@AutoConfigureAfter(NettyServerBootstrapConfigure.class)
 public class NettyMicrometerConfigure {
 
     /**
@@ -60,6 +61,7 @@ public class NettyMicrometerConfigure {
      */
     @Bean
     @ConditionalOnBean({NettyServerBootstrap.class, MeterRegistry.class})
+    @ConditionalOnMissingBean(NettyHttpMeterBinder.class)
     public NettyHttpMeterBinder nettyHttpMeterBinder(NettyServerBootstrap bootstrap) {
         log.info("Registering Netty HTTP runtime metrics with Micrometer");
         return new NettyHttpMeterBinder(bootstrap);
@@ -71,7 +73,7 @@ public class NettyMicrometerConfigure {
      * module ({@code WebSocketEventRecorder}) is on the classpath and the
      * {@code server.netty.websocket.enable} property is {@code true} (default).
      */
-    @Configuration
+    @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(name = "com.github.berrywang1996.netty.spring.web.websocket.context.WebSocketEventRecorder")
     @ConditionalOnProperty(prefix = "server.netty.websocket", name = "enable", havingValue = "true", matchIfMissing = true)
     static class WebSocketMetricsConfiguration {
@@ -86,6 +88,7 @@ public class NettyMicrometerConfigure {
          */
         @Bean
         @ConditionalOnBean({NettyServerBootstrap.class, MeterRegistry.class})
+        @ConditionalOnMissingBean(NettyWebSocketMeterBinder.class)
         public NettyWebSocketMeterBinder nettyWebSocketMeterBinder(NettyServerBootstrap bootstrap) {
             log.info("Registering Netty WebSocket metrics with Micrometer");
             return new NettyWebSocketMeterBinder(bootstrap);

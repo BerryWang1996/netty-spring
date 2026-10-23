@@ -43,8 +43,8 @@ render the badge and show `(via …)` only when a message's origin differs from 
 ## Headless check
 
 `smoke.js` is the automated version of the two-tab test (also run in CI): it connects two clients through
-the LB, confirms they are on different nodes, broadcasts from one, and asserts the other receives it with
-the correct `originNode`.
+the LB, confirms they are on different nodes, and verifies broadcasts in both directions with the
+correct `originNode`. This checks basic delivery, not reliable replay or middleware recovery.
 
 ```bash
 cd docker-demo && npm install && node smoke.js   # exit 0 = cross-node delivery confirmed

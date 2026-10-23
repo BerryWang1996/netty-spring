@@ -66,14 +66,14 @@ class RedisRoomRegistryTest {
         // Build the RedisFuture stub FIRST (rf() does when(...) on a fresh mock); nesting it inside the
         // outer when().thenReturn() corrupts Mockito's stubbing state ("UnfinishedStubbing").
         RedisFuture<Long> evalFuture = rf(1L);
-        when(async.<Long>eval(anyString(), any(ScriptOutputType.class), any(String[].class), any()))
+        when(async.<Long>eval(anyString(), any(ScriptOutputType.class), any(String[].class), any(String[].class)))
                 .thenReturn(evalFuture);
 
         registry.join(URI, "r1", "s1", "node-A").toCompletableFuture().join();
 
         // Exactly one EVAL; NO standalone SADD/SREM loop on the hot path.
         ArgumentCaptor<String[]> keys = ArgumentCaptor.forClass(String[].class);
-        verify(async, times(1)).eval(anyString(), eq(ScriptOutputType.INTEGER), keys.capture(), any());
+        verify(async, times(1)).eval(anyString(), eq(ScriptOutputType.INTEGER), keys.capture(), any(String[].class));
         verify(async, never()).sadd(anyString(), any(String[].class));
         verify(async, never()).srem(anyString(), any(String[].class));
 
@@ -91,7 +91,7 @@ class RedisRoomRegistryTest {
     @Test
     void leaveIssuesSingleEval_andUpdatesLocalIndex() {
         RedisFuture<Long> evalFuture = rf(1L);
-        when(async.<Long>eval(anyString(), any(ScriptOutputType.class), any(String[].class), any()))
+        when(async.<Long>eval(anyString(), any(ScriptOutputType.class), any(String[].class), any(String[].class)))
                 .thenReturn(evalFuture);
 
         registry.join(URI, "r1", "s1", "node-A").toCompletableFuture().join();
@@ -100,7 +100,7 @@ class RedisRoomRegistryTest {
         registry.leave(URI, "r1", "s1", "node-A").toCompletableFuture().join();
 
         // Two EVALs total (join + leave); never a looped SREM.
-        verify(async, times(2)).eval(anyString(), eq(ScriptOutputType.INTEGER), any(String[].class), any());
+        verify(async, times(2)).eval(anyString(), eq(ScriptOutputType.INTEGER), any(String[].class), any(String[].class));
         verify(async, never()).srem(anyString(), any(String[].class));
 
         // Local index cleared for the left session.
@@ -111,7 +111,7 @@ class RedisRoomRegistryTest {
     @Test
     void removeAllForSessionIssuesSingleEval_clearsLocalIndexAcrossRooms() {
         RedisFuture<Long> joinFuture = rf(1L);
-        when(async.<Long>eval(anyString(), any(ScriptOutputType.class), any(String[].class), any()))
+        when(async.<Long>eval(anyString(), any(ScriptOutputType.class), any(String[].class), any(String[].class)))
                 .thenReturn(joinFuture);
 
         registry.join(URI, "r1", "s1", "node-A").toCompletableFuture().join();
@@ -121,14 +121,14 @@ class RedisRoomRegistryTest {
         reset(async); // forget the 2 join EVALs so we can count removeAllForSession's exactly
         when(connection.async()).thenReturn(async);
         RedisFuture<Long> removeFuture = rf(2L);
-        when(async.<Long>eval(anyString(), any(ScriptOutputType.class), any(String[].class), any()))
+        when(async.<Long>eval(anyString(), any(ScriptOutputType.class), any(String[].class), any(String[].class)))
                 .thenReturn(removeFuture);
 
         registry.removeAllForSession(URI, "s1", "node-A").toCompletableFuture().join();
 
         // ONE EVAL clears every room (not N leave() calls).
         ArgumentCaptor<String[]> keys = ArgumentCaptor.forClass(String[].class);
-        verify(async, times(1)).eval(anyString(), eq(ScriptOutputType.INTEGER), keys.capture(), any());
+        verify(async, times(1)).eval(anyString(), eq(ScriptOutputType.INTEGER), keys.capture(), any(String[].class));
         assertEquals("netty:roomsession:" + b64(URI) + ":s1", keys.getValue()[0]);
 
         // Local index fully cleared for s1.

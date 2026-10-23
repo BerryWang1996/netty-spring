@@ -2,7 +2,9 @@ package com.github.berrywang1996.netty.spring.web.startup;
 
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
 import com.github.berrywang1996.netty.spring.web.context.WebMappingSupporter;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.EventLoopGroup;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationContext;
@@ -47,8 +49,8 @@ class NettyServerBootstrapTest {
                 executor,
                 Collections.<String, AbstractMappingResolver>emptyMap(),
                 new Semaphore(1));
-        NioEventLoopGroup bossGroup = new NioEventLoopGroup(1);
-        NioEventLoopGroup workerGroup = new NioEventLoopGroup(1);
+        EventLoopGroup bossGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+        EventLoopGroup workerGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
         GenericApplicationContext applicationContext = new GenericApplicationContext();
         applicationContext.refresh();
         EmbeddedChannel serverChannel = new EmbeddedChannel();
@@ -113,8 +115,8 @@ class NettyServerBootstrapTest {
 
     @Test
     void stopContinuesWhenSupporterShutdownThrows() throws Exception {
-        NioEventLoopGroup bossGroup = new NioEventLoopGroup(1);
-        NioEventLoopGroup workerGroup = new NioEventLoopGroup(1);
+        EventLoopGroup bossGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+        EventLoopGroup workerGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
         GenericApplicationContext applicationContext = new GenericApplicationContext();
         applicationContext.refresh();
         EmbeddedChannel serverChannel = new EmbeddedChannel();

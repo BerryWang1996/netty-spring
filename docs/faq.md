@@ -2,7 +2,7 @@
 
 > Release status: see [1.10.1 release notes](release-notes-1.10.1.md). Do not adopt or promote the 1.10.1 cluster examples until its Maven Central publication is confirmed there.
 
-netty-spring is an Apache-2.0 Spring Boot integration for Netty — HTTP MVC, WebSocket, application-layer AES-GCM crypto, and Micrometer observability — plus an opt-in WebSocket cluster and IM-platform foundation on top. It runs its own Netty server (`server.netty.port`, not Tomcat), targets Spring Boot 2.7.x / JDK 17, and is published on Maven Central as `io.github.berrywang1996:netty-*`.
+netty-spring is an Apache-2.0 Spring Boot integration for Netty — HTTP MVC, WebSocket, application-layer AES-GCM crypto, and Micrometer observability — plus an opt-in WebSocket cluster and IM-platform foundation on top. It runs its own Netty server (`server.netty.port`, not Tomcat). Published 1.x artifacts target Spring Boot 2.7.x / JDK 17 under `io.github.berrywang1996:netty-*`; this checkout develops 2.0.0-SNAPSHOT on Boot 4.1 / JDK 17+. The deployment and performance figures below describe 1.x and have not been re-established for 2.0.0.
 
 ---
 
@@ -42,7 +42,7 @@ YeautyYE is a single-node Netty + Spring Boot WebSocket starter — a solid, nar
 
 ### 6. Does it work with Spring Boot 3 or 4?
 
-**No — not today.** The 1.x line targets **Spring Boot 2.7.x (2.7.18) and JDK 17 only**, and runs its own Netty server rather than inside Tomcat. **2.0.0 targets Spring Boot 4.1**, as detailed in the [development plan](development-plan.md); it has not shipped. Boot 3.x is not a supported target of that release. Note honestly: Spring Boot 2.7's upstream OSS support has ended, so the migration to a supported Boot line is the project's next major work item rather than an afterthought.
+Published **1.x targets Spring Boot 2.7.18 / JDK 17**. **2.0.0-SNAPSHOT is being implemented on Spring Boot 4.1 / JDK 17+** and has not shipped; see [migration differences and validation evidence](release-notes-2.0.0.md). Boot 3.x is not a target of either line. Spring Boot 2.7's upstream OSS support has ended; the remaining migration gates are tracked in the [development plan](development-plan.md).
 
 ### 7. Is it production-ready?
 
@@ -76,6 +76,6 @@ The project publishes its ceilings, not just its wins:
 - **Cluster (Redis Pub/Sub):** documented for **roughly ≤10 nodes** of active broadcast, ~33k msg/s cross-node, and it needs a **dedicated, secured Redis** (auth + TLS in production).
 - **Mesh transport:** pushes the ~10-node ceiling, but the fan-out reduction is **genuine only for interest-partitioned live audiences** — a global topic or a high-population topic under random load-balancing still saturates the fleet.
 - **Delivery semantics:** local delivery happens first and is never lost; cross-node broadcast is **at-most-once** (fire-and-forget Pub/Sub); a node offline at publish time misses the message. Undeliverable unicast throws `MessageSessionClosedException`. Redis loss degrades the node to local delivery after a grace period.
-- **Platform:** Spring Boot 2.7.x / JDK 17 only; the planned 2.0.0 target is Boot 4.1.
+- **Platform:** published 1.x uses Spring Boot 2.7.x / JDK 17; development 2.0.0 uses Boot 4.1 / JDK 17+ and has not reached GA.
 
-There's a checked-in multi-node proof you can run yourself — `docker-demo/` spins up two nodes behind an nginx load balancer + Redis, and `smoke.js` asserts one-way cross-node delivery (a broadcast from one node reaches a client on the other with the correct origin-node stamp).
+There's a checked-in multi-node proof you can run yourself — `docker-demo/` spins up two nodes behind an nginx load balancer + Redis, and `smoke.js` verifies broadcasts in both directions between clients on distinct nodes, including the origin-node stamp. This checks basic delivery, not reliable replay or fault recovery.

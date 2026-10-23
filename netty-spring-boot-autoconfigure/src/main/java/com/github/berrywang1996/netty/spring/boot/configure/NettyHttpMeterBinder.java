@@ -21,7 +21,12 @@ import io.micrometer.core.instrument.FunctionCounter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.binder.MeterBinder;
+import io.netty.buffer.ByteBufAllocator;
+import io.netty.buffer.ByteBufAllocatorMetric;
+import io.netty.buffer.ByteBufAllocatorMetricProvider;
 import io.netty.buffer.PooledByteBufAllocator;
+
+import java.util.function.ToLongFunction;
 
 /**
  * Bridges {@link com.github.berrywang1996.netty.spring.web.context.HttpRuntimeRecorder}
@@ -47,6 +52,10 @@ import io.netty.buffer.PooledByteBufAllocator;
  *   <li>{@code netty.allocator.used.direct} – direct memory used by Netty allocator (Gauge)</li>
  * </ul>
  *
+ * <p>Allocator gauges aggregate the default channel allocator and the shared pooled allocator
+ * used for WebSocket broadcasts, counting a shared instance only once. An unavailable memory
+ * measurement makes that gauge {@link Double#NaN}, rather than reporting an incomplete total.
+ *
  * @author berrywang1996
  * @since V1.3.0
  * @see NettyMicrometerConfigure
@@ -56,13 +65,23 @@ public class NettyHttpMeterBinder implements MeterBinder {
     /** The server bootstrap whose HTTP runtime stats are exposed as meters. */
     private final NettyServerBootstrap bootstrap;
 
+    private final ByteBufAllocator[] allocators;
+
     /**
      * Constructs a new binder that reads HTTP runtime counters from the given bootstrap.
      *
      * @param bootstrap the Netty server bootstrap instance; must not be {@code null}
      */
     public NettyHttpMeterBinder(NettyServerBootstrap bootstrap) {
+        this(bootstrap, ByteBufAllocator.DEFAULT, PooledByteBufAllocator.DEFAULT);
+    }
+
+    NettyHttpMeterBinder(NettyServerBootstrap bootstrap, ByteBufAllocator defaultAllocator,
+                        ByteBufAllocator sharedAllocator) {
         this.bootstrap = bootstrap;
+        this.allocators = defaultAllocator == sharedAllocator
+                ? new ByteBufAllocator[]{defaultAllocator}
+                : new ByteBufAllocator[]{defaultAllocator, sharedAllocator};
     }
 
     /**
@@ -152,17 +171,35 @@ public class NettyHttpMeterBinder implements MeterBinder {
                 .description("Maximum admission control permits")
                 .register(registry);
 
-        // ---- Netty pooled allocator memory gauges ----
-        Gauge.builder("netty.allocator.used.heap", PooledByteBufAllocator.DEFAULT,
-                        alloc -> alloc.metric().usedHeapMemory())
+        // Keep the aggregate state alive even when the binder itself is not retained.
+        Gauge.builder("netty.allocator.used.heap", allocators,
+                        sources -> usedMemory(sources, ByteBufAllocatorMetric::usedHeapMemory))
+                .strongReference(true)
                 .baseUnit("bytes")
-                .description("Heap memory used by Netty pooled ByteBuf allocator")
+                .description("Heap memory used by Netty default and shared pooled ByteBuf allocators")
                 .register(registry);
 
-        Gauge.builder("netty.allocator.used.direct", PooledByteBufAllocator.DEFAULT,
-                        alloc -> alloc.metric().usedDirectMemory())
+        Gauge.builder("netty.allocator.used.direct", allocators,
+                        sources -> usedMemory(sources, ByteBufAllocatorMetric::usedDirectMemory))
+                .strongReference(true)
                 .baseUnit("bytes")
-                .description("Direct memory used by Netty pooled ByteBuf allocator")
+                .description("Direct memory used by Netty default and shared pooled ByteBuf allocators")
                 .register(registry);
+    }
+
+    private static double usedMemory(ByteBufAllocator[] allocators,
+                                     ToLongFunction<ByteBufAllocatorMetric> measurement) {
+        double total = 0;
+        for (ByteBufAllocator allocator : allocators) {
+            if (!(allocator instanceof ByteBufAllocatorMetricProvider provider)) {
+                return Double.NaN;
+            }
+            long used = measurement.applyAsLong(provider.metric());
+            if (used < 0) {
+                return Double.NaN;
+            }
+            total += used;
+        }
+        return total;
     }
 }

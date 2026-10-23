@@ -16,8 +16,8 @@
 
 package com.github.berrywang1996.netty.spring.web.handler;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
 import com.github.berrywang1996.netty.spring.web.context.HttpRuntimeRecorder;
 import com.github.berrywang1996.netty.spring.web.context.WebMappingSupporter;
@@ -85,7 +85,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
     public static final AttributeKey<FullHttpRequest> REQUEST_IN_CHANNEL = AttributeKey.valueOf("request");
 
     /** Shared ObjectMapper for serializing management endpoint JSON responses. */
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final ObjectMapper OBJECT_MAPPER = JsonMapper.builder().configureForJackson2().build();
 
     private final WebMappingSupporter supporter;
 
@@ -327,7 +327,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
      */
     private boolean handleManagementRequest(ChannelHandlerContext ctx,
                                             FullHttpRequest request,
-                                            String baseUri) throws JsonProcessingException {
+                                            String baseUri) {
         NettyServerStartupProperties.Management managementProperties = getManagementProperties();
         if (managementProperties == null || !managementProperties.isEnable()) {
             return false;
@@ -387,8 +387,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
      * Serializes the given map as JSON and writes it as an HTTP response.
      * Closes the connection if the request is not keep-alive.
      */
-    private void sendJson(ChannelHandlerContext ctx, FullHttpRequest request, Map<String, Object> body)
-            throws JsonProcessingException {
+    private void sendJson(ChannelHandlerContext ctx, FullHttpRequest request, Map<String, Object> body) {
         byte[] content = OBJECT_MAPPER.writeValueAsBytes(body);
         FullHttpResponse response = new DefaultFullHttpResponse(
                 HTTP_1_1,

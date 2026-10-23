@@ -22,12 +22,12 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.ClusterN
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.node.NodeState;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.BrokerState;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBroker;
-import org.springframework.boot.actuate.health.AbstractHealthIndicator;
-import org.springframework.boot.actuate.health.Health;
-import org.springframework.boot.actuate.health.Status;
+import org.springframework.boot.health.contributor.AbstractHealthIndicator;
+import org.springframework.boot.health.contributor.Health;
+import org.springframework.boot.health.contributor.Status;
 
 /**
- * Spring Boot Actuator {@link org.springframework.boot.actuate.health.HealthIndicator}
+ * Spring Boot Actuator {@link org.springframework.boot.health.contributor.HealthIndicator}
  * for WebSocket cluster mode.
  *
  * <p>Answers the central operational question for a clustered deployment — "is this node

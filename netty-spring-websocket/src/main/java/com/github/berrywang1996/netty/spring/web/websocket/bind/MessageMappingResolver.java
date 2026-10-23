@@ -16,7 +16,8 @@
 
 package com.github.berrywang1996.netty.spring.web.websocket.bind;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
 import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitter;
 import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitterAware;
@@ -108,7 +109,8 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     private static final String HEARTBEAT_CLOSE_REASON = "Heartbeat timeout";
 
     /** Shared ObjectMapper for JSON text payload deserialization in handler parameter binding. */
-    private static final ObjectMapper DEFAULT_OBJECT_MAPPER = new ObjectMapper();
+    private static final ObjectMapper DEFAULT_OBJECT_MAPPER =
+            JsonMapper.builder().configureForJackson2().build();
 
     private static final String ORIGIN_REJECT_ACTION =
             "Action: add the browser Origin to server.netty.websocket.allowed-origins.";

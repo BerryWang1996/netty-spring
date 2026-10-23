@@ -85,7 +85,7 @@ class RedisPresenceRegistryTest {
         // Build the RedisFuture stub FIRST (nesting rf() inside when().thenReturn() corrupts Mockito stubbing).
         RedisFuture<List<Object>> evalFuture = rf(Arrays.asList("OFFLINE", "ONLINE"));
         when(async.<List<Object>>eval(eq(RedisPresenceRegistry.SET_LUA), any(ScriptOutputType.class),
-                any(String[].class), any())).thenReturn(evalFuture);
+                any(String[].class), any(String[].class))).thenReturn(evalFuture);
 
         PresenceTransition t = registry.setPresence("u", "nodeA", "s1", PresenceStatus.ONLINE)
                 .toCompletableFuture().join();
@@ -95,7 +95,7 @@ class RedisPresenceRegistryTest {
         assertTrue(t.changed());
 
         ArgumentCaptor<String[]> keys = ArgumentCaptor.forClass(String[].class);
-        verify(async).eval(eq(RedisPresenceRegistry.SET_LUA), any(ScriptOutputType.class), keys.capture(), any());
+        verify(async).eval(eq(RedisPresenceRegistry.SET_LUA), any(ScriptOutputType.class), keys.capture(), any(String[].class));
         assertEquals("netty:presence:{" + b64("u") + "}", keys.getValue()[0]);
     }
 
@@ -103,7 +103,7 @@ class RedisPresenceRegistryTest {
     void clearPresence_runsClearLua() {
         RedisFuture<List<Object>> evalFuture = rf(Arrays.asList("ONLINE", "OFFLINE"));
         when(async.<List<Object>>eval(eq(RedisPresenceRegistry.CLEAR_LUA), any(ScriptOutputType.class),
-                any(String[].class), any())).thenReturn(evalFuture);
+                any(String[].class), any(String[].class))).thenReturn(evalFuture);
 
         PresenceTransition t = registry.clearPresence("u", "nodeA", "s1").toCompletableFuture().join();
         assertEquals(PresenceStatus.ONLINE, t.getOldAggregate());
@@ -114,7 +114,7 @@ class RedisPresenceRegistryTest {
     void setPresenceForUser_runsSetUserLua() {
         RedisFuture<List<Object>> evalFuture = rf(Arrays.asList("ONLINE", "AWAY"));
         when(async.<List<Object>>eval(eq(RedisPresenceRegistry.SET_USER_LUA), any(ScriptOutputType.class),
-                any(String[].class), any())).thenReturn(evalFuture);
+                any(String[].class), any(String[].class))).thenReturn(evalFuture);
 
         PresenceTransition t = registry.setPresenceForUser("u", PresenceStatus.AWAY).toCompletableFuture().join();
         assertEquals(PresenceStatus.ONLINE, t.getOldAggregate());
@@ -149,9 +149,9 @@ class RedisPresenceRegistryTest {
         when(sync.scan(any(ScanCursor.class), any(ScanArgs.class))).thenReturn(cur);
         // k1 (user u) flips ONLINE->OFFLINE; k2 (user v) unchanged ONLINE->ONLINE. sync.eval returns the value directly.
         when(sync.eval(eq(RedisPresenceRegistry.REAP_LUA), any(ScriptOutputType.class),
-                aryEq(new String[]{k1}), any())).thenReturn((List) Arrays.asList("ONLINE", "OFFLINE"));
+                aryEq(new String[]{k1}), any(String[].class))).thenReturn((List) Arrays.asList("ONLINE", "OFFLINE"));
         when(sync.eval(eq(RedisPresenceRegistry.REAP_LUA), any(ScriptOutputType.class),
-                aryEq(new String[]{k2}), any())).thenReturn((List) Arrays.asList("ONLINE", "ONLINE"));
+                aryEq(new String[]{k2}), any(String[].class))).thenReturn((List) Arrays.asList("ONLINE", "ONLINE"));
 
         List<PresenceTransition> changed = registry.removeAllForNode("nodeA").toCompletableFuture().join();
 

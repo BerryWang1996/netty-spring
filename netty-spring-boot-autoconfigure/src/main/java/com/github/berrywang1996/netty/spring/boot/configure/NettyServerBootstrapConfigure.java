@@ -18,11 +18,11 @@ package com.github.berrywang1996.netty.spring.boot.configure;
 
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 
 /**
  * Spring Boot auto-configuration for the Netty server bootstrap.
@@ -34,7 +34,7 @@ import org.springframework.context.annotation.Configuration;
  *
  * <p>This is the foundational auto-configuration class that other Netty-related
  * configurations (such as {@link MessageSenderSupportConfigure} and
- * {@link NettyMicrometerConfigure}) depend on via {@code @AutoConfigureAfter}.
+ * {@link NettyMicrometerConfigure}) order themselves after via {@link AutoConfiguration}.
  *
  * <p>Configuration properties are bound through
  * {@link NettyServerStartupPropertiesWrapper}, which maps the {@code server.netty.*}
@@ -46,7 +46,7 @@ import org.springframework.context.annotation.Configuration;
  * @see NettyServerBootstrap
  */
 @Slf4j
-@Configuration
+@AutoConfiguration
 @EnableConfigurationProperties(NettyServerStartupPropertiesWrapper.class)
 public class NettyServerBootstrapConfigure {
 

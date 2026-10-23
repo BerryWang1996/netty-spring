@@ -35,14 +35,6 @@ import java.time.Duration;
  */
 public final class ClusterTestNatsJetStream {
 
-    static {
-        // Same docker-java API-probe workaround as ClusterTestNats/ClusterTestRedisCluster (modern Docker
-        // rejects the hardcoded /v1.32 probe). Pin a supported negotiated API version before the first Docker call.
-        if (System.getProperty("api.version") == null) {
-            System.setProperty("api.version", "1.43");
-        }
-    }
-
     private static volatile boolean resolved;
     private static volatile String url;
     @SuppressWarnings("resource")

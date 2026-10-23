@@ -8,7 +8,7 @@
 
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-spring-parent</artifactId>
-    <version>1.10.1</version>
+    <version>2.0.0-SNAPSHOT</version>
 
     <name>netty-spring-parent</name>
     <description>
@@ -59,19 +59,16 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <maven.compiler.release>${java.version}</maven.compiler.release>
         <!-- runtime  -->
-        <netty.version>4.1.139.Final</netty.version>
-        <spring-boot.version>2.7.18</spring-boot.version>
-        <!-- test only: Spring Boot 2.7.x BOM does not manage testcontainers (Boot 3.1+ does) -->
-        <testcontainers.version>1.20.4</testcontainers.version>
+        <spring-boot.version>4.1.2</spring-boot.version>
         <!-- optional NATS client — only pulled in by the NATS cluster broker impl -->
         <jnats.version>2.20.4</jnats.version>
-        <!-- activation -->
-        <activation.version>1.1.1</activation.version>
-        <!-- provided -->
-        <lombok.version>1.18.38</lombok.version>
+        <!-- Jakarta Activation runtime implementation; API version is managed by Boot. -->
+        <angus-activation.version>2.0.3</angus-activation.version>
+        <!-- Keep the annotation processor aligned with Boot 4.1.2's managed Lombok. -->
+        <lombok.version>1.18.48</lombok.version>
         <!-- build -->
-        <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
-        <maven-surefire-plugin.version>3.2.5</maven-surefire-plugin.version>
+        <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
+        <maven-surefire-plugin.version>3.5.6</maven-surefire-plugin.version>
         <maven-deploy-plugin.version>3.1.2</maven-deploy-plugin.version>
         <cyclonedx-maven-plugin.version>2.9.1</cyclonedx-maven-plugin.version>
         <dependency-check-maven.version>12.2.2</dependency-check-maven.version>
@@ -90,72 +87,21 @@
     <dependencyManagement>
         <dependencies>
 
-            <!-- netty managed versions -->
-            <dependency>
-                <groupId>io.netty</groupId>
-                <artifactId>netty-bom</artifactId>
-                <version>${netty.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-
             <!--
-              logback 1.2.13 override: Spring Boot 2.7.18 BOM pins logback 1.2.12, which
-              still has CVE-2023-6378 (serialization vulnerability in SocketReceiver /
-              SocketAppender). 1.2.13 is the last 1.2.x release and ships the fix. Declared
-              BEFORE spring-boot-dependencies so this version wins.
+              Boot 4.1.2 manages Jackson 3.1.7, affected by CVE-2026-110879.
+              Use the 3.1.8 patch BOM until Boot incorporates this security fix.
             -->
             <dependency>
-                <groupId>ch.qos.logback</groupId>
-                <artifactId>logback-classic</artifactId>
-                <version>1.2.13</version>
-            </dependency>
-            <dependency>
-                <groupId>ch.qos.logback</groupId>
-                <artifactId>logback-core</artifactId>
-                <version>1.2.13</version>
-            </dependency>
-
-            <!--
-              spring-framework 5.3.39 override: replace Boot 2.7.18's 5.3.31 baseline.
-              This historical pin does not resolve every Spring advisory or restore upstream
-              OSS support. Check each CVE against its actual fixed versions (see
-              docs/dependency-governance.md). Imported BEFORE spring-boot-dependencies
-              so these versions win; re-evaluate the override during the Boot 4.1 migration.
-            -->
-            <dependency>
-                <groupId>org.springframework</groupId>
-                <artifactId>spring-framework-bom</artifactId>
-                <version>5.3.39</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-
-            <!--
-              Jackson 2.18 LTS security baseline, including the CVE-2026-110879 fix.
-              Import the full BOM before Boot's BOM to keep Jackson components aligned.
-            -->
-            <dependency>
-                <groupId>com.fasterxml.jackson</groupId>
+                <groupId>tools.jackson</groupId>
                 <artifactId>jackson-bom</artifactId>
-                <version>2.18.12</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-
-            <!-- Log4j security fixes, including CVE-2026-49844 in log4j-api. -->
-            <dependency>
-                <groupId>org.apache.logging.log4j</groupId>
-                <artifactId>log4j-bom</artifactId>
-                <version>2.25.5</version>
+                <version>3.1.8</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
 
             <!--
-              SnakeYAML 2.7 removes unsafe compact constructors and replaces the 1.33
-              security baseline. Boot 2.7.18's YAML loader uses the compatible
-              SafeConstructor(LoaderOptions) and Representer(DumperOptions) APIs.
+              Boot 4.1.2 manages SnakeYAML 2.6. Keep 2.7's removal of unsafe compact
+              constructors until the Boot BOM incorporates that security change.
             -->
             <dependency>
                 <groupId>org.yaml</groupId>
@@ -163,25 +109,11 @@
                 <version>2.7</version>
             </dependency>
 
-            <!-- spring boot managed versions -->
+            <!-- Boot manages Spring Framework, Netty, logging, Lettuce, Micrometer and tests. -->
             <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
                 <version>${spring-boot.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-
-            <!--
-              testcontainers managed versions — TEST scope only. Spring Boot 2.7.x's BOM does NOT
-              manage testcontainers (that began in Boot 3.1), so we import its BOM here. Used solely
-              by the two cluster modules' integration tests to provision a fallback Redis in CI; it
-              never appears on any main/runtime classpath or in a published artifact.
-            -->
-            <dependency>
-                <groupId>org.testcontainers</groupId>
-                <artifactId>testcontainers-bom</artifactId>
-                <version>${testcontainers.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -201,11 +133,11 @@
                 <scope>provided</scope>
             </dependency>
 
-            <!-- activation -->
+            <!-- Jakarta Activation implementation is not managed by Boot's BOM. -->
             <dependency>
-                <groupId>javax.activation</groupId>
-                <artifactId>activation</artifactId>
-                <version>${activation.version}</version>
+                <groupId>org.eclipse.angus</groupId>
+                <artifactId>angus-activation</artifactId>
+                <version>${angus-activation.version}</version>
             </dependency>
 
         </dependencies>
@@ -259,16 +191,6 @@
                     <version>${maven-surefire-plugin.version}</version>
                     <configuration>
                         <useModulePath>false</useModulePath>
-                        <!-- Pin docker-java's negotiated Docker API version for Testcontainers. docker-java
-                             3.4.0 first-probes /v1.32, which modern Docker (29.x, minAPIVersion 1.40) rejects
-                             with HTTP 400, so DockerClientFactory reports "no valid Docker environment" and the
-                             cluster Testcontainers ITs (Redis / NATS / JetStream) SKIP even though Docker is
-                             live. Setting api.version at JVM start — before Testcontainers' first probe — fixes
-                             it reliably in every surefire fork (the static-initializer fallback in the test
-                             resolvers is class-load-order racy). 1.43 is within [1.40, current]. -->
-                        <systemPropertyVariables>
-                            <api.version>1.43</api.version>
-                        </systemPropertyVariables>
                     </configuration>
                 </plugin>
                 <plugin>

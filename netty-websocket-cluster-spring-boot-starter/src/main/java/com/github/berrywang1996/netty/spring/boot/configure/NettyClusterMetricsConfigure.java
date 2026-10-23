@@ -22,13 +22,12 @@ import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.ClusterBr
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MessageAuthenticator;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.AutoConfigureAfter;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 
 /**
  * Micrometer auto-configuration for WebSocket cluster mode. Activated when {@code micrometer-core}
@@ -40,10 +39,10 @@ import org.springframework.context.annotation.Configuration;
  * @since V1.9.0
  */
 @Slf4j
-@Configuration
+@AutoConfiguration(after = NettyWebSocketClusterConfigure.class,
+        afterName = "org.springframework.boot.micrometer.metrics.autoconfigure.CompositeMeterRegistryAutoConfiguration")
 @ConditionalOnClass(MeterRegistry.class)
 @ConditionalOnProperty(prefix = "server.netty.websocket.cluster", name = "enable", havingValue = "true")
-@AutoConfigureAfter(NettyWebSocketClusterConfigure.class)
 public class NettyClusterMetricsConfigure {
 
     @Bean

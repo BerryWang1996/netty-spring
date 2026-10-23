@@ -16,8 +16,10 @@
 
 package com.github.berrywang1996.netty.spring.web.mvc.bind;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.SerializationFeature;
+import tools.jackson.databind.cfg.DateTimeFeature;
+import tools.jackson.databind.json.JsonMapper;
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
 import com.github.berrywang1996.netty.spring.web.databind.DataBindUtil;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.*;
@@ -51,8 +53,6 @@ import io.netty.handler.codec.http.multipart.InterfaceHttpData;
 import io.netty.handler.stream.ChunkedFile;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
-import org.springframework.core.DefaultParameterNameDiscoverer;
-import org.springframework.core.ParameterNameDiscoverer;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.util.PathMatcher;
@@ -98,19 +98,12 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
     /** Sentinel value for "no default" in annotation attributes. */
     private static final String NO_DEFAULT_VALUE = "\n\t\t\n\t\t\n\n\t\t\t\t\n";
 
-    /** Discovers method parameter names from class metadata or debug information. */
-    private static final ParameterNameDiscoverer PARAMETER_NAME_DISCOVERER =
-            new DefaultParameterNameDiscoverer();
-
     /** Shared ObjectMapper for @RequestBody deserialization. */
-    private static final ObjectMapper OBJECT_MAPPER;
-
-    static {
-        OBJECT_MAPPER = new ObjectMapper();
-        // Use Jackson's thread-safe StdDateFormat instead of SimpleDateFormat
-        OBJECT_MAPPER.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-        OBJECT_MAPPER.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
-    }
+    private static final ObjectMapper OBJECT_MAPPER = JsonMapper.builder()
+            .configureForJackson2()
+            .disable(DateTimeFeature.WRITE_DATES_AS_TIMESTAMPS)
+            .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
+            .build();
 
     /** Whether any mapped method uses {@link PathVariable}, requiring path-pattern matching. */
     private final boolean isRestfulUrl;
@@ -249,6 +242,8 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
      * Parses method parameter metadata for all registered handler methods, resolving
      * parameter names from annotations when present, or falling back to the discovered
      * parameter name.
+     * Java handlers with arguments require {@code -parameters} metadata, including
+     * methods whose parameter names are overridden by binding annotations.
      *
      * @return an unmodifiable map from HTTP method to an ordered map of parameter name to type
      */
@@ -257,10 +252,10 @@ public class RequestMappingResolver extends AbstractMappingResolver<FullHttpRequ
         Map<HttpRequestMethod, Map<String, Class>> tempMethodParamTypes = new HashMap<>();
         for (Map.Entry<HttpRequestMethod, Method> kMethodEntry : getMethods().entrySet()) {
             LinkedHashMap<String, Class> methodParams = new LinkedHashMap<>();
-            String[] params = PARAMETER_NAME_DISCOVERER.getParameterNames(kMethodEntry.getValue());
+            String[] params = discoverParameterNames(kMethodEntry.getValue());
             Annotation[][] parameterAnnotations = kMethodEntry.getValue().getParameterAnnotations();
             Class<?>[] parameterTypes = kMethodEntry.getValue().getParameterTypes();
-            if (params != null && parameterTypes.length == params.length) {
+            if (params.length > 0) {
                 for (int i = 0; i < params.length; i++) {
                     String key = params[i];
                     // Check all parameter-binding annotations for name override

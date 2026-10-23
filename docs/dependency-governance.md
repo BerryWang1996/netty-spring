@@ -9,25 +9,30 @@
 - 普通开发命令保持轻量，依赖扫描和 SBOM 生成只在显式 profile 下运行。
 - 本地普通构建不自动扫描；当前 CI 对所有 `v*` tag 执行 Dependency Scan，功能补丁也不能宣称跳过该 job 后“全部 CI 通过”。扫描结果与尚未完成项记录到对应发布说明。
 
-## 版本一致性
+## 当前依赖基线与覆盖
 
-- 根 POM 显式导入 `io.netty:netty-bom:${netty.version}`，避免 Netty 子模块被 Spring Boot BOM 中较旧的版本覆盖，导致 Netty 组件混版。`1.10.1` 将 Netty 从 `4.1.134.Final` 升至 **`4.1.139.Final`**，包含 HTTP 请求边界、压缩队列资源耗尽等修复；本项目实际使用 `HttpServerCodec` 与 `HttpContentCompressor`，不能将相关告警统一视为未启用协议的误报。依据：[Netty 官方安全发布说明](https://netty.io/news/2026/10/06/4-1-139-Final.html)。
-- Runtime 不再依赖 `netty-all`，只显式引入当前代码实际使用的 `netty-codec-http`、`netty-handler`、`netty-transport`、`netty-buffer` 和 `netty-common`，减少无关协议模块带来的漏洞面和扫描噪音。
-- Spring Boot 仍由 `org.springframework.boot:spring-boot-dependencies:${spring-boot.version}` 管理；如果后续升级 Spring Boot，需要重新确认 Netty BOM 覆盖顺序和 `mvn dependency:tree -Dincludes=io.netty` 输出。
-- **logback 1.2.13 显式 pin（自 `1.7.1` 起）**：Spring Boot 2.7.18 BOM 默认 logback 1.2.12 仍有 CVE-2023-6378（`SocketReceiver` / `SocketAppender` 序列化漏洞）。根 POM 的 `<dependencyManagement>` 在 `spring-boot-dependencies` 之前显式声明 `logback-classic:1.2.13` 与 `logback-core:1.2.13` 覆盖。
-- **spring-framework 5.3.39 显式 pin（自 `1.8.0` 起）**：根 POM 在 `spring-boot-dependencies` 之前导入 `org.springframework:spring-framework-bom:5.3.39`，覆盖 Boot 2.7.18 管理的版本。该覆盖不代表消除了所有 Spring CVE；每个漏洞需按官方影响与修复版本重新核实。
-- **Jackson 2.18.12 BOM 覆盖（自 `1.10.1` 起）**：根 POM 在 Boot BOM 之前导入 `com.fasterxml.jackson:jackson-bom:2.18.12`，统一 Jackson 2 组件，采用 2.18 LTS 修复线。该版本包含 CVE-2026-110879 多态类型校验绕过修复；此前的 `2.18.11` 仍受影响。项目默认 mapper 未开启 default typing，但业务 DTO 的注解及自定义 mapper 仍需按实际用法审核。依据：[Jackson 官方安全公告](https://github.com/FasterXML/jackson-databind/security/advisories/GHSA-m8xf-2cr7-77ph)。
-- **Log4j 2.25.5 BOM 覆盖（自 `1.10.1` 起）**：在 Boot BOM 之前导入 `org.apache.logging.log4j:log4j-bom:2.25.5`，保持 `log4j-api` 与桥接组件版本一致，包含 CVE-2026-49844 的非有限浮点值 JSON 输出修复。实际日志后端仍为 Logback；不能据此宣称已解决 Logback 或 Spring 的剩余告警。依据：[Apache Log4j 安全公告](https://logging.apache.org/security.html#CVE-2026-49844)。
-- **SnakeYAML 2.7 显式覆盖（自 `1.10.1` 起）**：替换此前的 `1.33` pin，消除旧构造器的 CVE-2022-1471 版本告警，并采用移除不安全 CompactConstructor 的 `2.7`。Boot 2.7.18 的 YAML 配置加载器使用 `SafeConstructor(LoaderOptions)` 与 `Representer(DumperOptions)`，已具备 2.x 所需构造器兼容性；升级后仍须验证真实 `application.yml` 启动。依据：[Boot 2.7.18 加载器源码](https://github.com/spring-projects/spring-boot/blob/v2.7.18/spring-boot-project/spring-boot/src/main/java/org/springframework/boot/env/OriginTrackedYamlLoader.java)、[SnakeYAML 变更记录](https://github.com/snakeyaml/snakeyaml/blob/master/src/changes/changes.xml)。
-- **基线迁移**：1.x 的依赖覆盖不能恢复 Boot 2.7 的上游 OSS 支持，也不构成持续安全修复承诺。`2.0.0` 目标为 **Spring Boot 4.1**；迁移步骤、基线选择和 1.x 维护边界统一见[开发计划](development-plan.md)。迁移时逐项审核这些历史 pin，优先恢复目标 BOM 管理，只保留有验证依据的覆盖。
+当前开发版本为 `2.0.0-SNAPSHOT`，根 POM 锁定 **Spring Boot 4.1.2 / JDK 17**，编译使用 `--release 17` 和 `-parameters`。Spring Framework、Netty、日志组件、Lettuce、Micrometer、JUnit、Mockito 和 Testcontainers 统一由 Boot BOM 管理；旧 Spring 5、Netty 4.1、Jackson 2、Logback、Log4j 和 Testcontainers 独立覆盖已移除。历史版本及漏洞处置依据集中保留在 [1.10.1 发布说明](release-notes-1.10.1.md)，迁移状态见[开发计划](development-plan.md)。
+
+当前保留的显式版本如下；升级 Boot 时逐项复核，BOM 纳入对应修复后移除安全覆盖。
+
+| 依赖 | 当前版本与原因 |
+|---|---|
+| `tools.jackson:jackson-bom` | **3.1.8**，在 Boot BOM 之前导入，覆盖 Boot 4.1.2 的 3.1.7。修复 CVE-2026-110879 多态类型校验绕过；影响包含基于注解的类名多态，不能仅因未启用 default typing 就排除风险。依据：[Jackson 官方安全公告](https://github.com/FasterXML/jackson-databind/security/advisories/GHSA-m8xf-2cr7-77ph)。 |
+| `org.yaml:snakeyaml` | **2.7**，覆盖 Boot 4.1.2 的 2.6，保留移除绕过 `TagInspector` 的 `CompactConstructor` / `PackageCompactConstructor` 的修复；YAML 配置加载仍需回归。依据：[SnakeYAML 变更记录](https://github.com/snakeyaml/snakeyaml/blob/master/src/changes/changes.xml)。 |
+| `org.eclipse.angus:angus-activation` | **2.0.3**，Boot BOM 未管理此实现；作为 `netty-spring-web` 的 runtime 依赖，为 MIME 类型解析提供 Jakarta Activation 实现。`jakarta.activation-api` 版本由 Boot 管理。 |
+| `io.nats:jnats` | **2.20.4**，Boot BOM 未管理的可选 NATS 客户端，沿用既有传输基线；使用 NATS 的应用需显式引入，Redis 默认路径不应依赖它。 |
+| `org.projectlombok:lombok` | **1.18.48**，与 Boot 4.1.2 一致；根属性同时供依赖和编译器 annotation processor 使用，避免处理器与依赖版本不一致。 |
+
+Runtime 继续按需引入 Netty 模块，不使用 `netty-all`。每次变更依赖后检查 `dependency:tree` / effective POM 与实际制品，尤其避免 Spring、Netty、Jackson 混版。上述版本选择不代表 `2.0.0` 漏洞扫描已经通过；SBOM、扫描结果、残余告警及远端 CI 均须按本版实际结果记录。
 
 ## Maven Profiles
+
+以下命令在仓库根目录执行，`JAVA_HOME` 指向待验证的 JDK。Windows 使用 `.\mvnw.cmd`，Linux/macOS 使用 `bash ./mvnw`；无需依赖维护者本机 Maven 安装路径。
 
 ### 生成 SBOM
 
 ```powershell
-$env:JAVA_HOME='C:\Program Files\graalvm-jdk-17.0.11+7.1'
-& 'C:\Users\qq951\.m2\wrapper\dists\apache-maven-3.9.9-bin\4nf9hui3q3djbarqar9g711ggc\apache-maven-3.9.9\bin\mvn.cmd' -Psbom -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom
+.\mvnw.cmd -Psbom -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom
 ```
 
 输出位置：
@@ -38,8 +43,7 @@ $env:JAVA_HOME='C:\Program Files\graalvm-jdk-17.0.11+7.1'
 ### 漏洞扫描
 
 ```powershell
-$env:JAVA_HOME='C:\Program Files\graalvm-jdk-17.0.11+7.1'
-& 'C:\Users\qq951\.m2\wrapper\dists\apache-maven-3.9.9-bin\4nf9hui3q3djbarqar9g711ggc\apache-maven-3.9.9\bin\mvn.cmd' -Pdependency-scan -DskipTests package org.owasp:dependency-check-maven:12.2.2:aggregate
+.\mvnw.cmd -Pdependency-scan -DskipTests package org.owasp:dependency-check-maven:12.2.2:aggregate
 ```
 
 输出位置：
@@ -62,11 +66,11 @@ Dependency-Check data cache 已固定到 `${settings.localRepository}/../depende
 
 仓库提供 `.github/workflows/ci.yml`：
 
-- `Maven Test`：push 和 pull request 默认执行全量 `mvn test`。
+- `Maven Test (JDK 17/21/25)`：push 和 pull request 默认在三个 JDK 上通过 Maven Wrapper 执行全量 `test`，编译基线仍为 17；矩阵配置不代表三个运行结果已通过。
 - `Generate SBOM`：测试通过后生成 `target/netty-spring-sbom.json` 和 `target/netty-spring-sbom.xml`，并上传为 `netty-spring-sbom` artifact。
 - `Dependency Scan`：只在 `workflow_dispatch`、每周定时任务或 `v*` tag push 时执行，用于发布前门禁；优先使用 `NVD_API_KEY` secret，未配置时使用通过上述新鲜度检查的官方镜像，并缓存 `~/.m2/dependency-check-data`。扫描失败时也尝试上传已有报告，便于告警 triage。
 
-每次发布须记录 `Dependency Scan` job 的实际结果；失败或未执行时保留未完成状态，不能写成验证通过。企业安全发布还须完成漏洞处置门槛。普通 PR 不默认跑漏洞库扫描。
+测试 job 汇总 Surefire XML，要求 tests 大于零且 failures/errors/skipped 均为零，避免因 Docker 不可用而静默跳过集成测试；每个 JDK 的报告分别上传。每次发布须记录 `Dependency Scan` job 的实际结果；失败或未执行时保留未完成状态，不能写成验证通过。企业安全发布还须完成漏洞处置门槛。普通 PR 不默认跑漏洞库扫描。
 
 ## 告警处理规则
 
@@ -80,10 +84,10 @@ Dependency-Check data cache 已固定到 `${settings.localRepository}/../depende
 
 企业安全发布前至少需要完成：
 
-- `mvn test`
-- `mvn -Psbom -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom`
-- `mvn -Pdependency-scan -DskipTests package org.owasp:dependency-check-maven:12.2.2:aggregate`（无 API key 时先验证镜像新鲜度并附加 `-DnvdDatafeedUrl=...`）
-- GitHub Actions `CI` workflow 中的 `Maven Test`、`Generate SBOM` 和发布门禁 `Dependency Scan`
+- `.\mvnw.cmd test`
+- `.\mvnw.cmd -Psbom -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom`
+- `.\mvnw.cmd -Pdependency-scan -DskipTests package org.owasp:dependency-check-maven:12.2.2:aggregate`（无 API key 时先验证镜像新鲜度并附加 `-DnvdDatafeedUrl=...`）
+- GitHub Actions `CI` workflow 中的三项 `Maven Test`、`Generate SBOM` 和发布门禁 `Dependency Scan`
 - GitHub Dependabot 或等效扫描告警已处理、记录或明确延期
 
 如果依赖扫描因为网络或漏洞数据库不可用而失败，本次只能作为开发提交、功能/稳定性发布或 RC 验证，不能直接声明为企业安全发布。

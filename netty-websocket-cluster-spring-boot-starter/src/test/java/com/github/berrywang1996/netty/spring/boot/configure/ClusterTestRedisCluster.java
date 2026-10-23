@@ -59,22 +59,6 @@ import java.util.Collections;
  */
 public final class ClusterTestRedisCluster {
 
-    static {
-        // docker-java 3.4.0 (bundled by Testcontainers 1.20.4) negotiates the Docker API with a
-        // hardcoded fallback of /v1.32/ for its first probe. A modern daemon (Docker 29.x advertises
-        // ApiVersion 1.54, MinAPIVersion 1.40) rejects /v1.32/ with HTTP 400 Bad Request, so
-        // DockerClientFactory reports "no valid Docker environment" and these tests would SKIP even
-        // though Docker is live. Pinning docker-java's negotiated API version to one inside
-        // [MinAPIVersion, ApiVersion] makes the probe (and all subsequent calls) succeed. 1.43 is well
-        // within range and fully supported by docker-java 3.4.0. Set as a system property because
-        // docker-java's DefaultDockerClientConfig reads the "api.version" property; do this in a static
-        // initializer so it is applied before the first DockerClientFactory.instance() call. Respect an
-        // explicit override if the operator already set one (e.g. for a remote daemon).
-        if (System.getProperty("api.version") == null) {
-            System.setProperty("api.version", "1.43");
-        }
-    }
-
     private static volatile boolean resolved;
     private static volatile String nodes;
     @SuppressWarnings("resource")
@@ -110,12 +94,12 @@ public final class ClusterTestRedisCluster {
      * inherit the same topology-pinning behaviour.
      */
     public static ClusterClientOptions clusterClientOptions() {
-        // Adaptive refresh triggers and periodic refresh are BOTH off by default in
-        // ClusterTopologyRefreshOptions; we make periodic-off explicit and simply never enable the
-        // adaptive triggers, so Lettuce never re-resolves the topology to the container-internal port.
+        // Lettuce 7 enables adaptive refresh by default. Explicitly disable both refresh paths
+        // so topology refresh cannot replace the reachable seed with a container-internal address.
         return ClusterClientOptions.builder()
                 .topologyRefreshOptions(ClusterTopologyRefreshOptions.builder()
                         .enablePeriodicRefresh(false)
+                        .disableAllAdaptiveRefreshTriggers()
                         .build())
                 .validateClusterNodeMembership(false)
                 .build();

@@ -285,17 +285,40 @@ public abstract class AbstractMappingResolver<T, K> {
         return Collections.emptyMap();
     }
 
-    /** Shared discoverer for resolving method parameter names from bytecode debug info or annotations. */
+    /** Shared discoverer for parameter metadata; Java handlers must be compiled with {@code -parameters}. */
     private static final DefaultParameterNameDiscoverer PARAMETER_NAME_DISCOVERER =
             new DefaultParameterNameDiscoverer();
 
     /**
+     * Resolves parameter names before a handler is registered, rejecting incomplete metadata.
+     * Spring 7 does not recover Java parameter names from local-variable debug information.
+     *
+     * @param method the handler method
+     * @return parameter names in declaration order, or an empty array for a no-argument method
+     * @throws IllegalStateException if a parameterized handler was compiled without parameter metadata
+     */
+    protected static String[] discoverParameterNames(Method method) {
+        if (method.getParameterCount() == 0) {
+            return new String[0];
+        }
+        String[] names = PARAMETER_NAME_DISCOVERER.getParameterNames(method);
+        if (names == null || names.length != method.getParameterCount()) {
+            throw new IllegalStateException("Cannot resolve parameter names for handler "
+                    + method.toGenericString() + ". Recompile the controller with javac -parameters "
+                    + "or Maven maven-compiler-plugin <parameters>true</parameters>. "
+                    + "Debug information (-g) alone is insufficient with Spring 7.");
+        }
+        return names;
+    }
+
+    /**
      * Parses all registered handler methods to extract their parameter names and types.
      *
-     * <p>Uses Spring's {@link DefaultParameterNameDiscoverer} to resolve parameter names
-     * from bytecode debug symbols or {@code @Param} annotations. The result is an
-     * unmodifiable map keyed by method key, with each value being an ordered map
-     * of parameter name to parameter type.
+     * <p>Uses Spring's {@link DefaultParameterNameDiscoverer} to resolve parameter names.
+     * Java handlers with arguments require compilation with {@code -parameters}; missing
+     * metadata fails during resolver construction instead of leaving an empty binding map.
+     * The result is an unmodifiable map keyed by method key, with each value being an
+     * ordered map of parameter name to parameter type.
      *
      * @return unmodifiable map of method keys to their parameter metadata
      */
@@ -303,13 +326,10 @@ public abstract class AbstractMappingResolver<T, K> {
         Map<K, Map<String, Class>> tempMethodParamTypes = new HashMap<>();
         for (Map.Entry<K, Method> kMethodEntry : methods.entrySet()) {
             LinkedHashMap<String, Class> methodParams = new LinkedHashMap<>();
-            // Discover parameter names from bytecode or annotations
-            String[] params = PARAMETER_NAME_DISCOVERER.getParameterNames(kMethodEntry.getValue());
+            String[] params = discoverParameterNames(kMethodEntry.getValue());
             Class<?>[] parameterTypes = kMethodEntry.getValue().getParameterTypes();
-            if (params != null && parameterTypes.length == params.length) {
-                for (int i = 0; i < params.length; i++) {
-                    methodParams.put(params[i], parameterTypes[i]);
-                }
+            for (int i = 0; i < params.length; i++) {
+                methodParams.put(params[i], parameterTypes[i]);
             }
             tempMethodParamTypes.put(kMethodEntry.getKey(), methodParams);
         }

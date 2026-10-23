@@ -1,6 +1,7 @@
 package com.github.berrywang1996.netty.spring.web.websocket.crypto;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSession;
 import io.netty.buffer.Unpooled;
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+import java.security.SecureRandom;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -23,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AesGcmMessageCryptoCodecTest {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final ObjectMapper OBJECT_MAPPER = JsonMapper.builder().configureForJackson2().build();
 
     private static final SecretKey KEY =
             new SecretKeySpec("0123456789abcdef".getBytes(CharsetUtil.UTF_8), "AES");
@@ -33,6 +35,69 @@ class AesGcmMessageCryptoCodecTest {
 
     private static final SecretKey NEW_KEY =
             new SecretKeySpec("9876543210fedcba".getBytes(CharsetUtil.UTF_8), "AES");
+
+    // Produced with 1.10.1's Jackson 2.18.12 settings, the test KEY, and IV bytes 0..11.
+    private static final String LEGACY_JSON = "{\"createdAt\":0,\"state\":\"READY\",\"optional\":null,"
+            + "\"nested\":{\"count\":2},\"node\":{\"message\":\"\u96ea\",\"values\":[1,true,null]}}";
+    private static final String LEGACY_ENVELOPE = "{\"alg\":\"AES-GCM\",\"kid\":\"main\",\"typ\":\"text\","
+            + "\"iv\":\"AAECAwQFBgcICQoL\",\"ciphertext\":\""
+            + "hh2nb3sVT1OMZ3M4+qucD3OjNo5ikXBpJSyrt7aJh04xZ+uHn4D5q0gdyesSAXEDDQd6WlEVYUx5i+sLMhyraIp8hGMpviWK+8ia7L0SffY8imoJPWRS6DTm4+Rn5fCHl1g/JKyWsu6uaBKQOK3gz7cCOvVuzpCP8UJsvFT72ysaKkX8\"}";
+
+    @Test
+    void decrypts1101EnvelopeAndPreservesJsonPayloadBytes() throws Exception {
+        AesGcmMessageCryptoCodec codec = newCodec();
+        TextWebSocketFrame encrypted = new TextWebSocketFrame(LEGACY_ENVELOPE);
+        WebSocketFrame plaintext = null;
+        try {
+            assertTrue(codec.canDecrypt(null, encrypted));
+            plaintext = codec.decrypt(null, encrypted);
+            assertEquals(LEGACY_JSON, ((TextWebSocketFrame) plaintext).text());
+        } finally {
+            ReferenceCountUtil.release(plaintext);
+            encrypted.release();
+        }
+    }
+
+    @Test
+    void writesThe1101EnvelopeWithAnIdenticalIvAndPayload() throws Exception {
+        NettyServerStartupProperties.WebSocket.Crypto properties =
+                new NettyServerStartupProperties.WebSocket.Crypto();
+        properties.setKeyId("main");
+        // Determinism is restricted to this compatibility fixture; production still uses SecureRandom.
+        SecureRandom fixtureRandom = new SecureRandom() {
+            @Override
+            public void nextBytes(byte[] bytes) {
+                for (int i = 0; i < bytes.length; i++) {
+                    bytes[i] = (byte) i;
+                }
+            }
+        };
+        AesGcmMessageCryptoCodec codec = new AesGcmMessageCryptoCodec(
+                properties, (keyId, session) -> KEY, fixtureRandom, OBJECT_MAPPER);
+        TextWebSocketFrame plaintext = new TextWebSocketFrame(LEGACY_JSON);
+        WebSocketFrame encrypted = null;
+        try {
+            encrypted = codec.encrypt(null, plaintext);
+            assertEquals(LEGACY_ENVELOPE, ((TextWebSocketFrame) encrypted).text());
+        } finally {
+            plaintext.release();
+            ReferenceCountUtil.release(encrypted);
+        }
+    }
+
+    @Test
+    void unknownEnvelopeFieldsRemainRejected() {
+        AesGcmMessageCryptoCodec codec = newCodec();
+        TextWebSocketFrame encrypted = new TextWebSocketFrame(
+                LEGACY_ENVELOPE.substring(0, LEGACY_ENVELOPE.length() - 1) + ",\"unexpected\":true}");
+        try {
+            assertFalse(codec.canDecrypt(null, encrypted));
+            assertThrows(tools.jackson.databind.exc.UnrecognizedPropertyException.class,
+                    () -> codec.decrypt(null, encrypted));
+        } finally {
+            encrypted.release();
+        }
+    }
 
     @Test
     void encryptsAndDecryptsTextFrame() throws Exception {

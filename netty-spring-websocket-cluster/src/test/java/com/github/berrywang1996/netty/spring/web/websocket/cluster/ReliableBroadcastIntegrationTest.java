@@ -232,8 +232,9 @@ class ReliableBroadcastIntegrationTest {
         killTarget.start();
         try {
             String killUri = "redis://" + killTarget.getHost() + ":" + killTarget.getMappedPort(6379);
-            RedisClient killClient = RedisClient.create(killUri);
-            killClient.setDefaultTimeout(java.time.Duration.ofMillis(500));
+            io.lettuce.core.RedisURI endpoint = io.lettuce.core.RedisURI.create(killUri);
+            endpoint.setTimeout(java.time.Duration.ofMillis(500));
+            RedisClient killClient = RedisClient.create(endpoint);
             try {
                 RedisStreamsReliableBroker broker = new RedisStreamsReliableBroker(
                         killClient, new SimpleTextEnvelopeCodec(), 10000, 200, 64, 1024);

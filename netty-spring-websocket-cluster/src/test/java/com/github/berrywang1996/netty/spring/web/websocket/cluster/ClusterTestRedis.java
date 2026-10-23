@@ -17,6 +17,7 @@
 package com.github.berrywang1996.netty.spring.web.websocket.cluster;
 
 import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.GenericContainer;
@@ -88,8 +89,9 @@ public final class ClusterTestRedis {
     private static boolean pingable(String redisUri) {
         RedisClient c = null;
         try {
-            c = RedisClient.create(redisUri);
-            c.setDefaultTimeout(Duration.ofSeconds(2));
+            RedisURI endpoint = RedisURI.create(redisUri);
+            endpoint.setTimeout(Duration.ofSeconds(2));
+            c = RedisClient.create(endpoint);
             try (StatefulRedisConnection<String, String> conn = c.connect()) {
                 return "PONG".equalsIgnoreCase(conn.sync().ping());
             }

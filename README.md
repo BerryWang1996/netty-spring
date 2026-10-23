@@ -10,6 +10,8 @@
 
 A Spring Boot integration for Netty, providing HTTP MVC and WebSocket capabilities with auto-configuration support. Built for developers who need high-performance networking with the convenience of Spring Boot.
 
+> This branch develops **2.0.0-SNAPSHOT on Spring Boot 4.1 / JDK 17+**. It is not published. The Maven Central examples below refer to the 1.x line (Boot 2.7); building this checkout uses the new baseline. See the [2.0.0 migration notes](docs/release-notes-2.0.0.md) before integrating the development version.
+
 ### Features
 
 - **HTTP MVC** — `@RequestMapping`, `@GetMapping`, `@PostMapping`, `@PathVariable`, `@RequestParam`, `@ResponseBody`, `@RestController`
@@ -474,8 +476,8 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#11-configurati
 ### Current Status
 
 - Published release: **1.10.0**. The default cluster starter has a known startup failure without the optional jnats dependency; see the [1.10.1 fixes and publication status](docs/release-notes-1.10.1.md) before adopting it.
-- Current source version: **1.10.1**; local tests, demo smoke and signatures verified, publication pending. Details are in the release notes above.
-- Next: **2.0.0 on Spring Boot 4.1**, preserving existing functionality. The [development plan](docs/development-plan.md) is the single roadmap and contains migration steps, acceptance criteria and deferred work.
+- Current source version: **2.0.0-SNAPSHOT on Spring Boot 4.1**; implementation and verification are in progress. API changes and evidence are recorded in the [2.0.0 migration notes](docs/release-notes-2.0.0.md).
+- The [development plan](docs/development-plan.md) remains the single roadmap, with migration steps, acceptance criteria and deferred work.
 
 ### Documentation
 
@@ -483,6 +485,7 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#11-configurati
 - [Netty Configuration](docs/netty-configuration.md) — HTTP / TLS / management endpoint reference
 - [WebSocket Configuration](docs/websocket-configuration.md) — WebSocket runtime, crypto, observability
 - [Release Notes - 1.10.1](docs/release-notes-1.10.1.md) — Patch fixes, validation and publication status
+- [2.0.0 Migration Notes](docs/release-notes-2.0.0.md) — Development baseline, API changes and validation evidence
 - [Release Notes - 1.10.0](docs/release-notes-1.10.0.md) — IM platform foundation
 - [Release Notes - 1.9.0](docs/release-notes-1.9.0.md) — Cluster reliability release history
 - [Release Notes - 1.8.0](docs/release-notes-1.8.0.md) — WebSocket cluster support
@@ -984,8 +987,8 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 ### 当前阶段
 
 - 已发布版本：**1.10.0**。默认集群 starter 存在缺少可选 jnats 依赖时启动失败的问题，采用前请查阅 [1.10.1 修复与发布状态](docs/release-notes-1.10.1.md)。
-- 当前源码版本：**1.10.1**，本地测试、demo 冒烟和签名验证完成，待发布；证据见上方发布说明。
-- 下一主线：**2.0.0 升级 Spring Boot 4.1**，保留现有功能与行为。迁移步骤、验收标准和延期项统一见[开发计划](docs/development-plan.md)。
+- 当前源码版本：**2.0.0-SNAPSHOT / Spring Boot 4.1 / JDK 17+**，实现与验证进行中，尚未发布；API 差异与证据见 [2.0.0 迁移说明](docs/release-notes-2.0.0.md)。上面的 Central 依赖示例仍对应 Boot 2.7 的 1.x，构建本分支使用新基线。
+- 迁移步骤、验收标准和延期项统一见[开发计划](docs/development-plan.md)。
 
 ### 文档
 
@@ -993,6 +996,7 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 - [Netty 配置说明](docs/netty-configuration.md) — HTTP / TLS / 管理端点参考
 - [WebSocket 配置说明](docs/websocket-configuration.md) — WebSocket 运行时、加密、可观测性
 - [1.10.1 发布说明](docs/release-notes-1.10.1.md) — 补丁修复、验证与发布状态
+- [2.0.0 迁移说明](docs/release-notes-2.0.0.md) — 开发基线、API 差异与验证证据
 - [1.10.0 发布说明](docs/release-notes-1.10.0.md) — IM 平台基础
 - [1.9.0 发布说明](docs/release-notes-1.9.0.md) — 集群可靠性历史版本
 - [1.8.0 发布说明](docs/release-notes-1.8.0.md) — WebSocket 集群支持

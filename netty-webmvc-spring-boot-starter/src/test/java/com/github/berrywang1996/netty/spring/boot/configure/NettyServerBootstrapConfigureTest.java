@@ -4,8 +4,7 @@ import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
 import com.github.berrywang1996.netty.spring.web.context.WebMappingSupporter;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestMapping;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.autoconfigure.AutoConfigurations;
-import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -20,13 +19,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class NettyServerBootstrapConfigureTest {
 
+    @Configuration(proxyBeanMethods = false)
+    @EnableAutoConfiguration
+    static class DiscoveryApplication {
+    }
+
     private static final String TEST_MVC_URI = "/mvc/test";
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-            .withConfiguration(AutoConfigurations.of(
-                    ConfigurationPropertiesAutoConfiguration.class,
-                    NettyServerBootstrapConfigure.class,
-                    MessageSenderSupportConfigure.class));
+            .withUserConfiguration(DiscoveryApplication.class);
 
     @Test
     void autoConfigurationStartsNettyServer() {

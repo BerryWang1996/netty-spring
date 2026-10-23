@@ -34,9 +34,10 @@ import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.WriteBufferWaterMark;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
@@ -156,8 +157,8 @@ public class MeshBroker implements ClusterBroker {
 
     /** Binds the TCP server, prepares the outbound bootstrap, and advertises this node's address. */
     public void start() throws InterruptedException {
-        this.bossGroup = new NioEventLoopGroup(1, namedThreads("cluster-mesh-boss"));
-        this.workerGroup = new NioEventLoopGroup(0, namedThreads("cluster-mesh-io"));
+        this.bossGroup = new MultiThreadIoEventLoopGroup(1, namedThreads("cluster-mesh-boss"), NioIoHandler.newFactory());
+        this.workerGroup = new MultiThreadIoEventLoopGroup(0, namedThreads("cluster-mesh-io"), NioIoHandler.newFactory());
 
         ServerBootstrap sb = new ServerBootstrap();
         sb.group(bossGroup, workerGroup)

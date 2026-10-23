@@ -16,7 +16,8 @@
 
 package com.github.berrywang1996.netty.spring.web.websocket.cluster.codec;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.github.berrywang1996.netty.spring.web.websocket.cluster.spi.MessagePayloadCodec;
 import com.github.berrywang1996.netty.spring.web.websocket.context.*;
 import lombok.extern.slf4j.Slf4j;
@@ -32,7 +33,7 @@ import java.util.Base64;
  * <ul>
  *   <li>{@code T:} + UTF-8 text (TextMessage)</li>
  *   <li>{@code J:} + UTF-8 JSON text (JsonMessage — its content object serialized to JSON via the
- *       message's own {@link com.fasterxml.jackson.databind.ObjectMapper})</li>
+ *       message's own {@link ObjectMapper})</li>
  *   <li>{@code B:} + Base64-encoded binary (BinaryMessage)</li>
  * </ul>
  *
@@ -46,7 +47,7 @@ import java.util.Base64;
 public class DefaultMessagePayloadCodec implements MessagePayloadCodec {
 
     /** Shared mapper used to re-parse JSON payloads on decode (read-only; thread-safe). */
-    private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
+    private static final ObjectMapper JSON_MAPPER = JsonMapper.builder().configureForJackson2().build();
 
     @Override
     public byte[] encode(AbstractMessage message) {

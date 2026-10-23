@@ -74,6 +74,25 @@ class NettyWebSocketClusterConfigureTest {
             .withPropertyValues("server.netty.websocket.cluster.drain-timeout-seconds=0");
 
     @Test
+    void redisClusterClientPreservesTopologyPinningWithLettuce7() {
+        com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterProperties properties =
+                new com.github.berrywang1996.netty.spring.web.websocket.cluster.ClusterProperties();
+        properties.getRedis().setClusterNodes("localhost:16379");
+        io.lettuce.core.cluster.RedisClusterClient client =
+                new NettyWebSocketClusterConfigure().nettyClusterRedisClusterClient(properties);
+        try {
+            io.lettuce.core.cluster.ClusterClientOptions options =
+                    (io.lettuce.core.cluster.ClusterClientOptions) client.getOptions();
+            assertThat(options.getTopologyRefreshOptions().isPeriodicRefreshEnabled()).isFalse();
+            assertThat(options.getTopologyRefreshOptions().getAdaptiveRefreshTriggers()).isEmpty();
+            assertThat(ClusterTestRedisCluster.clusterClientOptions()
+                    .getTopologyRefreshOptions().getAdaptiveRefreshTriggers()).isEmpty();
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    @Test
     void disabledByDefault_noClusterBeans_localSenderRemains() {
         // No enable property → cluster auto-config must not activate at all.
         runner.run(context -> {

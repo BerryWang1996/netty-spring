@@ -4,8 +4,8 @@ import com.github.berrywang1996.netty.spring.web.context.ExecutorRuntimeInfo;
 import com.github.berrywang1996.netty.spring.web.context.HandlerRuntimeStats;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.actuate.health.Health;
-import org.springframework.boot.actuate.health.Status;
+import org.springframework.boot.health.contributor.Health;
+import org.springframework.boot.health.contributor.Status;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;

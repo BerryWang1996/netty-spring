@@ -1,11 +1,15 @@
 package com.github.berrywang1996.netty.spring.web.mvc.bind;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+import tools.jackson.databind.JsonNode;
 import com.github.berrywang1996.netty.spring.web.context.HttpRuntimeRecorder;
 import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.CrossOrigin;
+import com.github.berrywang1996.netty.spring.web.mvc.bind.annotation.RequestBody;
 import com.github.berrywang1996.netty.spring.web.mvc.consts.HttpRequestMethod;
 import com.github.berrywang1996.netty.spring.web.mvc.context.ResponseEntity;
 import com.github.berrywang1996.netty.spring.web.mvc.view.HtmlViewHandler;
 import com.github.berrywang1996.netty.spring.web.mvc.view.JsonViewHandler;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelOutboundHandlerAdapter;
 import io.netty.channel.ChannelPromise;
@@ -16,13 +20,17 @@ import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpMethod;
+import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.util.ReferenceCountUtil;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
+import java.util.Date;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -33,6 +41,99 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RequestMappingResolverTest {
+
+    @Test
+    void requestBodyPreserves1101DateEnumNullAndAnnotationBinding() throws Exception {
+        JsonController controller = new JsonController();
+        assertJsonRequest("{\"createdAt\":0,\"state\":\"READY\",\"count\":null,\"optional\":null,"
+                        + "\"nested\":{\"count\":2},\"node\":{\"values\":[1,true,null]},\"external_name\":\"alpha\"}",
+                HttpResponseStatus.OK, controller);
+        assertNotNull(controller.received);
+        assertEquals(new Date(0), controller.received.createdAt);
+        assertEquals(State.READY, controller.received.state);
+        assertEquals(0, controller.received.count);
+        assertNull(controller.received.optional);
+        assertEquals(2, controller.received.nested.get("count"));
+        assertTrue(controller.received.node.get("values").get(2).isNull());
+        assertEquals("alpha", controller.received.name);
+    }
+
+    @Test
+    void requestBodyStillRejectsUnknownFields() throws Exception {
+        JsonController controller = new JsonController();
+        String error = assertJsonRequest("{\"unexpected\":true}", HttpResponseStatus.BAD_REQUEST, controller);
+        assertTrue(error.contains("Failed to parse request body as JsonPayload"), error);
+        assertTrue(error.contains("unexpected"), error);
+        assertNull(controller.received);
+    }
+
+    @Test
+    void requestBodyStillUsesEnumNameInsteadOfToString() throws Exception {
+        JsonController controller = new JsonController();
+        String error = assertJsonRequest("{\"state\":\"ready\"}", HttpResponseStatus.BAD_REQUEST, controller);
+        assertTrue(error.contains("Failed to parse request body as JsonPayload"), error);
+        assertTrue(error.contains("ready"), error);
+        assertNull(controller.received);
+    }
+
+    private static String assertJsonRequest(String json, HttpResponseStatus expectedStatus,
+                                          JsonController controller) throws Exception {
+        Method method = JsonController.class.getMethod("handle", JsonPayload.class);
+        RequestMappingResolver resolver = new RequestMappingResolver("/json",
+                Collections.singletonMap(HttpRequestMethod.POST, method), controller, new JsonViewHandler());
+        EmbeddedChannel channel = new EmbeddedChannel(new SimpleChannelInboundHandler<FullHttpRequest>() {
+            @Override
+            protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest msg) throws Exception {
+                resolver.resolve(ctx, msg);
+            }
+        });
+        try {
+            DefaultFullHttpRequest request = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1,
+                    HttpMethod.POST, "/json", Unpooled.copiedBuffer(json, StandardCharsets.UTF_8));
+            request.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/json");
+            channel.writeInbound(request);
+            FullHttpResponse response = channel.readOutbound();
+            assertNotNull(response);
+            try {
+                String body = response.content().toString(StandardCharsets.UTF_8);
+                assertEquals(expectedStatus, response.status(), body);
+                return body;
+            } finally {
+                response.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    public static class JsonController {
+        private JsonPayload received;
+
+        public JsonPayload handle(@RequestBody JsonPayload payload) {
+            received = payload;
+            return payload;
+        }
+    }
+
+    public static class JsonPayload {
+        public Date createdAt;
+        public State state;
+        public int count;
+        public String optional;
+        public Map<String, Object> nested;
+        public JsonNode node;
+        @JsonProperty("external_name")
+        public String name;
+    }
+
+    public enum State {
+        READY;
+
+        @Override
+        public String toString() {
+            return "ready";
+        }
+    }
 
     @Test
     void resolveClosesChannelWhenHttpResponseWriteFails() throws Exception {

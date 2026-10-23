@@ -19,13 +19,12 @@ package com.github.berrywang1996.netty.spring.boot.configure;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
 import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSender;
 import com.github.berrywang1996.netty.spring.web.websocket.support.MessageSenderSupport;
-import org.springframework.boot.autoconfigure.AutoConfigureAfter;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 
 /**
  * Spring Boot auto-configuration for WebSocket message sending support.
@@ -56,8 +55,7 @@ import org.springframework.context.annotation.Configuration;
  * @see MessageSenderSupport
  * @see NettyServerBootstrapConfigure
  */
-@Configuration
-@AutoConfigureAfter(NettyServerBootstrapConfigure.class)
+@AutoConfiguration(after = NettyServerBootstrapConfigure.class)
 @ConditionalOnClass(name = "com.github.berrywang1996.netty.spring.web.websocket.support.MessageSenderSupport")
 @ConditionalOnProperty(prefix = "server.netty.websocket", name = "enable", havingValue = "true", matchIfMissing = true)
 public class MessageSenderSupportConfigure {

@@ -20,8 +20,12 @@ env:
 
 jobs:
   test:
-    name: Maven Test
+    name: Maven Test (JDK ${{ matrix.java }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ["17", "21", "25"]
 
     steps:
       - name: Checkout
@@ -31,7 +35,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version: ${{ matrix.java }}
           cache: maven
 
       - name: Run tests
@@ -39,6 +43,31 @@ jobs:
         # a reachable localhost:16379 and otherwise starts a redis:7-alpine container using the
         # runner's Docker). Do NOT add a Redis service here — it would be unused.
         run: bash ./mvnw $MAVEN_ARGS test
+
+      - name: Verify complete test execution
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          totals = dict.fromkeys(("tests", "failures", "errors", "skipped"), 0)
+          reports = list(Path(".").glob("*/target/surefire-reports/TEST-*.xml"))
+          for report in reports:
+              suite = ET.parse(report).getroot()
+              for key in totals:
+                  totals[key] += int(suite.attrib.get(key, 0))
+          print(f"Surefire reports={len(reports)} totals={totals}")
+          if not totals["tests"] or any(totals[key] for key in ("failures", "errors", "skipped")):
+              raise SystemExit("All regression tests must execute successfully, including middleware tests.")
+          PY
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-jdk-${{ matrix.java }}
+          path: "*/target/surefire-reports/**"
+          if-no-files-found: warn
 
   sbom:
     name: Generate SBOM

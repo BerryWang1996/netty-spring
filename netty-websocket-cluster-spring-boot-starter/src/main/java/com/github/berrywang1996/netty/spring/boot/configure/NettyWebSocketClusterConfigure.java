@@ -50,7 +50,7 @@ import io.lettuce.core.api.StatefulRedisConnection;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.SmartInitializingSingleton;
-import org.springframework.boot.autoconfigure.AutoConfigureAfter;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -91,7 +91,7 @@ import java.util.Map;
  * @since V1.8.0
  */
 @Slf4j
-@Configuration
+@AutoConfiguration(after = {NettyServerBootstrapConfigure.class, MessageSenderSupportConfigure.class})
 @ConditionalOnClass(ClusterBroker.class)
 @ConditionalOnProperty(prefix = "server.netty.websocket.cluster", name = "enable", havingValue = "true")
 // MUST be ordered AFTER MessageSenderSupportConfigure: that config registers the local
@@ -100,7 +100,6 @@ import java.util.Map;
 // created first — otherwise @ConditionalOnMissingBean would suppress it and the
 // @Qualifier("messageSender") injection below would fail. Explicit ordering removes the
 // (previously alphabetical-accident) fragility.
-@AutoConfigureAfter({NettyServerBootstrapConfigure.class, MessageSenderSupportConfigure.class})
 public class NettyWebSocketClusterConfigure {
 
     /** SpEL: cluster-nodes is empty/absent → use the standalone/sentinel Redis transport. */
@@ -779,7 +778,7 @@ public class NettyWebSocketClusterConfigure {
         warnIfInsecureRedis("redis://" + clusterNodes.split(",")[0].trim());
         log.info("Creating Lettuce RedisClusterClient for {} Redis Cluster seed node(s)", seeds.size());
         io.lettuce.core.cluster.RedisClusterClient client = io.lettuce.core.cluster.RedisClusterClient.create(seeds);
-        // Topology pinning + bounded timeout. validateClusterNodeMembership(false) + periodic-refresh-off
+        // Topology pinning + bounded timeout. validateClusterNodeMembership(false) + both refresh paths off
         // keep the client usable when nodes advertise addresses the client can't reach directly
         // (containerized / NAT'd clusters — the common production case, and what the single-node test
         // cluster needs). Bounded command timeout mirrors the standalone client (control-plane fast-fail).
@@ -787,6 +786,7 @@ public class NettyWebSocketClusterConfigure {
                 .validateClusterNodeMembership(false)
                 .topologyRefreshOptions(io.lettuce.core.cluster.ClusterTopologyRefreshOptions.builder()
                         .enablePeriodicRefresh(false)
+                        .disableAllAdaptiveRefreshTriggers()
                         .build())
                 .timeoutOptions(io.lettuce.core.TimeoutOptions.enabled(
                         java.time.Duration.ofMillis(properties.getCommandTimeoutMs())))

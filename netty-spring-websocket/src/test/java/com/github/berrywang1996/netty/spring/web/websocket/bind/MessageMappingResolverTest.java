@@ -1002,6 +1002,15 @@ class MessageMappingResolverTest {
 
     @Test
     void invalidJsonPayloadDispatchesErrorLifecycle() throws Exception {
+        assertRejectedJsonPayload("{");
+    }
+
+    @Test
+    void unknownJsonFieldsStillDispatchErrorLifecycle() throws Exception {
+        assertRejectedJsonPayload("{\"name\":\"alpha\",\"count\":2,\"unexpected\":true}");
+    }
+
+    private void assertRejectedJsonPayload(String json) throws Exception {
         RecordingEndpoint endpoint = new RecordingEndpoint();
         Map<MessageType, Method> methods = new EnumMap<>(MessageType.class);
         methods.put(MessageType.TEXT_MESSAGE,
@@ -1018,7 +1027,7 @@ class MessageMappingResolverTest {
         drainChannel(testChannel.channel);
         request.release();
 
-        TextWebSocketFrame frame = new TextWebSocketFrame("{");
+        TextWebSocketFrame frame = new TextWebSocketFrame(json);
         try {
             resolver.resolve(testChannel.ctx, frame);
 

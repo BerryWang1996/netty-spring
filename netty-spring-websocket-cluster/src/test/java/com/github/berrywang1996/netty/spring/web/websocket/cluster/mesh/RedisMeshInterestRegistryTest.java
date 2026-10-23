@@ -73,13 +73,14 @@ class RedisMeshInterestRegistryTest {
         // Build the RedisFuture stub FIRST — rf() does when(...) on a fresh mock; nesting it inside the outer
         // when().thenReturn() corrupts Mockito's stubbing state ("UnfinishedStubbing").
         RedisFuture<Long> evalFuture = rf(1L);
-        when(async.<Long>eval(anyString(), any(ScriptOutputType.class), any(String[].class), any()))
+        // Mockito 5 requires an array-typed matcher to cover the complete EVAL varargs array.
+        when(async.<Long>eval(anyString(), any(ScriptOutputType.class), any(String[].class), any(String[].class)))
                 .thenReturn(evalFuture);
 
         registry.subscribe(URI, "s1", "node-A").toCompletableFuture().join();
 
         ArgumentCaptor<String[]> keys = ArgumentCaptor.forClass(String[].class);
-        verify(async, times(1)).eval(anyString(), eq(ScriptOutputType.INTEGER), keys.capture(), any());
+        verify(async, times(1)).eval(anyString(), eq(ScriptOutputType.INTEGER), keys.capture(), any(String[].class));
         String tag = "{" + b64(URI) + "}";
         assertEquals("netty:interest:" + tag + ":n:node-A", keys.getValue()[0]);
         assertEquals("netty:interest:" + tag + ":nodes", keys.getValue()[1]);
@@ -88,12 +89,12 @@ class RedisMeshInterestRegistryTest {
     @Test
     void unsubscribeIssuesSingleEval() {
         RedisFuture<Long> evalFuture = rf(1L);
-        when(async.<Long>eval(anyString(), any(ScriptOutputType.class), any(String[].class), any()))
+        when(async.<Long>eval(anyString(), any(ScriptOutputType.class), any(String[].class), any(String[].class)))
                 .thenReturn(evalFuture);
 
         registry.unsubscribe(URI, "s1", "node-A").toCompletableFuture().join();
 
-        verify(async, times(1)).eval(anyString(), eq(ScriptOutputType.INTEGER), any(String[].class), any());
+        verify(async, times(1)).eval(anyString(), eq(ScriptOutputType.INTEGER), any(String[].class), any(String[].class));
     }
 
     @Test

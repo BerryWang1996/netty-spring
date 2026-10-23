@@ -17,6 +17,7 @@
 package com.github.berrywang1996.netty.spring.boot.configure;
 
 import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.GenericContainer;
@@ -38,18 +39,6 @@ import java.time.Duration;
  * workflow, so a small copy in each module is the lower-risk choice.
  */
 public final class ClusterTestRedis {
-
-    static {
-        // docker-java's DefaultDockerClientConfig reads the "api.version" property; modern Docker rejects the
-        // hardcoded /v1.32 probe. Pin a supported negotiated API version before the FIRST DockerClientFactory
-        // call. This resolver is reached first (via @BeforeAll) and the DockerClientFactory singleton caches
-        // its availability result JVM-wide, so without this the probe poisons every later Docker-backed
-        // resolver (e.g. ClusterTestNatsJetStream) in the same fork. Matches the initializer already present
-        // in ClusterTestRedisCluster / ClusterTestNats / ClusterTestNatsJetStream.
-        if (System.getProperty("api.version") == null) {
-            System.setProperty("api.version", "1.43");
-        }
-    }
 
     private static volatile boolean resolved;
     private static volatile String uri;
@@ -100,8 +89,9 @@ public final class ClusterTestRedis {
     private static boolean pingable(String redisUri) {
         RedisClient c = null;
         try {
-            c = RedisClient.create(redisUri);
-            c.setDefaultTimeout(Duration.ofSeconds(2));
+            RedisURI endpoint = RedisURI.create(redisUri);
+            endpoint.setTimeout(Duration.ofSeconds(2));
+            c = RedisClient.create(endpoint);
             try (StatefulRedisConnection<String, String> conn = c.connect()) {
                 return "PONG".equalsIgnoreCase(conn.sync().ping());
             }

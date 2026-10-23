@@ -1,7 +1,8 @@
 package com.github.berrywang1996.netty.spring.web.websocket.context;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
@@ -30,7 +31,9 @@ import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 public class JsonMessage extends AbstractMessage<TextWebSocketFrame> {
 
     /** Shared default ObjectMapper instance used when no custom mapper is provided. */
-    private static final ObjectMapper DEFAULT_OBJECT_MAPPER = new ObjectMapper();
+    // Keep 1.x wire values (including Date milliseconds and enum names) on Jackson 3.
+    private static final ObjectMapper DEFAULT_OBJECT_MAPPER =
+            JsonMapper.builder().configureForJackson2().build();
 
     private volatile Object content;
 
@@ -104,7 +107,7 @@ public class JsonMessage extends AbstractMessage<TextWebSocketFrame> {
     public TextWebSocketFrame responseMsg() {
         try {
             return new TextWebSocketFrame(objectMapper.writeValueAsString(content));
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Serialize websocket JSON message failed.", e);
         }
     }
@@ -131,7 +134,7 @@ public class JsonMessage extends AbstractMessage<TextWebSocketFrame> {
                 throw e;
             }
             return buf;
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Serialize websocket JSON message failed.", e);
         }
     }

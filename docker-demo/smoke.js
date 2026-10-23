@@ -1,8 +1,8 @@
 // Headless cross-node broadcast smoke test for the netty-spring multi-node Docker demo.
 //
 // Opens two WebSocket clients through the nginx load balancer, verifies they were served by
-// DIFFERENT cluster nodes, then asserts a broadcast from one is delivered to the other STAMPED
-// with the sender's origin node id — proving cross-node delivery over Redis. Exit 0 = pass, 1 = fail.
+// DIFFERENT cluster nodes, then asserts broadcasts in BOTH directions carry the sender's
+// origin node id — also useful with old/new application images during migration checks.
 const WebSocket = require('ws');
 
 const LB = process.env.LB_URL || 'ws://localhost:8080';
@@ -43,6 +43,29 @@ async function connectOnDistinctNode(baseNick, avoidNode) {
   throw new Error('could not reach a node distinct from ' + avoidNode + ' after ' + MAX_NODE_RETRIES + ' tries');
 }
 
+async function assertBroadcast(sender, receiver, marker) {
+  const received = new Promise((resolve, reject) => {
+    const onMessage = (raw) => {
+      let message; try { message = JSON.parse(raw.toString()); } catch (e) { return; }
+      if (message.type !== 'message' || message.text !== marker) return;
+      clearTimeout(timeout);
+      receiver.ws.off('message', onMessage);
+      resolve(message);
+    };
+    const timeout = setTimeout(() => {
+      receiver.ws.off('message', onMessage);
+      reject(new Error('broadcast from ' + sender.node + ' to ' + receiver.node + ' timed out'));
+    }, RECEIVE_TIMEOUT_MS);
+    receiver.ws.on('message', onMessage);
+  });
+  sender.ws.send(JSON.stringify({ type: 'message', text: marker }));
+  const message = await received;
+  if (message.originNode !== sender.node || message.originNode === receiver.node) {
+    throw new Error('unexpected origin stamp: ' + JSON.stringify(message));
+  }
+  log('PASS: broadcast from ' + sender.node + ' reached ' + receiver.node + ' with correct origin stamp');
+}
+
 (async () => {
   let c1, c2;
   try {
@@ -51,24 +74,9 @@ async function connectOnDistinctNode(baseNick, avoidNode) {
     c2 = await connectOnDistinctNode('bob', c1.node);
     log('client2 (bob) served by ' + c2.node);
 
-    const MARK = 'cross-node-' + Date.now();
-    const received = new Promise((resolve, reject) => {
-      const to = setTimeout(() => reject(new Error('client2 did not receive the broadcast within ' + RECEIVE_TIMEOUT_MS + 'ms')), RECEIVE_TIMEOUT_MS);
-      c2.ws.on('message', (raw) => {
-        let d; try { d = JSON.parse(raw.toString()); } catch (e) { return; }
-        if (d.type === 'message' && d.text === MARK) { clearTimeout(to); resolve(d); }
-      });
-    });
-
-    c1.ws.send(JSON.stringify({ type: 'message', text: MARK }));
-    const msg = await received;
-    log('client2 received: ' + JSON.stringify(msg));
-
-    if (!msg.originNode) fail('received message has no originNode stamp');
-    if (msg.originNode !== c1.node) fail('expected originNode=' + c1.node + ' but got ' + msg.originNode);
-    if (msg.originNode === c2.node) fail('originNode equals the receiver node — not cross-node');
-
-    log('PASS: broadcast from ' + c1.node + ' reached a client on ' + c2.node + ' with correct origin stamp');
+    const marker = 'cross-node-' + Date.now();
+    await assertBroadcast(c1, c2, marker + '-forward');
+    await assertBroadcast(c2, c1, marker + '-reverse');
     process.exit(0);
   } catch (e) {
     fail(e && e.message ? e.message : String(e));

@@ -18,17 +18,17 @@ package com.github.berrywang1996.netty.spring.boot.configure;
 
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerBootstrap;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.actuate.health.HealthIndicator;
-import org.springframework.boot.autoconfigure.AutoConfigureAfter;
+import org.springframework.boot.health.contributor.HealthIndicator;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 
 /**
  * Spring Boot Actuator auto-configuration for the Netty server runtime.
  *
- * <p>Activated when {@code spring-boot-actuator} is on the classpath and a
+ * <p>Activated when {@code spring-boot-health} is on the classpath and a
  * {@link NettyServerBootstrap} bean is present. Registers a
  * {@link NettyServerHealthIndicator} that exposes server health at
  * {@code /actuator/health}.
@@ -37,9 +37,8 @@ import org.springframework.context.annotation.Configuration;
  * @since V1.7.0
  */
 @Slf4j
-@Configuration
+@AutoConfiguration(after = NettyServerBootstrapConfigure.class)
 @ConditionalOnClass(HealthIndicator.class)
-@AutoConfigureAfter(NettyServerBootstrapConfigure.class)
 public class NettyActuatorConfigure {
 
     /**
@@ -50,6 +49,7 @@ public class NettyActuatorConfigure {
      */
     @Bean
     @ConditionalOnBean(NettyServerBootstrap.class)
+    @ConditionalOnMissingBean(NettyServerHealthIndicator.class)
     public NettyServerHealthIndicator nettyServerHealthIndicator(NettyServerBootstrap bootstrap) {
         log.info("Registering Netty server health indicator with Spring Boot Actuator");
         return new NettyServerHealthIndicator(bootstrap);

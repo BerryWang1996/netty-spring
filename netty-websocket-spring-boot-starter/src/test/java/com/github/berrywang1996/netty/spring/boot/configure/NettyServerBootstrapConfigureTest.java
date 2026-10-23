@@ -7,8 +7,7 @@ import com.github.berrywang1996.netty.spring.web.websocket.context.MessageSender
 import com.github.berrywang1996.netty.spring.web.websocket.support.MessageSenderSupport;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-import org.springframework.boot.autoconfigure.AutoConfigurations;
-import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,13 +24,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class NettyServerBootstrapConfigureTest {
 
+    @Configuration(proxyBeanMethods = false)
+    @EnableAutoConfiguration
+    static class DiscoveryApplication {
+    }
+
     private static final String TEST_WEBSOCKET_URI = "/ws/test";
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-            .withConfiguration(AutoConfigurations.of(
-                    ConfigurationPropertiesAutoConfiguration.class,
-                    NettyServerBootstrapConfigure.class,
-                    MessageSenderSupportConfigure.class));
+            .withUserConfiguration(DiscoveryApplication.class);
 
     @Test
     void autoConfigurationStartsNettyServerAndPublishesMessageSenderBeans() {
