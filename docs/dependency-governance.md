@@ -11,12 +11,14 @@
 
 ## 版本一致性
 
-- 根 POM 显式导入 `io.netty:netty-bom:${netty.version}`，避免 Netty 子模块被 Spring Boot BOM 中较旧的版本覆盖，导致 Netty 组件混版。
+- 根 POM 显式导入 `io.netty:netty-bom:${netty.version}`，避免 Netty 子模块被 Spring Boot BOM 中较旧的版本覆盖，导致 Netty 组件混版。`1.10.1` 将 Netty 从 `4.1.134.Final` 升至 **`4.1.139.Final`**，包含 HTTP 请求边界、压缩队列资源耗尽等修复；本项目实际使用 `HttpServerCodec` 与 `HttpContentCompressor`，不能将相关告警统一视为未启用协议的误报。依据：[Netty 官方安全发布说明](https://netty.io/news/2026/10/06/4-1-139-Final.html)。
 - Runtime 不再依赖 `netty-all`，只显式引入当前代码实际使用的 `netty-codec-http`、`netty-handler`、`netty-transport`、`netty-buffer` 和 `netty-common`，减少无关协议模块带来的漏洞面和扫描噪音。
 - Spring Boot 仍由 `org.springframework.boot:spring-boot-dependencies:${spring-boot.version}` 管理；如果后续升级 Spring Boot，需要重新确认 Netty BOM 覆盖顺序和 `mvn dependency:tree -Dincludes=io.netty` 输出。
 - **logback 1.2.13 显式 pin（自 `1.7.1` 起）**：Spring Boot 2.7.18 BOM 默认 logback 1.2.12 仍有 CVE-2023-6378（`SocketReceiver` / `SocketAppender` 序列化漏洞）。根 POM 的 `<dependencyManagement>` 在 `spring-boot-dependencies` 之前显式声明 `logback-classic:1.2.13` 与 `logback-core:1.2.13` 覆盖。
 - **spring-framework 5.3.39 显式 pin（自 `1.8.0` 起）**：根 POM 在 `spring-boot-dependencies` 之前导入 `org.springframework:spring-framework-bom:5.3.39`，覆盖 Boot 2.7.18 管理的版本。该覆盖不代表消除了所有 Spring CVE；每个漏洞需按官方影响与修复版本重新核实。
-- **snakeyaml 1.33 显式 pin（自 `1.8.0` 起）**：Spring Boot 2.7.18 BOM 默认 snakeyaml 1.30，存在 CVE-2022-38751/38752/41854（不可信 YAML 解析栈溢出 / DoS）。根 POM 在 `spring-boot-dependencies` 之前显式声明 `snakeyaml:1.33`（1.x 末版含 DoS 修复，Boot 用于 `application.yml` 解析）覆盖。
+- **Jackson 2.18.12 BOM 覆盖（自 `1.10.1` 起）**：根 POM 在 Boot BOM 之前导入 `com.fasterxml.jackson:jackson-bom:2.18.12`，统一 Jackson 2 组件，采用 2.18 LTS 修复线。该版本包含 CVE-2026-110879 多态类型校验绕过修复；此前的 `2.18.11` 仍受影响。项目默认 mapper 未开启 default typing，但业务 DTO 的注解及自定义 mapper 仍需按实际用法审核。依据：[Jackson 官方安全公告](https://github.com/FasterXML/jackson-databind/security/advisories/GHSA-m8xf-2cr7-77ph)。
+- **Log4j 2.25.5 BOM 覆盖（自 `1.10.1` 起）**：在 Boot BOM 之前导入 `org.apache.logging.log4j:log4j-bom:2.25.5`，保持 `log4j-api` 与桥接组件版本一致，包含 CVE-2026-49844 的非有限浮点值 JSON 输出修复。实际日志后端仍为 Logback；不能据此宣称已解决 Logback 或 Spring 的剩余告警。依据：[Apache Log4j 安全公告](https://logging.apache.org/security.html#CVE-2026-49844)。
+- **SnakeYAML 2.7 显式覆盖（自 `1.10.1` 起）**：替换此前的 `1.33` pin，消除旧构造器的 CVE-2022-1471 版本告警，并采用移除不安全 CompactConstructor 的 `2.7`。Boot 2.7.18 的 YAML 配置加载器使用 `SafeConstructor(LoaderOptions)` 与 `Representer(DumperOptions)`，已具备 2.x 所需构造器兼容性；升级后仍须验证真实 `application.yml` 启动。依据：[Boot 2.7.18 加载器源码](https://github.com/spring-projects/spring-boot/blob/v2.7.18/spring-boot-project/spring-boot/src/main/java/org/springframework/boot/env/OriginTrackedYamlLoader.java)、[SnakeYAML 变更记录](https://github.com/snakeyaml/snakeyaml/blob/master/src/changes/changes.xml)。
 - **基线迁移**：1.x 的依赖覆盖不能恢复 Boot 2.7 的上游 OSS 支持，也不构成持续安全修复承诺。`2.0.0` 目标为 **Spring Boot 4.1**；迁移步骤、基线选择和 1.x 维护边界统一见[开发计划](development-plan.md)。迁移时逐项审核这些历史 pin，优先恢复目标 BOM 管理，只保留有验证依据的覆盖。
 
 ## Maven Profiles
@@ -37,7 +39,7 @@ $env:JAVA_HOME='C:\Program Files\graalvm-jdk-17.0.11+7.1'
 
 ```powershell
 $env:JAVA_HOME='C:\Program Files\graalvm-jdk-17.0.11+7.1'
-& 'C:\Users\qq951\.m2\wrapper\dists\apache-maven-3.9.9-bin\4nf9hui3q3djbarqar9g711ggc\apache-maven-3.9.9\bin\mvn.cmd' -Pdependency-scan -DskipTests package org.owasp:dependency-check-maven:12.2.1:aggregate
+& 'C:\Users\qq951\.m2\wrapper\dists\apache-maven-3.9.9-bin\4nf9hui3q3djbarqar9g711ggc\apache-maven-3.9.9\bin\mvn.cmd' -Pdependency-scan -DskipTests package org.owasp:dependency-check-maven:12.2.2:aggregate
 ```
 
 输出位置：
@@ -80,7 +82,7 @@ Dependency-Check data cache 已固定到 `${settings.localRepository}/../depende
 
 - `mvn test`
 - `mvn -Psbom -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom`
-- `mvn -Pdependency-scan -DskipTests package org.owasp:dependency-check-maven:12.2.1:aggregate`（无 API key 时先验证镜像新鲜度并附加 `-DnvdDatafeedUrl=...`）
+- `mvn -Pdependency-scan -DskipTests package org.owasp:dependency-check-maven:12.2.2:aggregate`（无 API key 时先验证镜像新鲜度并附加 `-DnvdDatafeedUrl=...`）
 - GitHub Actions `CI` workflow 中的 `Maven Test`、`Generate SBOM` 和发布门禁 `Dependency Scan`
 - GitHub Dependabot 或等效扫描告警已处理、记录或明确延期
 

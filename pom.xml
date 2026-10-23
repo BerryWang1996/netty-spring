@@ -59,7 +59,7 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <maven.compiler.release>${java.version}</maven.compiler.release>
         <!-- runtime  -->
-        <netty.version>4.1.134.Final</netty.version>
+        <netty.version>4.1.139.Final</netty.version>
         <spring-boot.version>2.7.18</spring-boot.version>
         <!-- test only: Spring Boot 2.7.x BOM does not manage testcontainers (Boot 3.1+ does) -->
         <testcontainers.version>1.20.4</testcontainers.version>
@@ -74,7 +74,7 @@
         <maven-surefire-plugin.version>3.2.5</maven-surefire-plugin.version>
         <maven-deploy-plugin.version>3.1.2</maven-deploy-plugin.version>
         <cyclonedx-maven-plugin.version>2.9.1</cyclonedx-maven-plugin.version>
-        <dependency-check-maven.version>12.2.1</dependency-check-maven.version>
+        <dependency-check-maven.version>12.2.2</dependency-check-maven.version>
         <dependency-check.fail-build-on-cvss>7.0</dependency-check.fail-build-on-cvss>
 
         <!-- GPG signing key — full fingerprint of the publisher's key.
@@ -132,15 +132,35 @@
             </dependency>
 
             <!--
-              snakeyaml 1.33 override: Spring Boot 2.7.18 BOM pins snakeyaml 1.30, vulnerable to
-              CVE-2022-38751 / CVE-2022-38752 / CVE-2022-41854 (stack-overflow / DoS on untrusted
-              YAML). 1.33 is the last 1.x release with the DoS fixes (used by Boot for
-              application.yml parsing). Declared BEFORE spring-boot-dependencies so it wins.
+              Jackson 2.18 LTS security baseline, including the CVE-2026-110879 fix.
+              Import the full BOM before Boot's BOM to keep Jackson components aligned.
+            -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>2.18.12</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- Log4j security fixes, including CVE-2026-49844 in log4j-api. -->
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-bom</artifactId>
+                <version>2.25.5</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!--
+              SnakeYAML 2.7 removes unsafe compact constructors and replaces the 1.33
+              security baseline. Boot 2.7.18's YAML loader uses the compatible
+              SafeConstructor(LoaderOptions) and Representer(DumperOptions) APIs.
             -->
             <dependency>
                 <groupId>org.yaml</groupId>
                 <artifactId>snakeyaml</artifactId>
-                <version>1.33</version>
+                <version>2.7</version>
             </dependency>
 
             <!-- spring boot managed versions -->

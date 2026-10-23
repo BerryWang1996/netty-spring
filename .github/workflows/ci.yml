@@ -128,7 +128,7 @@ jobs:
           if [[ -n "${NVD_DATAFEED_URL:-}" ]]; then
             scan_args+=("-DnvdDatafeedUrl=$NVD_DATAFEED_URL")
           fi
-          bash ./mvnw $MAVEN_ARGS -Pdependency-scan -DskipTests package org.owasp:dependency-check-maven:12.2.1:aggregate "${scan_args[@]}"
+          bash ./mvnw $MAVEN_ARGS -Pdependency-scan -DskipTests package org.owasp:dependency-check-maven:12.2.2:aggregate "${scan_args[@]}"
 
       - name: Upload Dependency-Check reports
         if: always()

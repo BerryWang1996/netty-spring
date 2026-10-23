@@ -15,8 +15,8 @@
 
 ## 发布动作与远端门槛
 
-1. 审核差异与发布说明，创建发布提交和 annotated tag `v<version>`。提交包含验证结果，不带入本地缓存和实验文件。
-2. 推送分支和 tag，确认 GitHub Actions `Maven Test`、`Generate SBOM`、`Docker Demo Smoke`。必要时手动触发 Docker smoke（其 push/PR 有路径过滤）。
+1. 审核差异与发布说明，创建并推送发布候选提交。提交包含验证结果，不带入本地缓存和实验文件。
+2. 对候选提交手动触发 `CI` workflow（包含 Dependency Scan）和 `Docker Demo Smoke`（其 push/PR 有路径过滤），确认 `Maven Test`、`Generate SBOM`、扫描和 Docker smoke 的实际结果。发布条件满足后，在该提交创建并推送 annotated tag `v<version>`；再次确认 tag 对应 CI，避免先占用正式标签再发现阻断问题。
 3. **当前 CI 对所有 `v*` tag 都运行 Dependency Scan，优先使用 `NVD_API_KEY`；未配置时使用 Dependency-Check 官方 NVD 镜像。** 镜像的 `cache.properties` 时间戳必须在过去 72 小时内（最多允许超前 5 分钟），不可读取、过期或异常时间均阻断门禁；保留 CVSS 7.0 与扫描错误即失败的要求。按[依赖治理](dependency-governance.md)完成扫描与告警 triage，记录实际数据源和镜像时间戳，不能把红色 CI 写成发布验证通过。企业安全能力的额外承诺按该版范围验收。
 4. 使用已配置凭据的发布环境上传：
 
