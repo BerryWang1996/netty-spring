@@ -1,8 +1,8 @@
 # netty-spring — Frequently Asked Questions
 
-> Release status: see [1.10.1 release notes](release-notes-1.10.1.md). Do not adopt or promote the 1.10.1 cluster examples until its Maven Central publication is confirmed there.
+> Current release: **2.0.0 / Spring Boot 4.1.2 / JDK 17+**, available on Maven Central. See the [release and migration notes](release-notes-2.0.0.md) for application dependency management and verified deployment scope. The Boot 2.7 patch line retains separate [1.10.1 publication status](release-notes-1.10.1.md).
 
-netty-spring is an Apache-2.0 Spring Boot integration for Netty — HTTP MVC, WebSocket, application-layer AES-GCM crypto, and Micrometer observability — plus an opt-in WebSocket cluster and IM-platform foundation on top. It runs its own Netty server (`server.netty.port`, not Tomcat). Published 1.x artifacts target Spring Boot 2.7.x / JDK 17 under `io.github.berrywang1996:netty-*`; this checkout contains the unpublished 2.0.0 release candidate on Boot 4.1 / JDK 17+. The deployment and performance figures below describe 1.x; candidate-specific validation and publication status are recorded in the [2.0.0 migration notes](release-notes-2.0.0.md).
+netty-spring is an Apache-2.0 Spring Boot integration for Netty — HTTP MVC, WebSocket, application-layer AES-GCM crypto, and Micrometer observability — plus an opt-in WebSocket cluster and IM-platform foundation on top. It runs its own Netty server (`server.netty.port`, not Tomcat). Published 1.x artifacts target Spring Boot 2.7.x / JDK 17 under `io.github.berrywang1996:netty-*`; 2.0.0 is published on Boot 4.1.2 / JDK 17+. The historical deployment and performance figures below describe 1.x; the final 2.0.0 load results and compatibility boundaries are recorded separately in the [migration notes](release-notes-2.0.0.md).
 
 ---
 
@@ -14,7 +14,7 @@ Redis enters only when you opt into clustering: `server.netty.websocket.cluster.
 
 ### 2. When should I NOT enable cluster mode?
 
-Keep `cluster.enable=false` when **all** of these hold: you run one server; you expect ≤25k concurrent WebSocket connections; downtime of that single node is acceptable; and you don't want to operate Redis. The README's selection guide says it plainly: don't enable cluster "for safety" without a concrete use case — every "yes" adds operational complexity. Single-node mode is byte-identical to 1.7.x/1.8.0, so you lose nothing by staying off the cluster.
+Keep `cluster.enable=false` when **all** of these hold: you run one server; you expect ≤25k concurrent WebSocket connections; downtime of that single node is acceptable; and you don't want to operate Redis. The README's selection guide says it plainly: don't enable cluster "for safety" without a concrete use case — every "yes" adds operational complexity. Default single-node mode does not enable a cluster broker.
 
 Enable cluster when **any** of these is true: more than one server, more than ~25k connections expected, rolling deployments without dropping all sessions, or you already operate Redis 7+.
 
@@ -42,13 +42,13 @@ YeautyYE is a single-node Netty + Spring Boot WebSocket starter — a solid, nar
 
 ### 6. Does it work with Spring Boot 3 or 4?
 
-Published **1.x targets Spring Boot 2.7.18 / JDK 17**. The **2.0.0 release candidate targets Spring Boot 4.1 / JDK 17+** and is undergoing final verification; it is not yet published to Maven Central, so testing it requires a local installation of this checkout. See [migration differences and validation evidence](release-notes-2.0.0.md). Boot 3.x is not a target of either line. Spring Boot 2.7's upstream OSS support has ended; the remaining release gates are tracked in the [development plan](development-plan.md).
+Published **2.0.0 targets Spring Boot 4.1.2 / JDK 17+**; **1.x targets Spring Boot 2.7.18 / JDK 17**. Use the matching major version and follow the [application dependency overrides](release-notes-2.0.0.md#application-dependency-management) and the migration notes. Boot 3.x is not a target of either line. Spring Boot 2.7's upstream OSS support has ended; subsequent work is tracked in the [development plan](development-plan.md).
 
 ### 7. Is it production-ready?
 
 **Scoped yes for released 1.x.** Single-node mode is production-grade and behaviorally identical to 1.7.x/1.8.0. Release verification results are recorded in the release notes. Cluster mode is production-ready **within its documented envelope**: roughly ≤10 nodes of active broadcast, a dedicated/secured Redis, and the stated delivery semantics (local never lost; cross-node at-most-once; Redis loss degrades to local delivery after a grace period instead of dropping connections).
 
-The project does not claim a full IM platform or unlimited scale. Published 1.x does not support Boot 3/4; the Boot 4.1-based 2.0.0 candidate remains unpublished and its final release gates are tracked in the [development plan](development-plan.md). For the 1.10.0 optional-NATS startup defect, its fix, and the adoption gate, use the [1.10.1 release notes](release-notes-1.10.1.md).
+The project does not claim a full IM platform or unlimited scale. Released 2.0.0 passed its JDK 17/21/25 matrix and documented deployment, resource and load checks; use the [2.0.0 release notes](release-notes-2.0.0.md) for measured conditions and deployment boundaries. These checks do not establish production capacity for every workload. The historical 1.10.0 optional-NATS startup defect is fixed in 2.0.0; the Boot 2.7 patch retains its separate [1.10.1 publication status](release-notes-1.10.1.md).
 
 ### 8. What's the license?
 
@@ -76,6 +76,6 @@ The project publishes its ceilings, not just its wins:
 - **Cluster (Redis Pub/Sub):** documented for **roughly ≤10 nodes** of active broadcast, ~33k msg/s cross-node, and it needs a **dedicated, secured Redis** (auth + TLS in production).
 - **Mesh transport:** pushes the ~10-node ceiling, but the fan-out reduction is **genuine only for interest-partitioned live audiences** — a global topic or a high-population topic under random load-balancing still saturates the fleet.
 - **Delivery semantics:** local delivery happens first and is never lost; cross-node broadcast is **at-most-once** (fire-and-forget Pub/Sub); a node offline at publish time misses the message. Undeliverable unicast throws `MessageSessionClosedException`. Redis loss degrades the node to local delivery after a grace period.
-- **Platform:** published 1.x uses Spring Boot 2.7.x / JDK 17; the unpublished 2.0.0 release candidate uses Boot 4.1 / JDK 17+ and is undergoing final verification.
+- **Platform:** published 2.0.0 uses Spring Boot 4.1.2 / JDK 17+; the historical 1.x line uses Boot 2.7.x / JDK 17.
 
 There's a checked-in multi-node proof you can run yourself — `docker-demo/` spins up two nodes behind an nginx load balancer + Redis, and `smoke.js` verifies broadcasts in both directions between clients on distinct nodes, including the origin-node stamp. This checks basic delivery, not reliable replay or fault recovery.

@@ -1,6 +1,6 @@
 # 追加 Stack Overflow 选题清单（scout · 第二批）
 
-> 本清单对应 **2.0.0 发布候选 / Spring Boot 4.1.2 / JDK 17**。Maven Central 发布与独立消费者依赖解析待确认，所有外部回答均未发表。两篇现有回答及教程的共享核心 Java 片段已通过本地单机/双节点验证；本清单尚未逐题编写并执行新答案。发布状态与应用侧安全依赖覆盖统一见 [2.0.0 迁移与发布说明](release-notes-2.0.0.md)，不得将候选坐标写成已公开可用的依赖。
+> 本清单对应 **2.0.0 正式版 / Spring Boot 4.1.2 / JDK 17**。Maven Central 全部 68 份发布文件已公开核验。两篇现有回答及教程的共享核心 Java 片段已在独立 Central 消费者中通过单机/双节点 Redis 的 8 场景、16 项检查；本清单尚未逐题编写并执行新答案，所有外部回答均未发表。发布状态与应用侧安全依赖覆盖统一见 [2.0.0 迁移与发布说明](release-notes-2.0.0.md)。
 
 涉及控制器示例时，须说明使用 `javac -parameters`，或 Maven Compiler 配置 `<release>17</release>`、`<parameters>true</parameters>`。Spring 7 下缺少参数名的处理方法会在启动时被拒绝；同时按迁移说明核对应用 BOM 的 Jackson、SnakeYAML 与成对 Logback 覆盖。
 
@@ -10,7 +10,7 @@
 - 时间窗 **2022–2026**（区别于已草拟的两道 2014/2017 老题）；数据取自 Stack Exchange API，快照时间 **2026-08-13**。本轮未重新查询；发表前须复查问题、回答数量与适用性，以下流量和排序均为历史快照。
 - 筛选标准：**只有"原生 WebSocket / 集群 / 会话路由"类回答才成立**的题入选；诚实答案是"照 STOMP 修配置"的题（CORS、SockJS 路径、enum 序列化、`CONNECTED` 帧等）一律剔除。
 - 全部 9 题均来自 `spring-websocket` / `spring-boot` / `websocket` 标签的高票与高流量池。每题的"角度"都标注了 **netty-spring 不适用**的情形。
-- **诚实范围（本清单统一口径）**：Redis Pub/Sub 文档化约 **≤10 节点**活跃广播，这是既有使用边界，不能当作 2.0 新容量实测；需**专用、安全** Redis（auth+TLS）。mesh 扇出缩减**仅对兴趣分区的活跃受众真实有效**，全局或高人口主题在随机 LB 下仍会饱和整个集群。当前 **2.0.0 候选基于 Spring Boot 4.1.2 / JDK 17**；已发布 1.x 基于 Boot 2.7，不承诺 Boot 3 兼容。跑自有 **Netty 服务器**（`server.netty.port`）而非 Tomcat 内；**无 IM 平台对等**（无客户端 SDK / 管理后台 / 撤回 / 回执 / 历史）。
+- **诚实范围（本清单统一口径）**：Redis Pub/Sub 文档化约 **≤10 节点**活跃广播，这是既有使用边界，不能当作 2.0 新容量实测；需**专用、安全** Redis（auth+TLS）。mesh 扇出缩减**仅对兴趣分区的活跃受众真实有效**，全局或高人口主题在随机 LB 下仍会饱和整个集群。当前 **2.0.0 基于 Spring Boot 4.1.2 / JDK 17**；已发布 1.x 基于 Boot 2.7，不承诺 Boot 3 兼容。跑自有 **Netty 服务器**（`server.netty.port`）而非 Tomcat 内；**无 IM 平台对等**（无客户端 SDK / 管理后台 / 撤回 / 回执 / 历史）。
 
 ## 候选总表
 
@@ -50,7 +50,7 @@
 痛点原文就是"struggling to get the data from ChannelInterceptor to my service layer"——纯 STOMP 仪式。回答：netty-spring 没有 ChannelInterceptor 这道坎，`MessageSender` 是普通 Spring bean，可 `@Autowired`/构造注入进任意 service 或 HTTP controller，直接按 session id / user id 定向发送（`sendTextToSession` / `sendJsonToSession` / `sendToUser`）。不适用：留在 STOMP 就用 `SimpMessagingTemplate`（这句要写，别假装 STOMP 用户都得换库）。
 
 **8. 78568876 — Spring Data Redis 当消息代理（短/中）**
-K8s 里 pod 从 1 扩到 2 后 websocket 失效，想用 Spring Data Redis 当代理。回答先纠偏：Spring Data Redis 提供 pub/sub 原语（提问者已用它把消息扇出到各 pod），但光有 pub/sub 不够——跨 pod 的 WebSocket 还需要分布式会话注册表（谁持有哪个连接）+ 按节点路由，且它不替代 STOMP 的 `/user` 订阅寻址语义。选项：STOMP broker relay（他当前路线）或 Redis 背板的集群传输——netty-spring 集群正是后者（`RedisSessionRegistry` 记录谁在哪、Redis Pub/Sub 做传输，注册表 + 心跳在 Redis，消息热路径在 Pub/Sub）。**硬性不适用必须置顶**：提问者在 Spring Boot 3.2.4；已发布 1.x 基于 Boot 2.7，当前 **2.0.0 候选基于 Boot 4.1.2 / JDK 17**，两者都不承诺直接适配 Boot 3。这题只能说明架构与适用限制，不把换库作为现有 Boot 3 应用的直接修复。
+K8s 里 pod 从 1 扩到 2 后 websocket 失效，想用 Spring Data Redis 当代理。回答先纠偏：Spring Data Redis 提供 pub/sub 原语（提问者已用它把消息扇出到各 pod），但光有 pub/sub 不够——跨 pod 的 WebSocket 还需要分布式会话注册表（谁持有哪个连接）+ 按节点路由，且它不替代 STOMP 的 `/user` 订阅寻址语义。选项：STOMP broker relay（他当前路线）或 Redis 背板的集群传输——netty-spring 集群正是后者（`RedisSessionRegistry` 记录谁在哪、Redis Pub/Sub 做传输，注册表 + 心跳在 Redis，消息热路径在 Pub/Sub）。**硬性不适用必须置顶**：提问者在 Spring Boot 3.2.4；已发布 1.x 基于 Boot 2.7，当前 **2.0.0 基于 Boot 4.1.2 / JDK 17**，两者都不承诺直接适配 Boot 3。这题只能说明架构与适用限制，不把换库作为现有 Boot 3 应用的直接修复。
 
 **9. 78564331 — 下单实时通知（短）**
 电商下单后同时通知买家与卖家。回答给实时通知的通用设计（别把 WS 写进事务路径，业务事件与推送解耦），然后落到库：HTTP+WS 合体 starter（`netty-web-spring-boot-starter`）里，`MessageSender` 可直接注入处理下单的 controller/service，`broadcastJson` 按 URI 广播、`sendToUser` 按用户定向。**诚实免责**：netty-spring 不内置通知/任务队列与持久化，那部分是你的应用；库只提供传输 + 定向寻址。

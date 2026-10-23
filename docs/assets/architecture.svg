@@ -1,7 +1,7 @@
-<!-- Draft for 2.0.0 candidate. Core tutorial Java handlers passed local single-node/two-node Redis checks on 2026-10-24. Maven Central availability and independent consumer resolution remain pending in release-notes-2.0.0.md. No external publication performed. -->
+<!-- Draft for released 2.0.0. Core tutorial/answer Java fragments passed eight single-node/two-node Redis scenarios and 16 checks with independently resolved Central dependencies on 2026-10-24. Maven Central availability and consumer verification are complete; evidence and scope are in release-notes-2.0.0.md. No external publication of this material performed. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1400" height="520" viewBox="0 0 1400 520" role="img" aria-labelledby="t d">
   <title id="t">netty-spring deployment topologies</title>
-  <desc id="d">Unpublished netty-spring 2.0.0 candidate on Spring Boot 4.1.2 and JDK 17. Single node (default), opt-in Redis Pub/Sub with a dedicated secured Redis, and opt-in node-to-node mesh. Core tutorial handlers passed local single-node/two-node Redis checks; these do not establish capacity or validate every depicted topology. Central availability, independent consumer resolution and external publication are pending.</desc>
+  <desc id="d">Released netty-spring 2.0.0 on Spring Boot 4.1.2 and JDK 17. Single node (default), opt-in Redis Pub/Sub with a dedicated secured Redis, and opt-in node-to-node mesh. Core tutorial handlers passed independent Central consumer single-node/two-node Redis checks; these do not establish capacity or validate every depicted topology. Central availability and consumer verification are complete. This material has not been published externally.</desc>
   <defs>
     <marker id="arrE" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#5b6470"/></marker>
     <marker id="arrS" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#5b6470"/></marker>
@@ -114,6 +114,6 @@
 
     <!-- Footer -->
     <line x1="20" y1="472" x2="1380" y2="472" stroke="#d9dde3"/>
-    <text x="700" y="498" font-size="12" fill="#4a5059" text-anchor="middle">2.0.0 candidate · Central pending · dedicated secured Redis · fan-out reduction depends on audience placement</text>
+    <text x="700" y="498" font-size="12" fill="#4a5059" text-anchor="middle">2.0.0 released · Central available · dedicated secured Redis · fan-out reduction depends on audience placement</text>
   </g>
 </svg>

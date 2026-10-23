@@ -1,8 +1,8 @@
 # netty-spring API Usage Guide
 
-> Version: 2.0.0 release candidate (unpublished) | Updated: 2026-10-24
+> Version: 2.0.0 (published on Maven Central) | Updated: 2026-10-24
 
-> Source baseline: **Spring Boot 4.1 / JDK 17+**. The `2.0.0` dependency examples below refer to the current release candidate, which is not yet available on Maven Central; install this checkout locally before using them. Published 1.x artifacts require Boot 2.7. Jackson types and handler compiler requirements changed; see the [2.0.0 migration notes](release-notes-2.0.0.md) for validation and publication status. Remaining acceptance work is in the [development plan](development-plan.md).
+> Baseline: **Spring Boot 4.1.2 / JDK 17+**. The `2.0.0` dependencies below are available on Maven Central. Configure application dependency management and `-parameters` as described in the [application dependency management](release-notes-2.0.0.md#application-dependency-management), which also cover Jackson 3 API changes and the tested upgrade/rollback scope. Published 1.x artifacts target Boot 2.7. The [development plan](development-plan.md) is the single roadmap.
 
 This guide walks through the most common integration scenarios for `netty-spring`. Each section is self-contained — jump directly to the scenario that matches your use case.
 
@@ -524,7 +524,7 @@ public MessageCryptoPolicy cryptoPolicy() {
 
 Add the cluster starter alongside your existing starter:
 
-> **2.0.0 release candidate, unpublished / 发布候选，未发布** — Install this checkout locally before using this dependency; Maven Central publication is pending. See [migration notes / 迁移说明](release-notes-2.0.0.md) for the required Boot baseline and verification status.
+> **2.0.0 is published / 已发布** — Use Spring Boot 4.1.2 / JDK 17+ and apply the application dependency overrides in the [migration notes / 迁移说明](release-notes-2.0.0.md#application-dependency-management).
 
 ```xml
 <dependency>

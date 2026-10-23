@@ -76,8 +76,8 @@ Prepare these requirements before reserving a quiet host for a load run:
 ```powershell
 $env:OLD_IMAGE = 'netty-spring-1101-check:1.10.1'
 $env:NEW_IMAGE = 'netty-spring-200-acceptance:2.0.0-SNAPSHOT'
-# For a prebuilt 2.0.0 release candidate, use its image and expected version instead:
-# $env:NEW_IMAGE = 'netty-spring-200-acceptance:2.0.0'
+# For the released 2.0.0 baseline, set the actual locally built image and expected version:
+# $env:NEW_IMAGE = 'netty-spring-200-ga:2.0.0'
 # $env:NEW_VERSION = '2.0.0'
 node --test docker-demo/migration/load-client.test.cjs docker-demo/migration/summarize-load.test.cjs
 ```

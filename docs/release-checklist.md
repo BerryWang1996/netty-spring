@@ -1,8 +1,8 @@
 # 版本发布检查清单
 
-更新时间：2026-10-23
+更新时间：2026-10-24
 
-本页只保留可复用流程。当前路线见[开发计划](development-plan.md)，每版的修复、验证、上传和发布状态只记录在对应发布说明（[1.10.1](release-notes-1.10.1.md)、开发中的 [2.0.0](release-notes-2.0.0.md)）。历史记录不随新版本重写。
+本页只保留可复用流程。当前路线见[开发计划](development-plan.md)，每版的修复、验证、上传和发布状态只记录在对应发布说明（[1.10.1](release-notes-1.10.1.md)、[2.0.0](release-notes-2.0.0.md)）。历史记录不随新版本重写。
 
 ## 本地验证
 
@@ -25,7 +25,9 @@
    ```
 
    仅在同一源码完成全量测试后跳过重复测试。Windows 按环境指定 GPG 可执行文件。**必须使用 `-P release`**，由此生成 sources/Javadoc/GPG 和 Central bundle；普通 `mvn deploy` 不等价。
-5. 当前 `autoPublish=false` / `waitUntil=validated`：上传完成只代表 Portal 验证通过。记录 deployment ID，完成 Portal 发布并核实全部 10 个制品（父 POM + 9 个库模块）可下载后，才标为已发布。
+5. 当前 `autoPublish=false` / `waitUntil=validated`：上传完成只代表 Portal 验证通过。记录 deployment ID；deploy 可能重新生成 Javadoc 和签名，须重新归档实际产物、核验 GPG 指纹，并逐字节核对上传 bundle 与这份上传后清单，不能沿用上传前签名哈希。
+6. 完成 Portal 发布并确认状态为 `PUBLISHED`，再匿名下载全部 10 个坐标（父 POM + 9 个库模块）的 POM、主包、适用的 sources/Javadoc 及签名，核对大小与 SHA-256。仅有标签、Portal 接受或部分文件可下载均不算发布完成。
+7. 从全新 Maven 缓存、独立应用和公开 Central 解析 starter；核对应用的 effective POM、运行依赖树及安全覆盖版本，并编译、运行核心接入示例。避免本地 reactor 或 install 产物掩盖公开依赖缺失。通过后同步稳定版文档；外部文章和社区提交单独记录。
 
 ## 文档同步矩阵
 

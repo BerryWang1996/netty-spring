@@ -10,7 +10,7 @@
 
 A Spring Boot integration for Netty, providing HTTP MVC and WebSocket capabilities with auto-configuration support. Built for developers who need high-performance networking with the convenience of Spring Boot.
 
-> This branch contains the **2.0.0 release candidate on Spring Boot 4.1 / JDK 17+**. It is not published to Maven Central. The Maven Central examples below refer to the 1.x line (Boot 2.7); building this checkout uses the new baseline. Install the candidate locally before integrating it, and follow the [2.0.0 migration notes](docs/release-notes-2.0.0.md) for validation and publication status.
+> **2.0.0 is published to Maven Central**, targeting **Spring Boot 4.1.2 / JDK 17+**. Follow the [2.0.0 migration notes](docs/release-notes-2.0.0.md) for application dependency management, `-parameters`, Jackson 3 API changes and the tested upgrade/rollback scope.
 
 ### Features
 
@@ -49,15 +49,17 @@ A Spring Boot integration for Netty, providing HTTP MVC and WebSocket capabiliti
 
 #### 2. Add Maven Dependency
 
+Use Spring Boot `4.1.2` and Java 17+, enable `-parameters`, and apply the [application dependency management](docs/release-notes-2.0.0.md#application-dependency-management) for the security patch versions.
+
 ```xml
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
-    <version>1.10.0</version>
+    <version>2.0.0</version>
 </dependency>
 ```
 
-Available on Maven Central as `io.github.berrywang1996:*` (versions `1.4.0`, `1.6.2`, `1.7.0`, `1.8.0`, `1.9.0`, `1.10.0`). Earlier `com.github.berrywang1996:*` artifacts were only published to a private repository — migrate by changing the groupId in your `pom.xml`.
+Available on Maven Central as `io.github.berrywang1996:*` (versions `1.4.0`, `1.6.2`, `1.7.0`, `1.8.0`, `1.9.0`, `1.10.0`, `2.0.0`). Earlier `com.github.berrywang1996:*` artifacts were only published to a private repository — migrate by changing the groupId in your `pom.xml`.
 
 #### 3. Configure
 
@@ -138,7 +140,7 @@ Handler and WebSocket lifecycle code populates SLF4J **MDC** (`netty.requestId`,
 
 ### WebSocket Cluster *(v1.8.0 / reliability-hardened in v1.9.0 / IM-platform foundation in v1.10.0)*
 
-> The example below uses **1.10.1 (pending publication)** to fix default startup without jnats. Check the [release status](docs/release-notes-1.10.1.md) before resolving it from Maven Central.
+> The example uses **2.0.0 / Spring Boot 4.1.2 / JDK 17+**, including the optional-jnats startup fix. Apply the application dependency management described in the [migration notes](docs/release-notes-2.0.0.md).
 
 Scale WebSocket across multiple nodes with Redis Pub/Sub. Default is single-node mode (zero overhead). Enable cluster with one config flag:
 
@@ -147,7 +149,7 @@ Scale WebSocket across multiple nodes with Redis Pub/Sub. Default is single-node
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-websocket-cluster-spring-boot-starter</artifactId>
-    <version>1.10.1</version>
+    <version>2.0.0</version>
 </dependency>
 ```
 
@@ -176,6 +178,8 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 
 #### Performance Benchmarks
 
+These are **historical 1.x measurements**. The final 2.0.0 load comparison and its environment limits are recorded in the [release notes](docs/release-notes-2.0.0.md#load-acceptance); the figures below are not 2.0.0 capacity guarantees.
+
 **Methodology** — measured 2026-06-08 on Intel i9-14900HX (24c/32t), 64 GB RAM, Windows 11; JDK 17 GraalVM 17.0.11+7, Maven 3.9.16; Docker Desktop 29.5.2 running Redis 7-alpine + NATS 2.10 with JetStream, both on loopback. Zero-dependency `SimpleTextEnvelopeCodec`. 500-message warmup discarded before measurement; main runs of 5,000 (fan-out paths) and 2,000 (cross-node + reliable) messages. Reproduce with `mvn -pl netty-spring-websocket-cluster test -Dtest=PerformanceBenchmark` (9 ordered tests).
 
 | # | Scenario | Throughput | Avg latency | Notes |
@@ -198,6 +202,8 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 - **HMAC's micro-benchmark 90% overhead** is sign+verify in isolation (zero I/O). Add 30 µs of real network and the 2.4 µs HMAC cost is < 8% of total round-trip — negligible in practice. Enable `auth.enable=true` whenever Redis is shared with untrusted publishers.
 
 #### When to Use Cluster vs Single-Node
+
+The numeric ranges in this selection and capacity guide come from the historical 1.x environment above. Validate the actual 2.0.0 application workload before using them for sizing; the [2.0.0 load evidence](docs/release-notes-2.0.0.md#load-acceptance) has its own measured limits.
 
 | Dimension | Single-Node (default) | Cluster — Redis (`cluster.enable=true`) | Cluster — NATS (`nats.servers=...`) |
 | --- | --- | --- | --- |
@@ -228,7 +234,7 @@ Six independent decisions. Default to **NO** at every step unless the listed con
 - **Single-node (`cluster.enable=false`, default)** if all of: ≤ 1 server; ≤ 25k concurrent WebSocket connections; downtime of the single node is acceptable; you don't operate Redis.
 - **Cluster (`cluster.enable=true`)** if any of: > 1 server; > 25k connections expected; you need rolling deployments without dropping all sessions; you already operate Redis 7+.
 
-> Single-node is byte-identical to 1.7.x/1.8.0 — zero broker overhead. Don't enable cluster "for safety" without the use case.
+> Default single-node mode does not enable a cluster broker. Enable clustering when the deployment requires it.
 
 ##### Decision 2 — Which transport? (Redis vs NATS)
 
@@ -475,8 +481,8 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#11-configurati
 
 ### Current Status
 
-- Published release: **1.10.0**. The default cluster starter has a known startup failure without the optional jnats dependency; see the [1.10.1 fixes and publication status](docs/release-notes-1.10.1.md) before adopting it.
-- Current source version: **2.0.0 release candidate on Spring Boot 4.1**; final verification is in progress and Maven Central publication is pending. API changes and evidence are recorded in the [2.0.0 migration notes](docs/release-notes-2.0.0.md).
+- Published release and current source: **2.0.0 / Spring Boot 4.1.2 / JDK 17+**. All ten Maven Central coordinates and their published payloads/signatures have been verified; see the [release and migration notes](docs/release-notes-2.0.0.md).
+- The Boot 2.7-based 1.x line has separate [1.10.1 publication status](docs/release-notes-1.10.1.md); it does not change the 2.0.0 release status.
 - The [development plan](docs/development-plan.md) remains the single roadmap, with migration steps, acceptance criteria and deferred work.
 
 ### Documentation
@@ -485,7 +491,7 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#11-configurati
 - [Netty Configuration](docs/netty-configuration.md) — HTTP / TLS / management endpoint reference
 - [WebSocket Configuration](docs/websocket-configuration.md) — WebSocket runtime, crypto, observability
 - [Release Notes - 1.10.1](docs/release-notes-1.10.1.md) — Patch fixes, validation and publication status
-- [2.0.0 Migration Notes](docs/release-notes-2.0.0.md) — Development baseline, API changes and validation evidence
+- [2.0.0 Migration Notes](docs/release-notes-2.0.0.md) — Released baseline, API changes and validation evidence
 - [Release Notes - 1.10.0](docs/release-notes-1.10.0.md) — IM platform foundation
 - [Release Notes - 1.9.0](docs/release-notes-1.9.0.md) — Cluster reliability release history
 - [Release Notes - 1.8.0](docs/release-notes-1.8.0.md) — WebSocket cluster support
@@ -520,6 +526,8 @@ Verified on `GraalVM JDK 17.0.11` + `Apache Maven 3.9.9`. CI workflow runs full 
 <a id="中文"></a>
 
 ## 中文
+
+> **2.0.0 已发布到 Maven Central**，基线为 **Spring Boot 4.1.2 / JDK 17+**。使用前按[迁移说明](docs/release-notes-2.0.0.md)配置应用的安全依赖覆盖与 `-parameters`，并核对 Jackson 3 API 和升级/回滚范围。
 
 基于 Netty 的 Spring Boot 集成框架，提供 HTTP MVC 和 WebSocket 能力，支持自动装配。为需要高性能网络通信且希望保留 Spring Boot 开发便利性的开发者而构建。
 
@@ -560,15 +568,17 @@ Verified on `GraalVM JDK 17.0.11` + `Apache Maven 3.9.9`. CI workflow runs full 
 
 #### 2. 引入 Maven 依赖
 
+使用 Spring Boot `4.1.2`、Java 17+ 和 `-parameters`，并按[应用依赖管理示例](docs/release-notes-2.0.0.md#application-dependency-management)保留安全补丁版本。
+
 ```xml
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-web-spring-boot-starter</artifactId>
-    <version>1.10.0</version>
+    <version>2.0.0</version>
 </dependency>
 ```
 
-Maven Central 上以 `io.github.berrywang1996:*` 提供（版本 `1.4.0`、`1.6.2`、`1.7.0`、`1.8.0`、`1.9.0`、`1.10.0`）。早期 `com.github.berrywang1996:*` 仅发布到私有仓库——迁移时只需把 `pom.xml` 里的 groupId 改成新的即可。
+Maven Central 上以 `io.github.berrywang1996:*` 提供（版本 `1.4.0`、`1.6.2`、`1.7.0`、`1.8.0`、`1.9.0`、`1.10.0`、`2.0.0`）。早期 `com.github.berrywang1996:*` 仅发布到私有仓库——迁移时只需把 `pom.xml` 里的 groupId 改成新的即可。
 
 #### 3. 配置
 
@@ -651,7 +661,7 @@ handler 与 WebSocket 生命周期会写入 SLF4J **MDC**（`netty.requestId`、
 
 ### WebSocket 集群 *(v1.8.0 引入 / v1.9.0 可靠性硬化 / v1.10.0 IM 平台基础)*
 
-> 下例使用 **1.10.1（待发布）** 修复缺少 jnats 时的默认启动问题。从 Maven Central 使用前，请确认[发布状态](docs/release-notes-1.10.1.md)。
+> 下例使用已发布的 **2.0.0 / Spring Boot 4.1.2 / JDK 17+**，包含可选 jnats 缺席时的启动修复。应用依赖管理及迁移步骤见 [2.0.0 迁移说明](docs/release-notes-2.0.0.md)。
 
 通过 Redis Pub/Sub 实现跨节点广播和单播。默认单机模式零开销；一个配置开关即可启用集群：
 
@@ -660,7 +670,7 @@ handler 与 WebSocket 生命周期会写入 SLF4J **MDC**（`netty.requestId`、
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-websocket-cluster-spring-boot-starter</artifactId>
-    <version>1.10.1</version>
+    <version>2.0.0</version>
 </dependency>
 ```
 
@@ -689,6 +699,8 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 
 #### 性能基准
 
+以下为 **1.x 历史测量数据**。最终 2.0.0 的负载对照与环境限制统一见[发布说明](docs/release-notes-2.0.0.md#load-acceptance)，下表不代表 2.0.0 的生产容量。
+
 **测试方法学**：2026-06-08 在 Intel i9-14900HX（24 核 / 32 线程）、64 GB RAM、Windows 11 上测得；JDK 17 GraalVM 17.0.11+7、Maven 3.9.16；Docker Desktop 29.5.2 跑 Redis 7-alpine + NATS 2.10（开启 JetStream），均走 loopback。零依赖 `SimpleTextEnvelopeCodec`。所有测试丢弃 500 条预热消息后再测；扇出路径用 5,000 条主样本、跨节点 / 可靠路径用 2,000 条主样本。复现：`mvn -pl netty-spring-websocket-cluster test -Dtest=PerformanceBenchmark`（9 个有序测试方法）。
 
 | # | 场景 | 吞吐量 | 平均延迟 | 说明 |
@@ -711,6 +723,8 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 - **HMAC 90% 的 micro-bench 开销** 是签名+验签在零 I/O 下的孤立 CPU 成本。加上真实网络 30 µs RTT，2.4 µs 的 HMAC 占总往返不到 8%——可忽略。Redis 与不可信发布方共享时，**坚持开** `auth.enable=true`。
 
 #### 选型建议
+
+本节选型与容量规划的数值来自上述 1.x 历史环境。用于 2.0.0 生产选型前须验证实际业务负载；[2.0.0 负载证据](docs/release-notes-2.0.0.md#load-acceptance)另列本次实测范围。
 
 | 维度 | 单机（默认） | 集群——Redis (`cluster.enable=true`) | 集群——NATS (`nats.servers=...`) |
 | --- | --- | --- | --- |
@@ -741,7 +755,7 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 - **单机（`cluster.enable=false`，默认）**：如果同时满足——只用 ≤ 1 台服务器；并发 WebSocket ≤ 25k；单节点停机可接受；不想运维 Redis。
 - **集群（`cluster.enable=true`）**：如果满足任一——> 1 台服务器；预期 > 25k 连接；需要滚动发布不能全断；已经在运维 Redis 7+。
 
-> 单机模式与 1.7.x/1.8.0 字节级一致，broker 开销为零。**没有具体用例不要"为了安全"开集群。**
+> 默认单机模式不启用集群 broker；按实际部署需求开启集群。
 
 ##### 决策 2——传输层选 Redis 还是 NATS？
 
@@ -986,8 +1000,8 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 
 ### 当前阶段
 
-- 已发布版本：**1.10.0**。默认集群 starter 存在缺少可选 jnats 依赖时启动失败的问题，采用前请查阅 [1.10.1 修复与发布状态](docs/release-notes-1.10.1.md)。
-- 当前源码版本：**2.0.0 发布候选 / Spring Boot 4.1 / JDK 17+**，最终验证进行中，尚未发布到 Maven Central；使用候选需先在本地安装源码，API 差异、验证与发布状态见 [2.0.0 迁移说明](docs/release-notes-2.0.0.md)。上面的 Central 依赖示例仍对应 Boot 2.7 的 1.x，构建本分支使用新基线。
+- 已发布及当前源码版本：**2.0.0 / Spring Boot 4.1.2 / JDK 17+**。Maven Central 的十个坐标及全部制品、签名已核对；应用依赖管理、API 差异与升级/回滚边界见 [2.0.0 发布与迁移说明](docs/release-notes-2.0.0.md)。
+- Boot 2.7 的 1.x 维护线单独保留 [1.10.1 发布状态](docs/release-notes-1.10.1.md)，不影响 2.0.0 的公开发布。
 - 迁移步骤、验收标准和延期项统一见[开发计划](docs/development-plan.md)。
 
 ### 文档
@@ -996,7 +1010,7 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 - [Netty 配置说明](docs/netty-configuration.md) — HTTP / TLS / 管理端点参考
 - [WebSocket 配置说明](docs/websocket-configuration.md) — WebSocket 运行时、加密、可观测性
 - [1.10.1 发布说明](docs/release-notes-1.10.1.md) — 补丁修复、验证与发布状态
-- [2.0.0 迁移说明](docs/release-notes-2.0.0.md) — 开发基线、API 差异与验证证据
+- [2.0.0 迁移说明](docs/release-notes-2.0.0.md) — 已发布基线、API 差异与验证证据
 - [1.10.0 发布说明](docs/release-notes-1.10.0.md) — IM 平台基础
 - [1.9.0 发布说明](docs/release-notes-1.9.0.md) — 集群可靠性历史版本
 - [1.8.0 发布说明](docs/release-notes-1.8.0.md) — WebSocket 集群支持

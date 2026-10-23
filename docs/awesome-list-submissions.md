@@ -1,9 +1,9 @@
 # Awesome 列表提交材料（待你用 BerryWang1996 账号提 PR）
 
-> 2026-10-24 更新的 **2.0.0 发布候选 / Spring Boot 4.1.2 / JDK 17** 提交草稿。Maven Central 待[发布说明](release-notes-2.0.0.md)确认，所有外部 PR/提交尚未执行。
+> 2026-10-24 更新的 **2.0.0 正式版 / Spring Boot 4.1.2 / JDK 17** 提交草稿。Maven Central 全部 68 份发布文件已公开核验，见[发布说明](release-notes-2.0.0.md)；所有外部 PR/提交尚未执行。
 > 下方分类与收录流程来自 2026-08 调研；提交前重新核对目标仓库规则、当前收录状态和账号，不沿用旧 star 数、活跃度或账号登录结论。
 > 推广顺序统一见[推广计划](promotion-playbook.md)，不以本地草稿完成表示已被收录。
-> 两教程/两回答的核心 Java 片段已在候选依赖下完成单机/双节点本地验证；Central 及独立消费者依赖解析仍待确认。
+> 两教程/两回答的核心 Java 片段已在全新 Maven 缓存从 Central 解析的独立消费者中完成单机/双节点 Redis 验证，共 8 场景、16 项检查通过。
 
 ---
 
@@ -35,9 +35,9 @@
 ```markdown
 Spring Boot starters that serve HTTP MVC and WebSocket on Netty (no STOMP/SockJS required),
 with an opt-in Redis-backed cluster for cross-node broadcast, presence and offline delivery.
-Apache-2.0 with English documentation. The 2.0.0 candidate targets Spring Boot 4.1.2 and JDK 17;
-Core tutorial handlers have been checked locally with candidate libraries in single-node and two-node Redis modes.
-Maven Central availability and independently resolved consumer dependencies remain pending before submission.
+Apache-2.0 with English documentation. Released 2.0.0 targets Spring Boot 4.1.2 and JDK 17.
+Core tutorial handlers have been checked with independently resolved Central dependencies in single-node and two-node Redis modes.
+Maven Central availability and consumer verification are complete; this submission has not been made.
 ```
 
 - 一次 PR 只提交一个项目（规则要求）。
@@ -77,6 +77,6 @@ Maven Central availability and independently resolved consumer dependencies rema
 
 ## 提交后的跟进
 
-- 确认 Central、示例和目标仓库规则后再决定是否提交；逐项记录实际 PR 链接与处理结果。
+- Central 与消费者运行验证已完成；复查目标仓库规则后再决定是否提交，逐项记录实际 PR 链接与处理结果。
 - 如被拒，按维护者给出的具体原因处理，不用未经核实的 star 门槛或响应时间推测结果。
 - 当前只准备材料，尚未提交或执行外部跟进。

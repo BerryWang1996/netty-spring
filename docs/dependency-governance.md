@@ -11,7 +11,7 @@
 
 ## 当前依赖基线与覆盖
 
-当前源码版本为 `2.0.0` 发布候选，尚未发布到 Maven Central；根 POM 锁定 **Spring Boot 4.1.2 / JDK 17**，编译使用 `--release 17` 和 `-parameters`。Spring Framework、Netty、SLF4J、Log4j、Lettuce、Micrometer、JUnit、Mockito 和 Testcontainers 统一由 Boot BOM 管理；旧 Spring 5、Netty 4.1、Jackson 2 和日志组件等独立覆盖已清理，当前必要的安全覆盖单列如下。历史版本及漏洞处置依据集中保留在 [1.10.1 发布说明](release-notes-1.10.1.md)，本轮依赖与安全验证事实见 [2.0.0 发布说明](release-notes-2.0.0.md#dependency-scan-evidence)，迁移状态见[开发计划](development-plan.md)。
+当前源码和 Maven Central 稳定版本为 `2.0.0`；根 POM 锁定 **Spring Boot 4.1.2 / JDK 17**，编译使用 `--release 17` 和 `-parameters`。Spring Framework、Netty、SLF4J、Log4j、Lettuce、Micrometer、JUnit、Mockito 和 Testcontainers 统一由 Boot BOM 管理；旧 Spring 5、Netty 4.1、Jackson 2 和日志组件等独立覆盖已清理，当前必要的安全覆盖单列如下。历史版本及漏洞处置依据集中保留在 [1.10.1 发布说明](release-notes-1.10.1.md)，本轮依赖与安全验证事实见 [2.0.0 发布说明](release-notes-2.0.0.md#dependency-scan-evidence)，迁移状态见[开发计划](development-plan.md)。
 
 当前保留的显式版本如下；升级 Boot 时逐项复核，BOM 纳入对应修复后移除安全覆盖。
 
@@ -24,7 +24,9 @@
 | `io.nats:jnats` | **2.20.4**，Boot BOM 未管理的可选 NATS 客户端，沿用既有传输基线；使用 NATS 的应用需显式引入，Redis 默认路径不应依赖它。 |
 | `org.projectlombok:lombok` | **1.18.48**，与 Boot 4.1.2 一致；根属性同时供依赖和编译器 annotation processor 使用，避免处理器与依赖版本不一致。 |
 
-Runtime 继续按需引入 Netty 模块，不使用 `netty-all`。每次变更依赖后检查 `dependency:tree` / effective POM 与实际制品，尤其避免 Spring、Netty、Jackson 混版。上述版本选择不代表 `2.0.0` 漏洞扫描已经通过；SBOM、扫描结果、残余告警及远端 CI 均须按本版实际结果记录。
+Runtime 继续按需引入 Netty 模块，不使用 `netty-all`。每次变更依赖后检查 `dependency:tree` / effective POM 与实际制品，尤其避免 Spring、Netty、Jackson 混版。`v2.0.0` 的 SBOM、Dependency-Check 与三 JDK CI 已通过，具体数据源、未覆盖来源及人工补充处置见发布说明。应用仍须按其自身依赖管理检查最终版本，不能把本库扫描结果直接当作整个应用的结论。
+
+应用的最小安全覆盖 XML 统一见[应用依赖管理](release-notes-2.0.0.md#application-dependency-management)，该配置已用空 Maven 缓存和公开 Central 制品验证。
 
 ## Maven Profiles
 

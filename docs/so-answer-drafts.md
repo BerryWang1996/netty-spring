@@ -1,18 +1,18 @@
 # Stack Overflow 回答草稿（待你用自己的账号发布）
 
-> 状态：2026-10-24 更新为 **2.0.0 发布候选 / Spring Boot 4.1.2 / JDK 17** 草稿；两篇均未对外发表。Java 片段已在补齐文中省略的 DTO、服务与目标变量后，以冻结候选依赖通过单机/双节点 Redis 本地验证；独立消费者的 Central 依赖解析仍待完成。
-> 两篇依赖示例均须等待 [2.0.0 发布说明](release-notes-2.0.0.md)确认 Maven Central 可用，当前仅可先安装候选源码后本地测试。
+> 状态：2026-10-24 更新为 **2.0.0 正式版 / Spring Boot 4.1.2 / JDK 17** 的回答草稿；两篇均未对外发表。Java 片段已补齐文中省略的 DTO、服务与目标变量，在全新 Maven 缓存从 Central 解析的独立消费者中通过单机/双节点 Redis 验证；教程与回答共用的 8 场景、16 项检查通过。
+> 两篇依赖示例的 2.0.0 已发布到 Maven Central，全部 68 份发布文件公开核验通过，证据见 [2.0.0 发布说明](release-notes-2.0.0.md)。
 > handler 必须以 `-parameters` 编译；Maven Compiler 配置 `<release>17</release>`、`<parameters>true</parameters>`，并按迁移说明保留应用 BOM 中 Jackson、SnakeYAML、成对 Logback 的安全覆盖。
 > 题目热度、回答数和原始 API 核查来自 2026-08 历史快照；发布前复查当前问题与代码，不将这些数据视为当前事实。
 
 ## 发布须知（先读）
 
 1. **披露声明已内置在每篇草稿里**（"Full disclosure: I'm the author..."）。SO 的自我推广规则要求披露利益关系，删掉会有封号风险，不要删。
-2. 两篇都先等待 Central 确认和独立消费者依赖解析，再根据问题当前状态与回答价值选择是否发表；不因完成本地验证而记录已发布。
+2. Central 可用性与独立消费者运行验证已完成；根据问题当前状态与回答价值选择是否发表，不把制品发布或本地验证写成回答已发表。
 3. 回答以解决问题为主、库为辅——即使读者不用这个库，前半部分也应对他有用。不要加更多链接（每篇最多 2-3 个，已是最小集）。
 4. 发布后**盯评论**：有人指出 API 细节错误就立刻更正（响应速度是单人维护库最强的信任信号）。
 5. 不要用任何小号点赞（SO 有投票欺诈检测，会连坐封号）。
-6. 本地复验覆盖两篇核心 Java 片段的真实装配、广播与定向发送；应用业务代码由夹具补齐，不等于所有代码块可独立复制运行。发布前仍须核对 Central 取得的 2.0.0 制品和应用实际依赖。
+6. 独立消费者复验覆盖两篇核心 Java 片段的真实装配、广播与定向发送；应用业务代码由夹具补齐，不等于所有代码块可独立复制运行。消费者的实际依赖与应用 BOM 覆盖见发布说明，读者仍需核对自身应用的依赖树。
 
 ---
 
@@ -99,14 +99,15 @@ new WebSocket("ws://host:8080/trade?id=foo")   // plain browser WebSocket, nothi
 ## Where this won't fit (so you don't waste time)
 
 - It runs on its own Netty server (`server.netty.port`), not inside Tomcat — fine for a dedicated realtime service or a Netty-served app, wrong if the endpoint must live inside an existing servlet container.
-- This draft targets the unpublished 2.0.0 candidate on Spring Boot 4.1.2 / JDK 17. Compile handlers with `-parameters` (Maven Compiler `<parameters>true</parameters>`); retain the application BOM security overrides documented in the 2.0.0 migration notes. Boot 3 compatibility is not promised.
+- This draft targets released 2.0.0 on Spring Boot 4.1.2 / JDK 17. Compile handlers with `-parameters` (Maven Compiler `<parameters>true</parameters>`); retain the application BOM security overrides documented in the 2.0.0 migration notes. Boot 3 compatibility is not promised.
 - If you need per-connection handler *instances* rather than per-session state in a singleton, Spring's own `PerConnectionWebSocketHandler` remains the in-container route.
 ````
 
 ### 发布检查清单
 
-- [x] 核心 Java 片段已在候选依赖下验证构造器注入、连接、跨端点广播和定向文本发送。
-- [ ] 确认 2.0.0 Central 可用并验证独立消费者解析的依赖；更新正文中的候选状态。
+- [x] 核心 Java 片段已在冻结 GA 依赖下验证构造器注入、连接、跨端点广播和定向文本发送。
+- [x] 2.0.0 Central 全部 68 份发布文件已公开核验，正文已使用正式版本。
+- [x] 完成独立 Central 消费者运行验证，6 个原文 Java 块保持不变。
 - [ ] 用你的账号粘贴到 Q42901062 的回答框
 - [ ] 预览确认代码块渲染正常（SO 的 ``` 围栏 + 语言标签）
 - [ ] 保留披露声明
@@ -167,10 +168,10 @@ Local sending is attempted before cross-node publication; this ordering does not
 
 ## The working sample (what the question actually asked for)
 
-The repo contains a two-node application behind nginx with Redis. Its smoke test verifies JSON broadcasts in both directions between clients on distinct nodes, including content and the sender's origin stamp. Run it from the candidate checkout; use the release tag only after it exists and Central is confirmed:
+The repo contains a two-node application behind nginx with Redis. Its smoke test verifies JSON broadcasts in both directions between clients on distinct nodes, including content and the sender's origin stamp. Run it from the released tag:
 
 ```bash
-git clone --branch codex/2.0.0-spring-boot-4.1 https://github.com/BerryWang1996/netty-spring.git
+git clone --branch v2.0.0 https://github.com/BerryWang1996/netty-spring.git
 cd netty-spring
 ./mvnw -pl demo-netty-web-spring-boot-starter -am package -DskipTests
 docker compose -f docker-demo/docker-compose.yml up --build
@@ -187,13 +188,14 @@ cd docker-demo && npm install && node smoke.js
 
 - It replaces Tomcat with Netty as the server — this is a different route from clustering Tomcat itself, not a patch for it. If you must stay on Tomcat + STOMP, the broker-relay answers above remain the correct approach.
 - The Redis Pub/Sub transport is documented for roughly ≤ 10 nodes of active broadcast; it needs a dedicated, secured Redis (auth + TLS in production).
-- This draft uses the unpublished 2.0.0 candidate / Spring Boot 4.1.2 / JDK 17. Compile handlers with `-parameters` and retain the application BOM security overrides in the migration notes. The core Java fragment has been exercised locally with candidate libraries; independent Central consumer resolution remains pending.
+- This draft uses released 2.0.0 / Spring Boot 4.1.2 / JDK 17. Compile handlers with `-parameters` and retain the application BOM security overrides in the migration notes. The core Java fragment has been exercised with independently resolved Central dependencies in single-node and two-node Redis modes.
 ````
 
 ### 发布检查清单
 
-- [x] 核心 Java 片段已在候选依赖下验证 DTO 绑定、双向 JSON 广播及跨节点定向 JSON。
-- [ ] 核对 [2.0.0 发布说明](release-notes-2.0.0.md)中的 Central 可用性和独立消费者解析结果，再把候选 checkout/状态切换为实际发布标签。
+- [x] 核心 Java 片段已在冻结 GA 依赖下验证 DTO 绑定、双向 JSON 广播及跨节点定向 JSON。
+- [x] [2.0.0 发布说明](release-notes-2.0.0.md)已确认 Central 可用，示例 checkout 已切换为正式标签。
+- [x] 完成独立 Central 消费者运行验证，6 个原文 Java 块保持不变。
 - [ ] 用你的账号粘贴到 Q26853745 的回答框
 - [ ] 预览确认代码块渲染正常
 - [ ] 保留披露声明
@@ -203,12 +205,12 @@ cd docker-demo && npm install && node smoke.js
 
 ## 草稿依据（内部参考，不发布）
 
-- 2026-08 的原稿基于 1.10.0；当前候选更新对照下列接口与配置，并于 2026-10-24 完成核心 Java 片段本地复验：
+- 2026-08 的原稿基于 1.10.0；当前 2.0.0 更新对照下列接口与配置，并于 2026-10-24 完成核心 Java 片段本地复验：
   - `@MessageMapping`/`MessageType`/`MessageSender`/`MessageSession` 签名 → netty-spring-websocket 模块
   - `server.netty.websocket.cluster.*` 全量配置表、`ClusterMessageSender` drop-in 语义、投递语义原文引用 → netty-spring-websocket-cluster + 集群 starter
   - docker-demo 命令、smoke.js 断言、Maven 坐标、Boot/JDK 版本 → docker-demo/ + 各 pom
 - 不应宣传 `@AutowiredMessageSender` 为有效字段注入能力；使用 Spring 构造器注入。WS 路径变量和 Boot 3 兼容也不作承诺。
 - 当前 `smoke.js` 检查双向 JSON 投递，不是延迟基准或可靠重放。可靠传输需按 Redis Streams/JetStream 的具体配置与保留窗口说明，不能从普通 Pub/Sub smoke 推导。
 - 当前修订补充参数元数据与应用 BOM 要求，并删除本地消息“绝不丢”的过度承诺；题目数据和外部规则尚未刷新。
-- 两篇教程与两篇回答共 6 个 Java 块，按原文抽取并补齐明确的应用支撑代码；JDK 17 的 `--release 17 -parameters` 编译与 8 个单机/双节点场景通过。12 个 JVM 正常退出，18 个 WebSocket 均以主动请求后的 1000 关闭；本地依赖来自冻结 GA 候选，未把该结果当作 Central 消费者 BOM 解析证据。
+- 两篇教程与两篇回答共 6 个 Java 块，按原文抽取并补齐明确的应用支撑代码；JDK 17 的 `--release 17 -parameters` 编译与 8 个单机/双节点场景、16 项检查通过。冻结 GA 依赖验证之后，又使用全新缓存从 Central 独立解析的 48 个运行 JAR 完成复验；12 个 JVM 正常退出，18 个 WebSocket 逐个完成主动请求后的 1000 关闭。该结果不保证并发过载时也能正常关闭，首次夹具关闭突发及修正记录见 [2.0.0 发布说明](release-notes-2.0.0.md)。
 - Answer 2 所涉 optional-NATS 缺陷、修复与验证记录统一见 [1.10.1 发布说明](release-notes-1.10.1.md)。

@@ -1,6 +1,6 @@
 # Clustered WebSocket on Spring Boot — setup, delivery semantics, and limits
 
-> Draft updated 2026-10-24 for the **2.0.0 candidate / Spring Boot 4.1.2 / JDK 17**. The Java handler was compiled with `-parameters` and exercised in single-node and two-node Redis modes using the frozen candidate's libraries. Maven Central availability and independent consumer dependency resolution remain pending in the [release notes](../release-notes-2.0.0.md). This tutorial has not been published externally; the dependency below is still a candidate coordinate.
+> Draft updated 2026-10-24 for released **2.0.0 / Spring Boot 4.1.2 / JDK 17**. The Java handler was compiled with `-parameters` and exercised in single-node and two-node Redis modes, including an independent consumer resolved from Central in a fresh Maven cache. All 68 release files are publicly available; the shared tutorial/answer suite passed eight scenarios and 16 checks. Evidence and scope are in the [release notes](../release-notes-2.0.0.md). This tutorial has not been published externally.
 
 Spring's native WebSocket + STOMP stack is a lot of machinery for a simple realtime need. To get a chat channel or a live status feed, you have to wire up a message broker (or STOMP relay), configure `MessageBrokerRegistry`, deal with `SimpMessagingTemplate` and `/topic`/`/app` destination conventions, and then still reach for a separate story the moment you want two nodes to talk to each other.
 
@@ -108,7 +108,7 @@ The property prefix is `server.netty.websocket.cluster.*` and it's only active w
 
 ## Prove it on two nodes
 
-The checked-in [Docker demo](../../docker-demo/README.md) uses two nodes behind an nginx load balancer, sharing state over Redis, plus a headless smoke test. Run these commands from the candidate checkout (use the released `v2.0.0` tag only after it exists and Central is confirmed). Build the demo jar first, then bring the stack up:
+The checked-in [Docker demo](../../docker-demo/README.md) uses two nodes behind an nginx load balancer, sharing state over Redis, plus a headless smoke test. Run these commands from the released `v2.0.0` checkout. Build the demo jar first, then bring the stack up:
 
 ```bash
 ./mvnw -pl demo-netty-web-spring-boot-starter -am package -DskipTests
@@ -125,7 +125,7 @@ cd docker-demo && npm install && node smoke.js
 
 ## The four opt-in IM primitives
 
-These existing 1.10.x capabilities are carried into the 2.0.0 candidate and remain **default-off** behind their feature flags. None makes netty-spring an off-the-shelf IM platform: there are no client SDKs, admin console, recall, receipts, or history API.
+These existing 1.10.x capabilities are carried into 2.0.0 and remain **default-off** behind their feature flags. None makes netty-spring an off-the-shelf IM platform: there are no client SDKs, admin console, recall, receipts, or history API.
 
 - **Rooms** (`cluster.room.enable=true`): a room is a sub-dimension inside one `@MessageMapping` URI. `roomMessage(uri, room, msg)` targets only the nodes actually hosting that room's members, so fan-out drops from N to roughly N/k for bounded rooms. Honest caveat: a hot room whose members span every node sees no reduction — for those, use a global `topicMessage`.
 - **Offline queue + `sendToUser`** (`cluster.offline.enable=true`): `sendToUser(userId, msg)` delivers realtime if the user has any live session anywhere, otherwise enqueues per-user and backfills FIFO on reconnect.
@@ -141,7 +141,7 @@ This is the part I'd want you to read before betting a product on it:
 - **Redis Pub/Sub retains its documented roughly ≤ 10-node active-broadcast envelope.** This is an operating limit, not a new 2.0.0 capacity measurement. Validate your workload; NATS and mesh do not establish an automatic capacity increase. Sharded pub/sub is deferred beyond 2.0.0.
 - **Redis is not optional furniture.** You need a dedicated, secured Redis — auth and TLS in production — because it's the control plane. There's optional HMAC envelope auth (`cluster.auth.enable=true`) for when Redis crosses an untrusted boundary.
 - **The mesh fan-out reduction is real, but conditional.** It's genuine for **interest-partitioned live audiences** — a support topic whose agents sit on 4 of 100 nodes, or small tenants. A **global** topic (live sessions on every node) gets zero reduction, and a high-population topic under **random load-balancing** still saturates nearly the whole fleet (coupon-collector). The `fanout.target_nodes` meter exists precisely so you can *see* whether you're getting reduction instead of assuming it.
-- **This candidate targets Boot 4.1.2 / JDK 17**, with `-parameters` required for handlers. Published 1.x targets Boot 2.7; Boot 3.x compatibility is not promised. Candidate and release status are in the [development plan](../development-plan.md).
+- **2.0.0 targets Boot 4.1.2 / JDK 17**, with `-parameters` required for handlers. Published 1.x targets Boot 2.7; Boot 3.x compatibility is not promised. Release status is in the [development plan](../development-plan.md).
 - **It runs its own Netty server** on `server.netty.port`. That's the point — but it also means it's **not** inside Tomcat, and it's not a drop-in for an existing Servlet stack.
 - **Not an IM platform out of the box.** No client SDKs, no admin console, no recall/receipts/history. If you need those, you're building them on top of the primitives, not getting them from the starter.
 
@@ -153,4 +153,4 @@ The README and [cluster design](../cluster-design.md) describe these deployment 
 - **API guide:** [`docs/api-guide.md`](../api-guide.md) — §9 is the cluster deep-dive with every config key, §5 is the full `MessageSender`/`MessageSession` reference.
 - **Site:** https://www.mysplitter.com/netty-spring-site/
 
-The local handler check covers connected-event JSON and text broadcasts in both directions. It does not establish capacity, TLS handling, or all optional feature behavior. Before publication, confirm Central availability and independently resolved consumer dependencies as recorded in the release and promotion documents.
+The consumer check covers connected-event JSON and text broadcasts in both directions. It does not establish capacity, TLS handling, all optional feature behavior, or normal closure under executor overload. Central availability and independent consumer verification are complete; external publication remains unperformed, as recorded in the release and promotion documents.
