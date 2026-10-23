@@ -171,7 +171,25 @@ public class MeshBroker implements ClusterBroker {
                         ch.pipeline().addLast(new InboundHandler());
                     }
                 });
-        this.serverChannel = sb.bind(bindAddress, port).sync().channel();
+        boolean bound = false;
+        try {
+            ChannelFuture bindFuture = sb.bind(bindAddress, port);
+            this.serverChannel = bindFuture.channel();
+            bindFuture.sync();
+            bound = true;
+        } finally {
+            if (!bound) {
+                // A failed @Bean creation has no destroy callback. Nothing was advertised yet, so
+                // release only our resources; shutdown() would also remove an existing directory entry.
+                state.set(BrokerState.SHUTDOWN);
+                if (serverChannel != null) {
+                    serverChannel.close();
+                }
+                bossGroup.shutdownGracefully(0, 2, TimeUnit.SECONDS);
+                workerGroup.shutdownGracefully(0, 2, TimeUnit.SECONDS);
+                dispatchExecutor.shutdownNow();
+            }
+        }
 
         this.clientBootstrap = new Bootstrap();
         clientBootstrap.group(workerGroup)
@@ -488,6 +506,14 @@ public class MeshBroker implements ClusterBroker {
         Channel ch;
         try {
             ch = cf.sync().channel();
+        } catch (InterruptedException e) {
+            // The channel is not in outbound yet. Close it even if cancellation loses a race with
+            // connect completion, otherwise normal broker shutdown cannot find the abandoned channel.
+            cf.cancel(false);
+            cf.channel().close();
+            Thread.currentThread().interrupt();
+            log.debug("mesh connect to {} ({}) interrupted", peerNodeId, addr, e);
+            return null;
         } catch (Exception e) {
             log.debug("mesh connect to {} ({}) failed", peerNodeId, addr, e);
             return null;

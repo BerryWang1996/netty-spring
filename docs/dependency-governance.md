@@ -1,6 +1,6 @@
 # 依赖治理与供应链门禁
 
-更新时间：2026-10-23
+更新时间：2026-10-24
 
 ## 目标
 
@@ -11,7 +11,7 @@
 
 ## 当前依赖基线与覆盖
 
-当前开发版本为 `2.0.0-SNAPSHOT`，根 POM 锁定 **Spring Boot 4.1.2 / JDK 17**，编译使用 `--release 17` 和 `-parameters`。Spring Framework、Netty、SLF4J、Log4j、Lettuce、Micrometer、JUnit、Mockito 和 Testcontainers 统一由 Boot BOM 管理；旧 Spring 5、Netty 4.1、Jackson 2 和日志组件等独立覆盖已清理，当前必要的安全覆盖单列如下。历史版本及漏洞处置依据集中保留在 [1.10.1 发布说明](release-notes-1.10.1.md)，本轮依赖与安全验证事实见 [2.0.0 发布说明](release-notes-2.0.0.md#dependency-scan-evidence)，迁移状态见[开发计划](development-plan.md)。
+当前源码版本为 `2.0.0` 发布候选，尚未发布到 Maven Central；根 POM 锁定 **Spring Boot 4.1.2 / JDK 17**，编译使用 `--release 17` 和 `-parameters`。Spring Framework、Netty、SLF4J、Log4j、Lettuce、Micrometer、JUnit、Mockito 和 Testcontainers 统一由 Boot BOM 管理；旧 Spring 5、Netty 4.1、Jackson 2 和日志组件等独立覆盖已清理，当前必要的安全覆盖单列如下。历史版本及漏洞处置依据集中保留在 [1.10.1 发布说明](release-notes-1.10.1.md)，本轮依赖与安全验证事实见 [2.0.0 发布说明](release-notes-2.0.0.md#dependency-scan-evidence)，迁移状态见[开发计划](development-plan.md)。
 
 当前保留的显式版本如下；升级 Boot 时逐项复核，BOM 纳入对应修复后移除安全覆盖。
 

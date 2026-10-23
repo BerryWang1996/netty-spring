@@ -52,8 +52,8 @@ cd docker-demo && npm install && node smoke.js   # exit 0 = cross-node delivery 
 
 ## Migration verification
 
-The tools in [`migration/`](migration/) compare **separate 1.10.1 and 2.0.0-SNAPSHOT
-application classpaths** and keep the original inputs, logs and results under the ignored
+The tools in [`migration/`](migration/) compare **separate 1.10.1 and new candidate
+application classpaths** (default: 2.0.0-SNAPSHOT) and keep the original inputs, logs and results under the ignored
 repository `.m2/` directory. Run the following commands from the repository root. The examples
 use PowerShell; the Node runners also accept environment variables set by another shell.
 
@@ -76,8 +76,17 @@ Prepare these requirements before reserving a quiet host for a load run:
 ```powershell
 $env:OLD_IMAGE = 'netty-spring-1101-check:1.10.1'
 $env:NEW_IMAGE = 'netty-spring-200-acceptance:2.0.0-SNAPSHOT'
+# For a prebuilt 2.0.0 release candidate, use its image and expected version instead:
+# $env:NEW_IMAGE = 'netty-spring-200-acceptance:2.0.0'
+# $env:NEW_VERSION = '2.0.0'
 node --test docker-demo/migration/load-client.test.cjs docker-demo/migration/summarize-load.test.cjs
 ```
+
+`NEW_VERSION=2.0.0` selects the expected release version for both the Redis state/Cluster and
+transport runners; leaving it unset preserves `2.0.0-SNAPSHOT`. Set `NEW_IMAGE` to the matching
+prebuilt image. This changes the expected jar name and release metadata, not the checks: the
+runners still verify the extracted release jars and runtime version, record their actual hashes,
+and enforce any supplied artifact pins.
 
 For acceptance against a particular build, supply its independently recorded artifact hashes.
 Hashes are not release constants in these scripts; each run also records the actual values.

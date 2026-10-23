@@ -1,10 +1,10 @@
-# Release Notes — 2.0.0（开发中）
+# Release Notes — 2.0.0（发布候选）
 
 更新时间：2026-10-24
 
 ## 当前状态与范围
 
-**当前源码版本为 `2.0.0-SNAPSHOT`，尚未发布，不是 GA。** 已完成依赖与源码适配，候选提交 `e47891d` 的 JDK 17/21/25 全量运行矩阵、SBOM、依赖扫描及双节点 Docker smoke 均通过；单机、1.10.1 HMAC 混部、节点重连和完整应用回滚 smoke 亦通过。本轮修复状态计数重复汇总，并补齐独立版本 JVM 的 Redis standalone 持久化、Redis Cluster 三主节点、NATS/JetStream 和 mesh 传输兼容演练。四个视角的变更审查未发现迁移新增阻断，既有异常资源路径风险单列于下方；持续及目标规模负载仍待完成，Maven Central 尚未提供 `2.0.0` 制品。
+**当前 11 个 POM 已统一为 `2.0.0`，仍为未发布的正式版本候选。** 依赖与源码适配、状态计数去重及异常生命周期修复已完成，2026-10-24 01:02:15 CST 的本地 JDK 17 全量 `clean verify` 通过：710 项测试、123 份 XML，零失败/错误/跳过。先前 SNAPSHOT `e47891d` 的远端 JDK 17/21/25、SBOM、依赖扫描、应用 smoke、跨版本协议/状态演练及 14 轮规模与持续负载保留为历史证据；正式版本候选的制品审计、负载、远端 CI 和发布仍待完成，不能沿用前一制品的哈希或结果声称最终 GA 通过。Maven Central 尚未提供 `2.0.0` 制品。
 
 本页是本次实施结果、用户迁移差异和验证证据的唯一记录。执行顺序、剩余任务和验收门槛继续统一在[开发计划](development-plan.md)；发布操作沿用[发布清单](release-checklist.md)。本页不另建一套迁移计划。
 
@@ -14,7 +14,7 @@
 
 | 组件 | 当前版本或配置 | 管理方式 |
 |---|---|---|
-| Java | JDK 17 起；编译 `--release 17` | JDK 17/21/25 远端运行矩阵通过 |
+| Java | JDK 17 起；编译 `--release 17` | 当前候选 JDK 17 本地通过；SNAPSHOT `e47891d` 的 JDK 17/21/25 远端矩阵通过 |
 | Spring Boot | `4.1.2` | 根 POM 导入 Boot BOM |
 | Spring Framework | `7.0.10` | Boot BOM |
 | Netty | `4.2.19.Final` | Boot BOM，移除旧 4.1 BOM 覆盖 |
@@ -38,7 +38,7 @@
 - Health API 从 `org.springframework.boot.actuate.health.*` 迁到 `org.springframework.boot.health.contributor.*`，对应依赖为 `spring-boot-health`；Actuator/Micrometer 条件及自动配置顺序同步适配 Boot 4 的模块布局。自定义健康指示器也需调整 import 和依赖，实际端点输出需在应用中核对。[Boot 4 迁移指南](https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-4.0-Migration-Guide)
 - `ServiceHandlerUtil` 的 `javax.activation.MimetypesFileTypeMap` 改为 `jakarta.activation.MimetypesFileTypeMap`，并引入 Jakarta Activation API 与 Angus 运行时实现。`javax.crypto.*` 属于 JDK API，保持原名；不要批量替换所有 `javax.*`。
 - Spring 7 不再从调试信息恢复 handler 参数名。业务 handler 必须使用 `javac -parameters`（Maven Compiler Plugin 配置 `<parameters>true</parameters>`）重新编译；仅 `-g` 不够。缺失元数据时初始化立即给出方法名与编译提示，避免请求到来后才静默丢失参数绑定；零参数方法不受影响。
-- HTTP/WebSocket 服务及 mesh 的 NIO 线程组改用 `MultiThreadIoEventLoopGroup` 配合 `NioIoHandler.newFactory()`，保留 NIO transport 和现有生命周期职责。既有线程退出、连接关闭与资源回收回归通过；持续负载下的资源比较尚待完成。
+- HTTP/WebSocket 服务及 mesh 的 NIO 线程组改用 `MultiThreadIoEventLoopGroup` 配合 `NioIoHandler.newFactory()`，保留 NIO transport 和现有生命周期职责。线程退出、连接关闭与正常及已识别异常资源回收回归已纳入当前候选的 710 项全量验证；`e47891d` 的持续负载资源比较为历史证据，最终制品另验。
 - Netty 4.2 暴露出旧表单预解析会消费 JSON 正文的问题。现在仅对 `application/x-www-form-urlencoded` / `multipart/form-data` 启用表单 decoder，移除重复 `offer` 并恢复正文读取位置；保留 query/form 优先级、文件上传路径及原始正文。HTTP 绑定错误测试同时检查实际错误原因，避免把空正文误判为 JSON 类型校验成功。
 
 Boot 4 的 Maven repackage 默认不再打入应用直接声明为 `optional` 的依赖。使用 NATS 的应用应将 `io.nats:jnats` 作为普通运行依赖显式加入；确需打入应用所有 optional 依赖时再有意配置 `includeOptional=true`。库自身的可选 NATS 边界保持不变，当前 Redis demo 无需该开关。应用若解析 Boot 默认日志，还应核对 ISO-8601 时间格式及日志字符集变化；本项目自有 `/netty/health`、`/netty/status` 不由 Actuator 新默认的探针分组替代。[Boot 4 迁移指南](https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-4.0-Migration-Guide)
@@ -117,7 +117,7 @@ Lettuce 7 默认开启 Redis Cluster 自适应拓扑刷新。本项目自动创�
 
 ## 用户升级与完整应用回滚
 
-以下界定本次 Boot 4.1 纯迁移的验收范围，不代表 GA 已完成。同版本功能回归与跨版本部署验证分别记录：694 项是全 reactor 的单测、真实中间件、装配与 E2E 测试总数，不是 694 项完整应用混部测试。现有单机、Redis、NATS/JetStream、mesh 能力及可选功能继续按既有支持组合使用；缺少某条跨版本混部证据不等于删除该同版本能力。
+以下界定本次 Boot 4.1 纯迁移的验收范围，不代表 GA 已完成。同版本功能回归与跨版本部署验证分别记录：当前候选的 710 项是全 reactor 的单测、真实中间件、装配与 E2E 测试总数，不是 710 项完整应用混部测试；此前远端 SNAPSHOT 为 694 项。现有单机、Redis、NATS/JetStream、mesh 能力及可选功能继续按既有支持组合使用；缺少某条跨版本混部证据不等于删除该同版本能力。
 
 | 部署范围 | 同版本与跨版本证据 | 升级方式与保留数据回滚范围 |
 |---|---|---|
@@ -141,24 +141,28 @@ Sentinel、自定义 SPI 及未列出的配置没有本轮完整应用混部证�
 
 | 检查 | 当前结果 |
 |---|---|
-| 源码版本 | `2.0.0-SNAPSHOT`；开发分支 `codex/2.0.0-spring-boot-4.1` |
-| 当前候选远端验证 | `e47891d` 的 [CI 39983448870](https://github.com/BerryWang1996/netty-spring/actions/runs/39983448870) 成功：JDK 17/21/25 各 120 份 XML、694 tests / 0 failures / 0 errors / 0 skipped，共 2,082 次测试；SBOM、Dependency Scan 成功。[Docker smoke 39983456618](https://github.com/BerryWang1996/netty-spring/actions/runs/39983456618) 的双向投递与该提交的 7 项 Node.js 断言测试通过 |
-| Reactor 编译 / 打包 | 11 个模块编译、打包成功，demo fat jar 已用于真实运行验证 |
+| 源码版本 | `2.0.0` 未发布候选；开发分支 `codex/2.0.0-spring-boot-4.1` |
+| SNAPSHOT 远端验证 | `e47891d` 的 [CI 39983448870](https://github.com/BerryWang1996/netty-spring/actions/runs/39983448870) 成功：JDK 17/21/25 各 120 份 XML、694 tests / 0 failures / 0 errors / 0 skipped，共 2,082 次测试；SBOM、Dependency Scan 成功。[Docker smoke 39983456618](https://github.com/BerryWang1996/netty-spring/actions/runs/39983456618) 的双向投递与当时的 7 项 Node.js 断言通过；严格检查器提交 `a35a0d8` 的 [Docker smoke 39985826872](https://github.com/BerryWang1996/netty-spring/actions/runs/39985826872) 进一步通过 27 项 Node.js 断言及双向投递。正式版本候选须另验 |
+| Reactor 编译 / 打包 | 当前 `2.0.0` 候选 11 个模块编译、打包成功；最终 demo fat jar 的独立部署及制品检查仍待完成 |
 | JSON 契约测试 | 新增 17 项全部通过：JsonMessage 4、MVC 输出 3、HTTP 绑定 3、跨节点 codec 3、crypto 3、WebSocket 未知字段 1 |
-| 本地全量 `clean verify` | JDK 17.0.11：11 模块成功，120 份 Surefire 报告，694 tests / 0 failures / 0 errors / 0 skipped；2026-10-23 23:39 CST 完成，包含 Logback 1.6.5 和状态计数去重修复。日志与汇总保存在 `.m2/verification-200-status-fix/` |
+| 本地全量 `clean verify` | `2.0.0` 正式版本候选 / JDK 17：11 模块成功，123 份 Surefire XML，710 tests / 0 failures / 0 errors / 0 skipped；2026-10-24 01:02:15 CST 完成，包含全部异常生命周期及独立引用修复。完整日志、逐模块 XML 和 `summary.json` 归档于 `.m2/verification-200-ga/` |
 | 自动配置发现 / 可选依赖 / MIME | 8 项新增真实发现测试、2 项 MIME 测试通过；另有 3 项真实 javac 参数元数据、4 项请求体解析和 4 项 allocator 指标回归 |
 | 依赖一致性 / SBOM | CycloneDX JSON/XML 已生成；根版本 `2.0.0-SNAPSHOT`、64 个组件，同坐标无多版本；未见 Spring 5、Netty 4.1 或 Jackson 2 core/databind 残留，详见下方证据 |
 | 漏洞扫描 | Logback core/classic 成对升级 `1.6.5` 后，clean 构建及 Dependency-Check `12.2.2` 复扫成功，CVSS 7.0 门禁通过；38 条聚合依赖记录、工具报告 0 条漏洞告警、0 条抑制、无 analysisExceptions；人工补充的 2 条 Logback 中危已通过该版本修复，OSS Index 未启用，详见[扫描证据与覆盖限制](#dependency-scan-evidence) |
-| 变更审查 | 功能、资源、API/装配、安全四个视角均未发现本次迁移新增阻断；资源审查记录了 3 处既有静态风险，见下文。持续负载结果和最终 GA 制品门禁另行核验，不以源码读审代替 |
-| 单机、双节点与真实中间件 | 单机普通/crypto/auth 16 项及 TLS/gzip/分片 8 项通过；2.0.0 双节点 Redis Pub/Sub 双向 JSON 广播通过；集群模块 336 项真实中间件/单测全部通过，无跳过 |
+| 变更审查 | 功能、资源、API/装配、安全四视角审查；强制丢弃任务、mesh 绑定失败、连接中断及运行中生命周期请求的独立引用问题均有失败复现、修复与当前 710 项全量回归。制品审计、负载、远端 CI 和发布继续核验，不以源码读审或本地测试替代 |
+| 单机、双节点与真实中间件 | 历史 SNAPSHOT 的单机普通/crypto/auth 16 项、TLS/gzip/分片 8 项及双节点 Redis Pub/Sub 双向 JSON 广播通过；当前候选集群模块 338 项真实中间件/单测全部通过，无跳过 |
 | 1.10.1 混部及完整应用回滚 | 基础三阶段及最终依赖上的 6 阶段 HMAC strict 演练通过：旧新双向、重建新节点后重连、错密钥拒绝/恢复、双新、完整双旧回滚；Redis 容器与验证数据保留，覆盖边界见下方 |
-| Redis standalone / Cluster / NATS / JetStream / mesh 跨版本 | 最终验收制品的 Redis 持久化 9 阶段、Redis Cluster 7 阶段、传输 70 组全部通过；双版本 JVM、实际中间件、积压顺序/ACK/回滚、协议及清理证据见下方，不能扩大为所有部署组合已验收 |
+| Redis standalone / Cluster / NATS / JetStream / mesh 跨版本 | 历史 SNAPSHOT 制品的 Redis 持久化 9 阶段、Redis Cluster 7 阶段、传输 70 组全部通过；双版本 JVM、实际中间件、积压顺序/ACK/回滚、协议及清理证据见下方，不能扩大为最终 GA 制品或所有部署组合已验收 |
 | WebSocket 状态统计 | 共享 recorder 按身份去重，新增 5 项回归；真实 8 连接的握手、收发和关闭计数精确匹配，received 包含控制帧的口径不变 |
-| 内存 / 延迟 / 资源回收 | allocator 指标已适配并新增汇总、去重和未知值测试；同机 64 连接、旧新各 3 轮短时比较已记录，客户端序号核对无丢失/重复；持续/目标规模负载及泄漏结论仍待验证 |
+| 内存 / 延迟 / 资源回收 | allocator 指标已适配；`e47891d` 的 1,024/8,192 连接旧新对比和各 10 分钟持续测试共 14 轮通过，原始序号、采样覆盖、GC 和恢复状态均复核。异常生命周期修复后的最终制品另验，不将有限负载结果表述为全场景无泄漏 |
 | Sources / Javadoc / 签名 | 本地 SNAPSHOT release profile 严格复验通过，34 份制品的签名均通过指定 fingerprint 的 `VALIDSIG` 校验；6 个含源码模块的 sources 与实际 Java 文件数一致，Javadoc 均有 HTML。最终 GA 版本仍须重新构建、签名和上传 |
 | GA 标签 / Maven Central | 未执行，未发布 |
 
-**资源审查边界：** 对照 `master` / `v1.10.1` 发现三处既有异常路径静态风险：`WebMappingSupporter` 调用线程池 `shutdownNow` 丢弃排队任务时未执行任务的 `finally`，可能遗留 retain/permit；`MeshBroker.start` 绑定失败时未清理刚创建的 event loop groups；mesh 出站连接的 `sync` 被 `InterruptedException` 中断后，未恢复中断标志或关闭仍待完成的连接 future。这三处并非本次迁移引入，本轮尚未实际复现；正常生命周期、重连和负载检查不覆盖这些强制失败边界，不能据此宣称所有异常路径无泄漏。已在[开发计划的候选工作](development-plan.md#21-候选工作)单列，先专项复现再作为独立缺陷修复，不扩大本次纯迁移的性能门禁。
+**异常生命周期资源检查：** 对照 `v1.10.1` 的源码确认三类缺陷已存在，但本轮没有据此豁免资源门禁。真实线程池分别经 5 秒超时和关闭线程中断进入 `shutdownNow`，复现 HTTP/WebSocket 排队消息各残留 `refCnt=1`、3 个 handler permit 仅归还 1 个；WebSocket 的 onConnected、inactive、transport error、heartbeat timeout、handshake failure 五条排队生命周期路径另复现握手请求引用和连接许可未释放。修复后，已接纳但尚未开始的任务通过 `HandlerSubmitter.DiscardableTask` 释放自身资源，普通 Runnable 也归还处理许可；拒绝提交仍由调用方清理，正在运行的任务保有其引用和许可，丢弃一个任务的清理异常不会阻断其余队列清理。该接口不强行终止用户 handler，也不在丢弃路径执行业务生命周期回调。
+
+Mesh 使用真实占用的 loopback 端口复现绑定失败后线程组未终止，再用实际 NIO channel/promise 和 latch 复现 connect 等待被中断后未关闭的未缓存通道。修复分别清理新建线程组/通道/执行器并保留未由此次启动写入的节点广告，以及取消连接、关闭通道并恢复中断位。两项新增测试先失败、修复后通过。失败/通过日志分别保存在 `.m2/lifecycle-200-handler-*`、`.m2/websocket-lifecycle-discard-*` 和 `.m2/lifecycle-200-mesh-*`；源码对照不等于另行执行了旧版全部测试。
+
+独立审查又以双任务 latch 复现同一会话的运行中回调与排队关闭任务共享请求的并发边界：丢弃关闭任务会使仍运行的 `OnConnected` 读到 `refCnt=0`。现为每个异步生命周期任务单独 retain 请求，执行、丢弃、拒绝或提交异常各自释放其引用；会话原始引用和连接许可仍幂等释放。回归断言强制关闭后运行中回调仍持有一个有效引用并能读取实际内容，回调完成后才归零。8 项新增生命周期测试与原有 51 项 resolver 回归全部通过，证据为 `.m2/websocket-lifecycle-lease-{red,green}.{log,xml}`，独立复核已确认此反例闭环。当前 `2.0.0` 的 710 项全量结果已包含这 3 项后补引用回归，取代切版前 707 项初步结果；原始红/绿日志继续保留为缺陷复现依据。
 
 首次 release profile 检查触发跨模块 Javadoc offline link 探测，对无 Java 源的 starter 递归调用 Maven 时出现 JVM 初始化错误；旧配置 `failOnError=false` 随后忽略链接错误并输出 `BUILD SUCCESS`。现已设为 `failOnError=true`，并按 [Maven Javadoc 官方说明](https://maven.apache.org/plugins/maven-javadoc-plugin/examples/links-configuration.html) 用 `detectOfflineLinks=false` 关闭模块间自动离线链接，避免独立 Central 文档指向未发布的 reactor 路径。2026-10-23 23:51 CST 严格复验成功、日志无 `[ERROR]`，34 份制品及 34 份签名、清单和日志归档于 `.m2/release-artifacts-200-snapshot/`。6 个含源码模块的 Java 文件数分别为 26/30/26/69/8/5，sources 内容逐模块匹配，Javadoc HTML 数分别为 102/85/85/207/25/19；3 个依赖聚合 starter 无 Java 源，因此不生成 sources、Javadoc 为空包，沿用 1.10 已发布规则。`doclint=none` 仍保留，因此此次严格复验不等于所有注释 lint 或 warning 清零，也不替代最终 GA 制品的重新签名、上传和 Central 验证。
 
@@ -176,7 +180,7 @@ Sentinel、自定义 SPI 及未列出的配置没有本轮完整应用混部证�
 
 **状态统计修复：** 已修复 `1.10.1` 中原有的 `/netty/status` 共享 event recorder 重复汇总问题：同一 recorder 只计一次，独立 recorder 和自定义普通 Map 继续累加，会话数仍逐 URI 汇总。新增 5 项回归覆盖共享 3 URI、独立/空 recorder、自定义计数和实例身份；已有控制帧测试明确 Ping/Pong/Close 各增加一次 received。`messagesReceived` 仍统计通过会话/大小检查的入站帧，包含控制帧，不能等同业务消息成功数。
 
-在最终验收制品上，以真实 8 个连接、3 个 WebSocket URI 映射完成精确状态断言：握手尝试/成功和关闭各为 8；预热发送 6,110、计量发送 29,109，全部回显；`messagesSent=35,219`、`messagesReceived=35,227`，差值为 8 个 Close 帧。会话归零，队列清空，无拒绝或写失败。证据位于 `.m2/load-acceptance-2026-10-23T15-41-52-801Z/`；这轮 2 秒计量用于验证统计修复，不作为容量或持续负载结论。
+在历史 SNAPSHOT 验收制品上，以真实 8 个连接、3 个 WebSocket URI 映射完成精确状态断言：握手尝试/成功和关闭各为 8；预热发送 6,110、计量发送 29,109，全部回显；`messagesSent=35,219`、`messagesReceived=35,227`，差值为 8 个 Close 帧。会话归零，队列清空，无拒绝或写失败。证据位于 `.m2/load-acceptance-2026-10-23T15-41-52-801Z/`；这轮 2 秒计量用于验证统计修复，不作为容量或持续负载结论。
 
 ### 持久化与传输跨版本演练（2026-10-23）
 
@@ -192,23 +196,43 @@ Sentinel、自定义 SPI 及未列出的配置没有本轮完整应用混部证�
 
 **覆盖边界：** Redis standalone harness 调用公开持久化 API，`LocalSender` 记录本地投递边界，未验证真实浏览器上线触发回填；其 TTL 结论限于离线 key、条目年龄和 drain lock。Redis Cluster harness 注册实际版本的配置类并绑定属性，未运行 HTTP/WebSocket 服务；三主节点无副本，未测试 failover、resharding 或浏览器连接。JetStream 本轮覆盖尚未消费的 durable backlog，未覆盖回调处理中强杀后的未 ACK 重投。Mesh 本轮验证传输及 framing，未覆盖跨版本 interest/room/presence；all-NATS KV 跨版本自动装配亦未覆盖。这些 harness 支撑上方矩阵的协议/状态兼容范围，不替代完整应用混部、持续容量或生产 SLI 验收；持续负载下的资源/性能和最终发布门禁仍单独保留。
 
-### 同机短时负载比较（2026-10-23）
+### 持续与目标连接规模负载（2026-10-23 UTC）
 
-按旧/新交替执行 6 轮，每轮启动独立容器，64 个持久 WebSocket 连接访问 `/ws/test`，每连接最多 1 条在途消息。消息为 256 字节、包含轮次/连接/序号的文本；预热 5 秒、计量 10 秒，再收完在途回显。两版均使用 Temurin `17.0.20.1+1`、2 CPU 配额、768 MiB 容器内存且禁 swap、G1、固定 256 MiB heap 与 256 MiB direct 上限；显式线程配置及日志 OFF 一致，allocator 保留各版本默认值。
+本组证据固定对应 `e47891d3fe96a18f59360d724cfe3d04f17c19e9` 的生产源码和 `netty-spring-200-acceptance:2.0.0-SNAPSHOT` 镜像，image ID 为 `sha256:3263b7dfbe2d60ba45aae8c6385f9315d57deafdcd70a6c0c67ca7015a9b9293`，fat jar SHA-256 为 `f5e12e04b753b5abd1df634845329d1c2ba4f5b32e2e841c8bf87a2b2be417d9`。对照为上方跨版本演练所用的固定 `1.10.1` 制品。每轮入口验证 POM 版本、fat jar 哈希和实际 JRE；后续资源异常路径修复形成的新候选须另行验证，不能沿用本组结果宣称 GA 最终验收。
 
-| 指标 | 1.10.1 | 2.0.0-SNAPSHOT |
-|---|---:|---:|
-| ACK/s，中位数 [最小, 最大] | 36,224.7 [35,773.6, 36,530.8] | 36,086.3 [36,057.7, 36,119.3] |
-| 每轮 p50 中位数，ms | 1.677 | 1.674 |
-| 每轮 p95 中位数，ms | 2.551 | 2.615 |
-| 每轮 p99 中位数，ms | 3.382 | 3.470 |
-| 每轮 CPU 均值范围，100% 为一核 | 168.35–170.18% | 173.76–174.84% |
-| 每轮进程 VmRSS 均值范围，MiB | 273.61–276.87 | 263.21–268.29 |
-| 进程原生线程数 | 30 | 32 |
+两版均为 Temurin `17.0.20.1+1`、应用 2 CPU/1536 MiB（禁 swap）、G1、固定 512 MiB heap/256 MiB direct 上限、4 个 Netty I/O 线程和 4 个业务线程、日志 OFF；allocator 保留各版本默认。客户端固定 Node `22.23.3`/`ws 8.21.0`、4 workers、4 CPU/1536 MiB，位于同一私有 Docker 网络。按旧新交替运行 1024、8192 个持久连接，每规模每版 3 轮，预热 15 秒、计量 60 秒；另以 8192 连接各运行一次 600 秒持续测试，共 14 项。每连接最多 1 条在途消息，半数 `/ws/test` TEXT、半数 `/ws/json`，消息体为含唯一轮次/连接/序号的 1024 字节文本，JSON 额外封装不计入此长度。
 
-本组新版吞吐中位数为旧版的 99.62%，p95/p99 分别增加约 2.50%/2.60%；未见明显端到端退化，但不足以判断服务端容量变化。旧版计量阶段发送/最终确认均为 1,085,483，新版均为 1,082,825；各有 192 条尾部回显在计量窗口结束后收齐。吞吐只计 10 秒窗口内 ACK，延迟包含这些尾部消息；两版均无丢失、重复、损坏或连接掉线。已重新读取逐条 ACK 二进制记录并核对序号、数量和分位数，不使用 `/netty/status` 计数。
+下表为各版 3 轮指标的中位数和范围；延迟为逐条 ACK 的 0.1 ms 直方图上界，包含计量阶段发送、窗口后收齐的尾部消息。ACK/s 只计固定窗口内到达的 ACK，不把尾部消息计入吞吐。
 
-负载客户端在 Windows，经 Docker Desktop 网络访问；客户端约占用单核的 95%，可能限制吞吐，同机用户 `mysql-8` 容器仍运行。每版仅 3 次短样本，不能替代持续负载、目标连接规模或内存泄漏验证，也不作为生产 SLI。Docker stats 的 cgroup 内存与 `/proc/1/status` 的 VmRSS 分开记录，未混称 RSS；原始采样、镜像/JVM 身份、配置、消息记录、复算结果和清理证据位于 `.m2/perf-200-results-2026-10-23T15-13-48-986Z/`，自建容器和网络已清理。
+| 连接数 | 版本 | ACK/s 中位数 [最小, 最大] | 每轮 p50 / p95 / p99 中位数，ms |
+|---:|---|---:|---:|
+| 1024 | 1.10.1 | 32,354.02 [32,266.93, 33,164.87] | 31.1 / 36.7 / 47.7 |
+| 1024 | 2.0.0-SNAPSHOT | 32,778.15 [32,329.25, 32,885.83] | 30.8 / 36.9 / 50.9 |
+| 8192 | 1.10.1 | 30,724.57 [30,452.45, 31,057.07] | 263.6 / 289.8 / 325.7 |
+| 8192 | 2.0.0-SNAPSHOT | 30,590.55 [30,214.07, 32,007.87] | 265.3 / 296.5 / 322.4 |
+
+1024 连接时，新版吞吐中位数变化 `+1.31%`、p95 `+0.54%`、p99 `+6.71%`；8192 连接时分别为 `−0.44%`、`+2.31%`、`−1.01%`。短轮服务端 CPU 均值为旧版 `198.80–201.90%`、新版 `198.04–201.43%`（100% 为一核），已接近 2 CPU 配额。每轮 VmRSS 峰值中位数，1024 连接旧/新为 `456.414/447.047 MiB`，8192 为 `498.820/476.531 MiB`；原生线程范围旧版 30–31、新版 31–32。计量窗口 GC 总停顿的轮次中位数，1024 连接旧/新为 `369.870/245.637 ms`，8192 为 `489.446/255.900 ms`；均无 Full GC。这些是本次观察，不能推导容量或 GC 的普遍改善。
+
+两次 600 秒持续测试，旧版发送/ACK `18,145,826`、窗口内 ACK/s `30,229.39`、p50/p95/p99 `268.5/296.7/333.6 ms`；新版发送/ACK `17,915,311`、ACK/s `29,845.20`、p50/p95/p99 `271.4/309.2/343.4 ms`。两版各有 8192 条尾部 ACK。按完整测量窗口等分三段（每段 200 秒、40 个有效资源样本）：
+
+| 版本 / 分段 | VmRSS 均值 / 峰值，MiB | CPU 均值 | 原生线程 | GC 次数 / 总停顿 / 最大停顿，ms |
+|---|---:|---:|---:|---:|
+| 1.10.1 / 前段 | 519.381 / 521.332 | 201.202% | 31 | 189 / 1764.662 / 23.109 |
+| 1.10.1 / 中段 | 519.854 / 525.887 | 200.981% | 31 | 188 / 1778.451 / 26.987 |
+| 1.10.1 / 末段 | 519.702 / 522.477 | 200.790% | 31 | 189 / 1728.179 / 15.378 |
+| 2.0.0 / 前段 | 472.609 / 474.316 | 201.035% | 32 | 117 / 1018.529 / 17.658 |
+| 2.0.0 / 中段 | 472.854 / 484.910 | 200.815% | 32 | 115 / 1035.935 / 23.403 |
+| 2.0.0 / 末段 | 472.577 / 472.941 | 201.181% | 32 | 114 / 1076.201 / 25.085 |
+
+持续测试均无 Full GC，RSS 与线程没有持续单调增长信号；这不证明更长运行或异常路径无泄漏。RSS 取 `/proc/1/status` 的 `VmRSS`，与另行保存的 Docker `MemUsage`、Java heap 口径分开。每轮短测试有 12 个有效计量样本（要求至少 6），每次持续测试有 120 个（要求至少 60）；全部样本通过命令退出、超时状态、CPU/RSS/线程解析和阶段完整性检查。持续测试首/尾采样间隔旧版 `1.344/1.577 s`、新版 `1.345/1.705 s`，资源样本覆盖窗口分别为 `99.513%/99.492%`，最大内部空档均为 `3.852 s`；首尾和内部间隔均小于 15 秒。
+
+14 项合计计量发送/最终 ACK 均为 **58,965,965**，其中窗口内 ACK `58,894,290`、尾部 ACK `71,675`；预热发送/ACK 均为 **5,851,930**。逐连接唯一序号、消息内容/类型、JSON 完整形状和稳定 sessionId 均校验；独立复算 71,680 条连接 ledger 与直方图，未见丢失、重复、损坏、异常断连、关闭超时或异常 Close code，直方图无溢出。恢复阶段全部为 `UP`、会话 0、队列 0、拒绝/写失败 0；许可为 `16387/16388`，剩余一个由读取状态的管理请求占用。旧/新持续测试恢复 CPU 均值降至 `2.518%/3.000%`。新版每轮精确状态计数均匹配流量；例如持续测试握手/成功/关闭各 8192，`messagesSent=18,375,586`、`messagesReceived=18,383,778`，差值为 8192 个 Close 帧。旧版共享计数重复问题未参与消息正确性或吞吐计算。
+
+**环境与结论边界：** Windows Docker Desktop 上顺序执行，任务在负载期间未启动其他 Docker/Java/Maven 测试，用户已有 `mysql-8` 仍运行，轻量文件审查和 Node 断言仍发生。客户端 worker 测量 CPU 合计约 `295–301%`（线程口径，非整个容器）；8192 连接时 event-loop p99 约 `6.23–7.16 s`，原定每秒遥测实际约 6 秒才回调，说明客户端调度受压。这是客户端定时器延迟，不能当作服务端 RTT；固定 deadline 仍逐消息检查，观察窗口结束回调超时约 0.17–0.22 秒的尾部 ACK 不增加吞吐。此测试仅支持相同受限条件下的回归比较，未预设生产吞吐/延迟 SLO，也不确定服务端容量上限。
+
+证据统一位于 `.m2/load-acceptance-2026-10-23T15-54-40-555Z/`：14 组原始 input/result、逐连接 ledger/直方图、client phase、资源/GC 日志、版本及源码来源、逐轮和全局清理记录，以及 `analysis.json`/`analysis.md`。运行器保留启动时的 `e47891d` 快照；`a35a0d8df93c9f76d70603ac27d4feba1612f124` 的严格检查器独立核对请求参数、完整窗口采样与 GC/phase 有效性，归档在 `checker-a35a0d8/`。最终矩阵、逐项检查和清理均通过；容器/网络清单查询退出 0、未超时且结果为空，只清理本测试项目。`evidence-sha256-manifest.json` 记录 216 个证据文件的哈希，便于后续构建后复核。本组不是 GA 最终制品的验收记录。
+
+此前 64 连接、256 字节 TEXT、旧新各 3 轮 × 10 秒的短时历史探针，吞吐中位数旧/新为 `36,224.7/36,086.3 ACK/s`，p95 为 `2.551/2.615 ms`，合计 2,168,308 条计量消息全部 ACK；客户端已接近单核上限。其原始 ACK 记录、环境、复算与清理证据仍保留在 `.m2/perf-200-results-2026-10-23T15-13-48-986Z/`，不与本组不同配置的持续测试合并统计。
 
 <a id="dependency-scan-evidence"></a>
 

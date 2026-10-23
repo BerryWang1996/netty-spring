@@ -329,6 +329,7 @@ class DefaultMessageSenderTest {
                 "failing",
                 new SignalingWriteHandler(failedWriteLatch, true));
         DefaultMessageSender sender = new DefaultMessageSender(Collections.singletonMap("/ws/foo", resolver));
+        FullHttpRequest firstRequest = resolver.getSessionMap().get("failing").getFirstRequest();
 
         try {
             sender.sendMessage("/ws/foo", new TextMessage("hello"), "failing");
@@ -337,6 +338,7 @@ class DefaultMessageSenderTest {
             assertEquals(0, endpoint.errorCount);
             assertEquals(0, endpoint.closeCount);
             assertEquals(1, submitter.size());
+            assertEquals(2, firstRequest.refCnt(), "session and queued lifecycle each own a reference");
             session.channel.close();
 
             submitter.runNext();
@@ -344,7 +346,8 @@ class DefaultMessageSenderTest {
             assertEquals(1, endpoint.errorCount);
             assertEquals(1, endpoint.closeCount);
             assertEquals("write failed", endpoint.lastErrorMessage);
-            assertEquals(1, endpoint.lastErrorRequestRefCnt);
+            assertEquals(2, endpoint.lastErrorRequestRefCnt, "the callback keeps its request lease until it returns");
+            assertEquals(0, firstRequest.refCnt(), "session and callback references must both be released");
             assertFalse(resolver.getSessionMap().containsKey("failing"));
             assertFalse(session.channel.isActive());
         } finally {

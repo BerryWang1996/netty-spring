@@ -23,4 +23,15 @@ public interface HandlerSubmitter {
      */
     void submitHandle(Runnable runnable);
 
+    /**
+     * A task owning resources that must be released if accepted work is discarded
+     * before execution during forced shutdown. The submitter invokes either
+     * {@link #run()} or {@link #discard()}, never both. Submission rejection does
+     * not invoke {@code discard}; the caller still owns rejected work.
+     */
+    interface DiscardableTask extends Runnable {
+        /** Releases resources without executing the discarded business handler. */
+        void discard();
+    }
+
 }

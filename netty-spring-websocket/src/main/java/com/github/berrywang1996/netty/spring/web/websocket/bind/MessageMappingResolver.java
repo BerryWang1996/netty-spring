@@ -46,6 +46,7 @@ import io.netty.handler.codec.http.websocketx.*;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.util.AttributeKey;
 import io.netty.util.CharsetUtil;
+import io.netty.util.IllegalReferenceCountException;
 import io.netty.util.ReferenceCountUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
@@ -1486,11 +1487,10 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
     }
 
     private void removeSession(MessageSession session) {
-        if (session == null) {
+        if (session == null || !sessionMap.remove(session.getSessionId(), session)) {
             return;
         }
         clearChannelAttributes(session.getChannelHandlerContext());
-        sessionMap.remove(session.getSessionId(), session);
 
         // Notify cluster hook (if cluster mode is active) so the session is deregistered
         // from the distributed registry.
@@ -1799,14 +1799,71 @@ public class MessageMappingResolver extends AbstractMappingResolver<Object, Mess
             mdcTask.run();
             return;
         }
+        final FullHttpRequest requestLease;
         try {
-            submitter.submitHandle(mdcTask);
+            // A different lifecycle for the same session can close it while this
+            // callback runs. Every accepted task therefore owns a separate request reference.
+            requestLease = session == null ? null : session.getFirstRequest().retain();
+        } catch (IllegalReferenceCountException alreadyReleased) {
+            discardLifecycleSession(session);
+            return;
+        }
+        try {
+            submitter.submitHandle(new HandlerSubmitter.DiscardableTask() {
+                @Override
+                public void run() {
+                    try {
+                        mdcTask.run();
+                    } finally {
+                        ReferenceCountUtil.release(requestLease);
+                    }
+                }
+
+                @Override
+                public void discard() {
+                    try {
+                        discardLifecycleSession(session);
+                    } finally {
+                        ReferenceCountUtil.release(requestLease);
+                    }
+                }
+            });
         } catch (RejectedExecutionException e) {
             log.warn("Reject websocket lifecycle task {}. sessionId={}, reason={}",
                     taskName,
                     session == null ? null : session.getSessionId(),
                     e.getMessage());
-            wrapWithMdc(session, rejectedTask).run();
+            try {
+                wrapWithMdc(session, rejectedTask).run();
+            } finally {
+                ReferenceCountUtil.release(requestLease);
+            }
+        } catch (RuntimeException e) {
+            try {
+                discardLifecycleSession(session);
+            } finally {
+                ReferenceCountUtil.release(requestLease);
+            }
+            throw e;
+        }
+    }
+
+    /** Releases an accepted but unstarted lifecycle task without invoking business callbacks. */
+    private void discardLifecycleSession(MessageSession session) {
+        if (session == null) {
+            return;
+        }
+        session.startClosing();
+        try {
+            // A detached session has already notified its cluster hook. Only a
+            // successful local removal may invoke that hook, before request release.
+            removeSession(session);
+        } finally {
+            try {
+                releaseSession(session);
+            } finally {
+                session.getChannelHandlerContext().close();
+            }
         }
     }
 

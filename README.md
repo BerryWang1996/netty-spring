@@ -10,7 +10,7 @@
 
 A Spring Boot integration for Netty, providing HTTP MVC and WebSocket capabilities with auto-configuration support. Built for developers who need high-performance networking with the convenience of Spring Boot.
 
-> This branch develops **2.0.0-SNAPSHOT on Spring Boot 4.1 / JDK 17+**. It is not published. The Maven Central examples below refer to the 1.x line (Boot 2.7); building this checkout uses the new baseline. See the [2.0.0 migration notes](docs/release-notes-2.0.0.md) before integrating the development version.
+> This branch contains the **2.0.0 release candidate on Spring Boot 4.1 / JDK 17+**. It is not published to Maven Central. The Maven Central examples below refer to the 1.x line (Boot 2.7); building this checkout uses the new baseline. Install the candidate locally before integrating it, and follow the [2.0.0 migration notes](docs/release-notes-2.0.0.md) for validation and publication status.
 
 ### Features
 
@@ -476,7 +476,7 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#11-configurati
 ### Current Status
 
 - Published release: **1.10.0**. The default cluster starter has a known startup failure without the optional jnats dependency; see the [1.10.1 fixes and publication status](docs/release-notes-1.10.1.md) before adopting it.
-- Current source version: **2.0.0-SNAPSHOT on Spring Boot 4.1**; implementation and verification are in progress. API changes and evidence are recorded in the [2.0.0 migration notes](docs/release-notes-2.0.0.md).
+- Current source version: **2.0.0 release candidate on Spring Boot 4.1**; final verification is in progress and Maven Central publication is pending. API changes and evidence are recorded in the [2.0.0 migration notes](docs/release-notes-2.0.0.md).
 - The [development plan](docs/development-plan.md) remains the single roadmap, with migration steps, acceptance criteria and deferred work.
 
 ### Documentation
@@ -987,7 +987,7 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 ### 当前阶段
 
 - 已发布版本：**1.10.0**。默认集群 starter 存在缺少可选 jnats 依赖时启动失败的问题，采用前请查阅 [1.10.1 修复与发布状态](docs/release-notes-1.10.1.md)。
-- 当前源码版本：**2.0.0-SNAPSHOT / Spring Boot 4.1 / JDK 17+**，实现与验证进行中，尚未发布；API 差异与证据见 [2.0.0 迁移说明](docs/release-notes-2.0.0.md)。上面的 Central 依赖示例仍对应 Boot 2.7 的 1.x，构建本分支使用新基线。
+- 当前源码版本：**2.0.0 发布候选 / Spring Boot 4.1 / JDK 17+**，最终验证进行中，尚未发布到 Maven Central；使用候选需先在本地安装源码，API 差异、验证与发布状态见 [2.0.0 迁移说明](docs/release-notes-2.0.0.md)。上面的 Central 依赖示例仍对应 Boot 2.7 的 1.x，构建本分支使用新基线。
 - 迁移步骤、验收标准和延期项统一见[开发计划](docs/development-plan.md)。
 
 ### 文档

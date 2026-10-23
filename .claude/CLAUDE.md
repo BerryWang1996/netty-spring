@@ -4,14 +4,15 @@
 
 - Spring Boot integration library for Netty: HTTP MVC, WebSocket, AES-GCM crypto, Micrometer,
   and opt-in cluster/IM primitives. Apache-2.0; Maven group `io.github.berrywang1996`.
-- Read the root `pom.xml` for the working version and dependency versions. The current development
-  line is 2.0.0-SNAPSHOT / Spring Boot 4.1 / JDK 17+, migrating existing behavior from 1.10.1.
+- Read the root `pom.xml` for the working version and dependency versions. The current source is
+  the unpublished 2.0.0 release candidate / Spring Boot 4.1 / JDK 17+, migrating existing behavior from 1.10.1.
 - [Development plan](../docs/development-plan.md): the single current roadmap, migration steps,
   and deferred work. Do not restore Boot 3.x or bundle new features into 2.0.0 from historical notes.
 - [1.10.1 release notes](../docs/release-notes-1.10.1.md): patch scope, checks, and publication status.
   A POM version or a local tag is not evidence that Maven Central publication completed.
 - [2.0.0 release notes](../docs/release-notes-2.0.0.md): implemented migration changes, API differences,
-  and current validation evidence. SNAPSHOT development does not establish GA support.
+  and current validation evidence. The candidate version does not establish completed GA verification
+  or Maven Central publication; install the checkout locally when testing its dependency examples.
 - [Release checklist](../docs/release-checklist.md): build, release, signing, and publication workflow.
 - [API guide](../docs/api-guide.md), [cluster design](../docs/cluster-design.md), and
   [dependency governance](../docs/dependency-governance.md): current behavior and operational constraints.

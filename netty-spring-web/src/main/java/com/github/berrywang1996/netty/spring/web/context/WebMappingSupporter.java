@@ -37,6 +37,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -314,24 +315,13 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
                     + " Action: increase server.netty.websocket.handler-permit-limit, reduce handler latency, "
                     + "or add client-side retry/backoff.");
         }
+        HandlerExecution execution = new HandlerExecution(runnable);
         try {
-            // Second level: thread pool execution with guaranteed semaphore release
-            this.executor.execute(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        runnable.run();
-                    } catch (Exception e) {
-                        log.error("Submit handle error.", e);
-                    } finally {
-                        // Always release the permit after handler completes
-                        semaphore.release();
-                    }
-                }
-            });
+            this.executor.execute(execution);
         } catch (RuntimeException e) {
-            // Release the permit since the task was never executed
-            this.semaphore.release();
+            // Rejection leaves task resources with the caller, unlike accepted work
+            // removed from the queue by shutdownNow().
+            execution.reject();
             if (e instanceof RejectedExecutionException) {
                 this.executorRejectedCount.incrementAndGet();
                 throw new RejectedExecutionException("Handler executor rejected task. " + getRuntimeStats()
@@ -339,6 +329,40 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
                         + "handler-max-pool-size or handler-queue-capacity.", e);
             }
             throw e;
+        }
+    }
+
+    private final class HandlerExecution implements Runnable {
+        private final Runnable task;
+        private final AtomicBoolean claimed = new AtomicBoolean();
+
+        private HandlerExecution(Runnable task) {
+            this.task = task;
+        }
+
+        @Override
+        public void run() {
+            if (!claimed.compareAndSet(false, true)) return;
+            try {
+                task.run();
+            } catch (Exception e) {
+                log.error("Submit handle error.", e);
+            } finally {
+                semaphore.release();
+            }
+        }
+
+        private void discard() {
+            if (!claimed.compareAndSet(false, true)) return;
+            try {
+                if (task instanceof DiscardableTask discardable) discardable.discard();
+            } finally {
+                semaphore.release();
+            }
+        }
+
+        private void reject() {
+            if (claimed.compareAndSet(false, true)) semaphore.release();
         }
     }
 
@@ -434,11 +458,27 @@ public class WebMappingSupporter implements MappingSupporter, HandlerSubmitter {
         try {
             // Wait up to 5 seconds for in-flight tasks to complete
             if (!this.executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                this.executor.shutdownNow();
+                discardQueuedHandlers();
             }
         } catch (InterruptedException e) {
-            this.executor.shutdownNow();
-            Thread.currentThread().interrupt();
+            try {
+                discardQueuedHandlers();
+            } finally {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private void discardQueuedHandlers() {
+        for (Runnable queued : this.executor.shutdownNow()) {
+            if (queued instanceof HandlerExecution execution) {
+                try {
+                    execution.discard();
+                } catch (Throwable failure) {
+                    // One failing cleanup must not strand the remaining queued resources.
+                    log.warn("Discard queued handler failed.", failure);
+                }
+            }
         }
     }
 

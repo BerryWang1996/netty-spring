@@ -3,6 +3,7 @@
 // node docker-demo/migration/verify-transports.cjs --run
 // OLD_IMAGE / NEW_IMAGE, OLD_IMAGE_SHA256 / NEW_IMAGE_SHA256 and *_JAR_SHA256
 // optionally pin artifacts. Defaults target the locally saved migration images.
+// NEW_VERSION selects the expected new release metadata (default: 2.0.0-SNAPSHOT).
 // Evidence is written under ignored .m2; only this Compose project's resources are removed.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -22,7 +23,7 @@ fs.mkdirSync(out, { recursive: true });
 fs.writeFileSync(path.join(root, '.m2', 'transport-compat-200-latest.txt'), out);
 const versions = {
   old: { version: '1.10.1', image: process.env.OLD_IMAGE || 'netty-spring-1101-check:1.10.1' },
-  new: { version: '2.0.0-SNAPSHOT', image: process.env.NEW_IMAGE || 'netty-spring-200-check:2.0.0-SNAPSHOT' }
+  new: { version: process.env.NEW_VERSION || '2.0.0-SNAPSHOT', image: process.env.NEW_IMAGE || 'netty-spring-200-check:2.0.0-SNAPSHOT' }
 };
 const jnats = process.env.JNATS_JAR || path.join(os.homedir(), '.m2/repository/io/nats/jnats/2.20.4/jnats-2.20.4.jar');
 const checks = [], transcript = [], exportContainers = new Set();

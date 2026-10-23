@@ -19,6 +19,7 @@ package com.github.berrywang1996.netty.spring.web.handler;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 import com.github.berrywang1996.netty.spring.web.context.AbstractMappingResolver;
+import com.github.berrywang1996.netty.spring.web.context.HandlerSubmitter;
 import com.github.berrywang1996.netty.spring.web.context.HttpRuntimeRecorder;
 import com.github.berrywang1996.netty.spring.web.context.WebMappingSupporter;
 import com.github.berrywang1996.netty.spring.web.startup.NettyServerStartupProperties;
@@ -103,7 +104,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
      * processing to the handler thread pool to avoid blocking the Netty I/O thread.
      *
      * <p>The message reference count is retained before submission and released after
-     * handler completion (or immediately if the submission is rejected).
+     * handler completion, accepted-task discard, or submission rejection.
      *
      * @param ctx the channel handler context
      * @param msg the inbound message ({@link FullHttpRequest} or {@link WebSocketFrame})
@@ -115,7 +116,7 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
         try {
             // Retain the message so it survives beyond this method (will be released after handling)
             ReferenceCountUtil.retain(msg);
-            this.supporter.submitHandle(new Runnable() {
+            this.supporter.submitHandle(new HandlerSubmitter.DiscardableTask() {
                 @Override
                 public void run() {
                     try {
@@ -139,6 +140,15 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
                         ReferenceCountUtil.release(msg);
                     }
                 }
+
+                @Override
+                public void discard() {
+                    try {
+                        ReferenceCountUtil.release(msg);
+                    } finally {
+                        ctx.close();
+                    }
+                }
             });
 
         } catch (RejectedExecutionException e) {
@@ -154,6 +164,9 @@ public class ServiceHandler extends SimpleChannelInboundHandler<Object> {
             ServiceHandlerUtil.sendError(ctx,
                     msg instanceof HttpRequest ? (HttpRequest) msg : null,
                     errorMessage);
+        } catch (RuntimeException e) {
+            ReferenceCountUtil.release(msg);
+            throw e;
         }
 
     }

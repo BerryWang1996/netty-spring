@@ -33,6 +33,32 @@ class ServiceHandlerTest {
     Path tempDir;
 
     @Test
+    void unexpectedSubmissionFailureReleasesTheRetainedRequest() throws Exception {
+        WebMappingSupporter supporter = new WebMappingSupporter(new NettyServerStartupProperties(), null) {
+            @Override
+            public void submitHandle(Runnable task) {
+                throw new IllegalStateException("executor submission failed");
+            }
+        };
+        EmbeddedChannel channel = new EmbeddedChannel(new ServiceHandler(supporter));
+        DefaultFullHttpRequest request = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1,
+                HttpMethod.GET, "/failed-submission");
+        try {
+            channel.writeInbound(request);
+            FullHttpResponse response = awaitResponse(channel);
+            try {
+                assertEquals(HttpResponseStatus.INTERNAL_SERVER_ERROR, response.status());
+                assertEquals(0, request.refCnt());
+            } finally {
+                ReferenceCountUtil.release(response);
+            }
+        } finally {
+            supporter.shutdown();
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void resolveStaticFileAllowsFilesUnderRoot() throws Exception {
         Path root = tempDir.resolve("public");
         Path css = root.resolve("css");

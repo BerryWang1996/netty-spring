@@ -4,6 +4,7 @@
 // Run with Java 17 and Docker, from any working directory. No Maven or application routes.
 // OLD_IMAGE / NEW_IMAGE choose complete application images. Optional EXPECTED_{OLD,NEW}_JAR_SHA256
 // pins their fat jars. Every run records the actual image IDs, all extracted jar hashes and raw events.
+// NEW_VERSION selects the expected new release metadata (default: 2.0.0-SNAPSHOT).
 // Only the dedicated netty-spring-state-compat-200 Compose project and localhost:16386 are used.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -502,7 +503,7 @@ async function main() {
     assert.equal(docker('ps', '-aq', '--filter', `label=com.docker.compose.project=${project}`).trim(), '',
       `Existing ${project} containers found; inspect and explicitly remove only this previous test project before retrying.`);
     extract('old', process.env.OLD_IMAGE || 'netty-spring-1101-check:1.10.1', '1.10.1');
-    extract('new', process.env.NEW_IMAGE || 'netty-spring-200-check:2.0.0-SNAPSHOT', '2.0.0-SNAPSHOT');
+    extract('new', process.env.NEW_IMAGE || 'netty-spring-200-check:2.0.0-SNAPSHOT', process.env.NEW_VERSION || '2.0.0-SNAPSHOT');
     composeStarted = true;
     compose('up', '-d', '--wait', '--wait-timeout', '60');
     if (clusterMode) {
