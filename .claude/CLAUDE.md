@@ -1,88 +1,53 @@
 # netty-spring Project Context
 
-## Project
-- **What**: Spring Boot integration library for Netty — HTTP MVC + WebSocket + AES-GCM crypto + Micrometer observability
-- **Owner**: BerryWang1996 (wangbor@yeah.net), single maintainer
-- **License**: Apache 2.0
-- **Maven Central**: `io.github.berrywang1996:netty-*` (namespace verified at central.sonatype.com)
-- **Current version**: 1.10.0 (GA — released to Maven Central 2026-06-21, tagged `v1.10.0`, FF-merged to master. "IM platform foundation" line on Boot 2.7, built on top of 1.9.0 GA. RC chain tagged `v1.10.0-RC1`..`v1.10.0-RC4d`, none pushed. **RC1** ClusterRoomRegistry — per-room node-targeted routing (pivoted from a consistent-hashing shard ring after design review proved shards collapse to global broadcast under random LB; reduction = N/k by targeting only member-hosting nodes; ceiling-break is RC4, not RC1). **RC2** offline queue + user-addressable delivery (`OfflineQueueStore`/`UserRegistry`/`UserIdResolver` SPIs; `sendToUser` realtime-or-queue; per-user Redis Stream + drain lock; 3 design + 7 impl-review fixes folded). **RC3** multi-device presence (`PresenceRegistry` SPI — per-user aggregate ONLINE/AWAY/OFFLINE via atomic Lua transition detection + `PRESENCE_CHANGE` events on a reserved channel + `PresenceChangeListener`; design-review 3 BLOCKER+3 MAJOR+3 MINOR folded; **also fixed a latent RC2 bug — `UserRegistry.removeAllForNode` was never wired into dead-node reconciliation, leaking crashed-node user bindings**; per-device *addressing* (stable `DeviceIdResolver`) honestly deferred). **RC4a** node-to-node mesh transport foundation (`MeshBroker implements ClusterBroker` over direct Netty TCP — drop-in for `RedisPubSubBroker`; registry/heartbeat stay on Redis, off the message hot path; `MeshNodeDirectory` SPI + `RedisMeshNodeDirectory` for node-address discovery; **naive broadcast = all peers, NO fan-out reduction yet — interest routing is RC4b, the actual ceiling-break**; design-review folds M1 outbound-backpressure BLOCKER + M2 frame-cap + M3 dispatch-offload + M4 advertised-host fail-fast + M5 total-isolation degrade + derived membership; impl-review folds MF1 `live-by-heartbeat ∩ has-address` membership + MF2 connect-timeout wiring + BL1 outbound-cache replace; RC4c backlog = peer-address snapshot cache off the hot path, mesh-vs-clusterNodes/NATS fail-fast guard, idle-timeout handler, tick-before-listener reconcile, mTLS; RC4d = full `netty.cluster.mesh.*` meters). **RC4b** interest-routed mesh broadcast — **session-grained** fan-out reduction (`MeshInterestRegistry` SPI + `RedisMeshInterestRegistry` mirroring `RedisRoomRegistry`'s two-key + JOIN/LEAVE Lua, minus the room dimension; interest = node has ≥1 **live local session** for the URI, decided atomically in-Lua; `MeshInterestRouter` 5s send-cache with null-on-failure⇒all-peers / authoritative-empty⇒prune sentinel; **reserved channels (`PRESENCE_CHANNEL`) bypass pruning**; `ClusterBroker.onNodeLeft` additive default for the dead-node reap; reduction **genuine on a homogeneous fleet for physically-partitioned live audiences**, ~0 for global topics OR high-population topics under random LB — the recorded RC1 shard-ring honesty (disclosed in §1); **three** adversarial design-review rounds folded **12 + 3 + 1** BLOCKER/MAJOR findings + impl-review folded **7 MINOR**; 620 tests/11 modules). **RC4c** mesh hot-path robustness (**BL5 peer-address snapshot** — `publish`/`unicast` read an in-memory snapshot refreshed by the membership tick, so the steady-state **broadcast** hot path does **zero Redis I/O** (removes the per-message directory SCAN+GET; the RC4b interest read stays a 5s-cached SMEMBERS); **unicast** falls back to one bounded direct read on a snapshot miss **and warms the snapshot**, preserving the ~0 `unicast→MessageSessionClosedException` window; **hot-path-only reconnect backoff** — the membership tick dials raw so it stays the sole DEGRADED→ACTIVE recovery probe; **WRITER_IDLE** idle-connection reap (wires the inert `idle-timeout-ms`); **BL4** transport-state reconcile at the end of `ClusterMessageSender.start()`; **BL2** mesh-vs-`cluster-nodes`/`nats.servers` fail-fast guard; new knobs via setters (no constructor change); **two** design-review rounds folded **3 MAJOR + 6 nits** then **1 MAJOR** (unicast-fallback re-SCAN storm) + impl-review folded **6 MINOR**; 629 tests/11 modules). **RC4d** mesh observability — nine `netty.cluster.mesh.*` Micrometer meters: six counters (`frames.received`/`frames.sent`/`send.failures`/`send.dropped_backpressure`/`idle.reaps`/`reconnect.backoff_skips`) + three gauges (`fanout.target_nodes` — the fan-out reduction observation point, reusing the room sampler; `connections.active`; `peers.known`). **BL6: the meter binder reads the broker's OWN `ClusterRuntimeStats`** (the counters partition cleanly by owner — sender owns routing/app counters, broker owns transport counters — so NO shared instance / setter-swap is needed; the design-review caught that the broker self-starts in its `@Bean` *before* the sender bean, so any swap would be after traffic — reading the broker's instance is both simpler and correct). Bundled a contained cleanup making `reconnect.backoff_skips` vs `send.failures` **disjoint** (a backoff-skip is a deliberate shed, not a failure; accounting moved into `connectionForSend`, its only caller `sendTo` no longer blanket-counts a null channel), and `frames.sent` counts only on async write-success. `instanceof MeshBroker` guard ⇒ **the Redis path emits zero mesh meters**; aggregate-only, no per-peer tags. Honest: `fanout.target_nodes` vs `peers.known` reads the reduction but the random-LB saturation caveat still holds; `peers.known` is the raw directory snapshot (not a liveness probe); `connections.active` is usually ≤ `peers.known` (lazy dial / idle reap, can transiently overshoot). Adversarial impl-review (4 lenses → skeptic-verify → synthesis) returned **0 BLOCKERs**; folded **F1 MAJOR** (`connections.active` 0→1→0 coverage) + **F2/RC4d-C1 MINOR** (hot-path disjoint-counter test + a real-broker→binder→registry BL6 end-to-end test); **F3 NIT** (sub-µs TOCTOU undercount) left as-is. The design-review's Verify+Synthesis died on an account session-limit and were adjudicated against the tree (9 findings folded into spec v2 before coding). 636 tests/11 modules at the RC4d cut (**644 project total** after a post-GA-cut mesh-broker coverage pass — JaCoCo-guided, +8 deterministic tests for the writeFramed-failure / onNodeLeft / deliver-routing / unicast-self / connectionTo-malformed / public-resolve branches). mTLS + approach-C interest-change notifications still deferred (separable). **1.10.0 GA cut complete** (version flipped RC4d→1.10.0 across all 11 POMs; consolidated GA release notes; `v1.10.0` tag; FF-merged to master; a final GA-readiness audit gated the cut — gaReady, 2 MAJOR doc/metadata defects folded: a stale api-guide §11 `idle-timeout-ms` row + the missing `cluster.mesh.*` spring-configuration-metadata). **Released to Maven Central 2026-06-21** (deployment `8ef9500d`, published from the central-publishing-plugin 0.11.0 bundle). Remaining: the commercial promotion playbook.) **Latest stable on Central: 1.10.0 GA (released 2026-06-21, deployed). Previous: 1.9.0 GA (2026-06-07).** Earlier published: 1.4.0, 1.6.2, 1.7.0, 1.7.1, 1.8.0
-- **Next (this 1.10.0 cycle)**: RC4a mesh transport foundation ✅ cut (`v1.10.0-RC4a`) → RC4b interest-routed broadcast ✅ cut (`v1.10.0-RC4b` — session-grained fan-out reduction) → RC4c mesh hot-path robustness ✅ cut (`v1.10.0-RC4c` — BL5 peer-address snapshot/Redis-off-the-broadcast-hot-path + unicast warm-fallback, hot-path-only reconnect backoff, WRITER_IDLE reap, BL4 state reconcile, BL2 transport-conflict guard) → RC4d mesh observability ✅ cut (`v1.10.0-RC4d` — nine `netty.cluster.mesh.*` meters incl. the `fanout.target_nodes` reduction gauge; BL6 = binder reads the broker's own stats; disjoint backoff/failure counters; Redis path emits none via `instanceof` guard) → **1.10.0 GA ✅ released to Maven Central 2026-06-21 (`v1.10.0`, FF-merged to master, pushed)** → commercial promotion playbook. mTLS + approach-C interest-change notifications deferred as separable subsystems. Then later 2.0.0 (Boot 3.x; unlocks sharded pub/sub + Observation API). The whole RC1→RC4d chain followed the per-RC cadence (brainstorm→spec→adversarial design-review→plan→impl→adversarial impl-review→cut RC, FF-merge+tag, STOP before push); a final GA-readiness audit (gaReady; 2 MAJOR doc/metadata defects folded) gated the GA cut.
-- **Spring Boot**: 2.7.18 (Boot 3.x migration planned for 2.0.0)
-- **JDK**: 17 (GraalVM JDK 17.0.11)
-- **Build**: Maven 3.9.9, 11 modules (including 2 new cluster modules)
+## Project and authoritative documents
 
-## Module Structure (1.9.0)
+- Spring Boot integration library for Netty: HTTP MVC, WebSocket, AES-GCM crypto, Micrometer,
+  and opt-in cluster/IM primitives. Apache-2.0; Maven group `io.github.berrywang1996`.
+- Read the root `pom.xml` for the working version and dependency versions. The 1.x platform is
+  Spring Boot 2.7.18 / JDK 17; 2.0.0 targets Spring Boot 4.1 as a behavior-preserving migration.
+- [Development plan](../docs/development-plan.md): the single current roadmap, migration steps,
+  and deferred work. Do not restore Boot 3.x or bundle new features into 2.0.0 from historical notes.
+- [1.10.1 release notes](../docs/release-notes-1.10.1.md): patch scope, checks, and publication status.
+  A POM version or a local tag is not evidence that Maven Central publication completed.
+- [Release checklist](../docs/release-checklist.md): build, release, signing, and publication workflow.
+- [API guide](../docs/api-guide.md), [cluster design](../docs/cluster-design.md), and
+  [dependency governance](../docs/dependency-governance.md): current behavior and operational constraints.
+- [Promotion playbook](../docs/promotion-playbook.md): assets, channels, and publication gates.
+- Past release notes and `docs/superpowers/` are historical evidence, not another active roadmap.
+
+## Module structure
+
+```text
+netty-spring-web                           core bootstrap and HTTP dispatch
+netty-spring-webmvc                        MVC routing
+netty-spring-websocket                     WebSocket mapping, MessageSender, crypto
+netty-spring-websocket-cluster             transport/registry SPIs and implementations
+netty-spring-boot-autoconfigure            shared auto-configuration
+netty-web-spring-boot-starter               HTTP + WebSocket starter
+netty-webmvc-spring-boot-starter            HTTP MVC starter
+netty-websocket-spring-boot-starter         WebSocket starter
+netty-websocket-cluster-spring-boot-starter opt-in cluster starter
+demo-netty-web-spring-boot-starter          demo application (not published to Central)
 ```
-netty-spring-web                          — core Netty bootstrap, HTTP dispatch
-netty-spring-webmvc                       — MVC routing (@RequestMapping)
-netty-spring-websocket                    — WebSocket mapping, MessageSender API, crypto
-netty-spring-websocket-cluster            — [NEW] ClusterBroker/SessionRegistry SPI + Redis impl
-netty-spring-boot-autoconfigure           — shared auto-configuration
-netty-web-spring-boot-starter             — HTTP + WebSocket combined starter
-netty-webmvc-spring-boot-starter          — HTTP MVC only starter
-netty-websocket-spring-boot-starter       — WebSocket only starter
-netty-websocket-cluster-spring-boot-starter — [NEW] cluster starter (requires enable=true)
-demo-netty-web-spring-boot-starter        — demo app (not published to Central)
-```
 
-## Key Architecture Decisions (1.9.0)
-- **ADR-001**: Redis-first cluster middleware, NATS additive later (see docs/cluster-design.md)
-- **Transport SPI**: `ClusterBroker` (fan-out + unicast) + `SessionRegistry` (presence + routing) — Redis is impl #1, NATS/mesh are future drop-ins
-- **Config namespace**: `server.netty.websocket.cluster.*` (only activated with `enable=true`)
-- **Known ceiling**: Redis Pub/Sub safe only ≤~10 nodes for active broadcast; beyond → sharded pub/sub → mesh
-- **Origin self-delivery suppression**: MUST include originNodeId in envelope to prevent broadcast duplicates
+The Maven reactor contains the parent plus these ten modules. Prefer the checked-in Maven wrapper.
+Use the release checklist for environment-specific signing and Central setup; do not copy tokens
+or signing credentials into project documentation.
 
-## Build & Release
-- **GPG key**: `09CC1D729D9E1CBBA18DE39E8B24A2A210E4168C` (empty passphrase; Gpg4win at `C:\Program Files\GnuPG\bin\gpg.exe`)
-- **Deploy to Central**: `mvn deploy -pl '!demo-netty-web-spring-boot-starter' -P release -DskipTests "-Dgpg.executable=C:\Program Files\GnuPG\bin\gpg.exe"` (PowerShell; run `gpgconf --kill all; gpgconf --launch keyboxd` first)
-- **Central Portal**: central.sonatype.com, autoPublish=false (manual review)
-- **gh CLI**: logged in as BoruiWangIxoran (different from repo owner BerryWang1996) — GitHub Releases need BerryWang1996 identity
-- **settings.xml**: `~/.m2/settings.xml` has `<server id="central">` with token, `<server id="gpg.passphrase">` placeholder
-- **Mirror**: Aliyun mirror active for central; `rdc` and `huawei` profiles active
+## Architecture and conventions
 
-## Coding Conventions
-- Java package: `com.github.berrywang1996.netty.spring.web.*` (unchanged despite groupId migration)
-- Lombok `@Slf4j` for logging
-- `@ConditionalOnClass` / `@ConditionalOnBean` / `@ConditionalOnProperty` for Spring Boot auto-config
-- Config property naming: always `enable` (not `enabled`) — consistent with `mvc.enable`, `websocket.enable`, `crypto.enable`
-- Tests: JUnit 5, EmbeddedChannel for Netty pipeline tests, Mockito in autoconfigure module only
-- Commit style: `type: description` (fix/feat/docs/release), include `Co-Authored-By: Claude ...`
-- Pre-release: 4-way parallel code audit + adversarial verification model
-
-## 1.9.0 Status (✅ GA — released 2026-06-07, deployed to Maven Central. Feature set below. **1.10.0 GA released to Maven Central 2026-06-21 (`v1.10.0`, pushed + deployed)** — see `docs/development-plan.md` + `docs/release-notes-1.10.0.md` for the RC1→RC4d feature set + the consolidated GA overview.)
-Cluster reliability hardening. 444 tests / 11 modules green at GA (1.10.0 builds on this; current RC2 total is higher).
-Single-node (cluster.enable=false) is production-grade and behaviorally identical to 1.7.x/1.8.0; cluster mode
-targets ≤~10 nodes + a dedicated, secured Redis.
-
-**1.9.0 ships 5 reliability items deferred from 1.8.0:**
-1. Redis-loss grace period (`redis-loss-grace-period-ms`, default 5000 ms; `0` = instant/1.8.0 behavior). **Only intentional default-behavior change.**
-2. Heartbeat/reconciliation thread isolation (two dedicated schedulers `cluster-hb`/`cluster-recon`) + batched EXISTS in `findExpiredNodes`.
-3. Atomic Lua deregister (`HGET→DEL→SREM` as single `EVAL`). Signature unchanged.
-4. Reconciliation leader-election (`ClusterReaper` SPI; `RedisClusterReaper` uses `SET NX`). `@ConditionalOnMissingBean`.
-5. Registry write coalescing (`session-registry-write-rate`, default 1000 ops/s; `CoalescingRegistryWriter` token-bucket; register never dropped).
-
-**5-layer pluggable SPI** (all `@ConditionalOnMissingBean`; signatures UNCHANGED from 1.8.0):
-- `ClusterBroker` (cross-node transport; `RedisPubSubBroker` default)
-- `SessionRegistry` (distributed session routing; `RedisSessionRegistry` default, atomic Lua deregister)
-- `EnvelopeCodec` (wire format; `SimpleTextEnvelopeCodec` zero-dep default — NO Jackson)
-- `MessagePayloadCodec` (message body; `DefaultMessagePayloadCodec` T:/J:/B: default)
-- `ClusterNodeHeartbeat` (`RedisClusterNodeHeartbeat` SET+TTL default)
-- `ClusterReaper` (NEW in 1.9.0; `RedisClusterReaper` SET-NX leader-election default)
-
-**Delivery semantics**: local delivery never lost; cross-node broadcast at-most-once (Pub/Sub fire-and-forget,
-no replay); unicast undeliverable → MessageSessionClosedException to caller. Reliable replay path
-(reliableBroadcast / Redis Streams) is future — NOT in 1.9.0.
-
-**Still deferred** (documented in cluster-design.md): HMAC envelope auth, full Micrometer meter-binder set,
-multi pub/sub connections, sharded pub/sub, Redis Cluster client, W3C trace propagation, NATS broker,
-reliable delivery (Redis Streams), multi-node demo + Testcontainers.
-
-Docs: `docs/api-guide.md` §9 (WebSocket Cluster), `docs/cluster-design.md` (scope table + §Security + roadmap),
-`docs/release-notes-1.9.0.md`, README cluster section (EN+中文).
-
-## Key Docs
-- `docs/cluster-design.md` — cluster design + 1.8.0/1.9.0 scope table + capacity model + ADR-001
-- `docs/development-plan.md` — roadmap: 1.9.0 → 2.0.0 (Boot 3.x) → 2.1.0 (enterprise security)
-- `docs/release-checklist.md` — reusable release process
-- `docs/api-guide.md` — 13-section user guide (incl. §9 WebSocket Cluster with 1.9.0 config rows)
-- `docs/release-notes-1.9.0.md` — 1.9.0 release notes (the 5 reliability items + upgrade guide)
+- Java packages remain `com.github.berrywang1996.netty.spring.web.*` despite the Maven group change.
+- Cluster configuration uses `server.netty.websocket.cluster.*`; `enable=false` by default.
+  All feature switches use `enable`, consistent with MVC/WebSocket/crypto configuration.
+- `ClusterBroker` separates transport from distributed session routing. Redis, NATS, and mesh
+  implementations already exist; check the implementation table before proposing them as new work.
+- Redis Pub/Sub has documented capacity limits. Mesh benefits depend on audience locality;
+  do not claim unconditional fan-out reduction or unlimited scale.
+- Envelopes carry `originNodeId`; origin self-delivery suppression prevents duplicate local delivery.
+- Use Lombok `@Slf4j`; conditional auto-configuration must remain safe when optional dependencies
+  are absent. Class-level conditions must protect optional-library method signatures.
+- Tests use JUnit 5 and Netty `EmbeddedChannel`; follow existing module test patterns.
+  Cluster checks require the documented Redis/NATS/Docker infrastructure.
+- Commit messages use `type: description` (`fix`, `feat`, `docs`, `release`). Attribute actual
+  contributors only. Apply the release checklist's review and verification requirements.

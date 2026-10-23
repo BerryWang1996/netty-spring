@@ -4,10 +4,9 @@
 > 同日对抗性核实后修订 4 处措辞（BinaryMessage 绑定目标、跨节点"往返"→单向投递、两处语气）。
 > 发布的是**你的 SO 账号**（我这边没有也不应该有你的 SO 凭据）。
 >
-> ⚠️ **Answer 2 有发布门槛**：已发布到 Central 的 1.10.0 集群 starter 存在"无 jnats 即启动崩溃"的
-> GA 级缺陷（本地已修复并验证，见 commit 15a25d7，但 1.10.1 尚未发布）。**在 1.10.1 上 Central
-> 之前不要发布 Answer 2**——照草稿配置的用户全部会踩中崩溃。Answer 1 用的是不含集群模块的
-> WebSocket starter，不受影响，可以先发。
+> Answer 2 的发布门槛与验证状态统一见 [1.10.1 发布说明](release-notes-1.10.1.md)。
+> Maven Central 可用性确认前，不得照其依赖示例采用或发布 Answer 2。Answer 1 使用单机
+> WebSocket starter，不受这项集群发布门槛影响。
 
 ## 发布须知（先读）
 
@@ -104,7 +103,7 @@ new WebSocket("ws://host:8080/trade?id=foo")   // plain browser WebSocket, nothi
 ## Where this won't fit (so you don't waste time)
 
 - It runs on its own Netty server (`server.netty.port`), not inside Tomcat — fine for a dedicated realtime service or a Netty-served app, wrong if the endpoint must live inside an existing servlet container.
-- Spring Boot 2.7.x and JDK 17 today (Boot 3.x is on the roadmap, not released).
+- Spring Boot 2.7.x and JDK 17 today (2.0.0 targets Boot 4.1; it is not released and does not promise Boot 3 compatibility).
 - If you genuinely need per-connection handler *instances* rather than per-session state in a singleton, Spring's own `PerConnectionWebSocketHandler` remains the in-container route.
 ```
 
@@ -157,7 +156,7 @@ Clustering is switched on purely by configuration:
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-websocket-cluster-spring-boot-starter</artifactId>
-    <version>1.10.0</version>
+    <version>1.10.1</version>
 </dependency>
 ```
 
@@ -195,12 +194,7 @@ cd docker-demo && npm install && node smoke.js
 
 ### 发布检查清单
 
-- [ ] ⚠️ **门槛（硬性）**：确认 **1.10.1 已发布到 Maven Central**（central.sonatype.com 可搜到
-      `netty-websocket-cluster-spring-boot-starter` 1.10.1）且 docker-demo 冒烟绿。
-      然后把下方依赖块里的 `<version>1.10.0</version>` 改为 `1.10.1` 再发布。
-      **未满足前此答案绝不可发**：已发布的 1.10.0 集群 starter 对任何 classpath 上没有 jnats 的用户
-      （即所有默认 Redis 用户）启动即崩（NoClassDefFoundError: io/nats/client/...），
-      照草稿抄的用户 100% 踩中。缺陷已在本地修复并验证（commit 15a25d7，647 测试 + 双节点冒烟通过）。
+- [ ] 核对 [1.10.1 发布说明](release-notes-1.10.1.md)中的 Central 可用性与冒烟验证，满足本文顶部发布门槛。
 - [ ] 用你的账号粘贴到 Q26853745 的回答框
 - [ ] 预览确认代码块渲染正常
 - [ ] 保留披露声明
@@ -215,7 +209,7 @@ cd docker-demo && npm install && node smoke.js
   - `server.netty.websocket.cluster.*` 全量配置表、`ClusterMessageSender` drop-in 语义、投递语义原文引用 → netty-spring-websocket-cluster + 集群 starter
   - docker-demo 命令、smoke.js 断言、Maven 坐标、Boot/JDK 版本 → docker-demo/ + 各 pom
 - 已知不可引用项（草稿已规避）：`@AutowiredMessageSender` 字段注入（注解存在但树中无处理器，
-  疑似未接线——已另行报告）；WS 路径变量（不支持）；Boot 3 兼容（未发布）。
+  疑似未接线——已另行报告）；WS 路径变量（不支持）；Boot 3 兼容（不承诺；2.0.0 目标为 Boot 4.1）。
 - 投递语义措辞逐字取自 `ClusterMessageSender`/`ClusterBroker` javadoc。
 - 修订记录（2026-08-03 对抗性核实）：① `BinaryMessage` 是发送侧包装器，二进制帧的真实绑定目标是
   `byte[]`/`ByteBuf`/`BinaryWebSocketFrame`（MessageMappingResolver:867–876）；② smoke.js 断言的是
@@ -223,8 +217,4 @@ cd docker-demo && npm install && node smoke.js
   "covers this shape of problem"；④ "solves both sub-problems with one property" 改为
   "once it is enabled"（启用集群实际要 enable + redis.uri 两项）；⑤ at-most-once 补 "by default"
   （可靠重投路径是 NATS JetStream 另一条传输）。
-- Answer 2 门槛依据：已发布的 1.10.0 集群 starter 在 jnats 缺席（optional 依赖，默认所有人）时
-  上下文启动即崩（NoClassDefFoundError: io/nats/client/JetStreamApiException，发生于条件评估期
-  getDeclaredMethods 内省）。本地已修复（commit 15a25d7：NATS bean 移入类级 @ConditionalOnClass
-  门控的嵌套配置类 + 3 个回归测试，647 测试全绿，双节点 docker-demo 冒烟通过），1.10.1 是否发布由
-  维护者决定；未发布前 Answer 2 不可发。
+- Answer 2 所涉 optional-NATS 缺陷、修复与验证记录统一见 [1.10.1 发布说明](release-notes-1.10.1.md)。

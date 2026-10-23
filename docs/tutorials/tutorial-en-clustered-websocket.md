@@ -1,6 +1,6 @@
 # Clustered WebSocket on Spring Boot in 20 minutes — and where it stops scaling
 
-> ⚠️ Publishing gate: this article references **1.10.1**. The released **1.10.0** cluster starter crashes at startup on any default classpath without `jnats` (`NoClassDefFoundError io/nats/client/...`). Fixed locally (commit `15a25d7`). **Do not publish this article until 1.10.1 is on Maven Central.**
+> This tutorial uses **1.10.1**. Check the [release notes](../release-notes-1.10.1.md) for publication status. Do not adopt these dependency examples or publish them as a runnable tutorial before Maven Central availability is confirmed.
 
 Spring's native WebSocket + STOMP stack is a lot of machinery for a simple realtime need. To get a chat channel or a live status feed, you have to wire up a message broker (or STOMP relay), configure `MessageBrokerRegistry`, deal with `SimpMessagingTemplate` and `/topic`/`/app` destination conventions, and then still reach for a separate story the moment you want two nodes to talk to each other.
 
@@ -136,10 +136,10 @@ Each one's exact property names, signatures, and honest-scope caveats are in [AP
 
 This is the part I'd want you to read before betting a product on it:
 
-- **Redis Pub/Sub is documented for roughly ≤ 10 nodes of active broadcast.** Beyond that you're approaching the fan-out wall; NATS is the scaling tier (ADR-001) — still capped by the same ~33k msg/s sender pipeline today, with 267k raw headroom reserved for future expansion — and sharded pub/sub waits for 2.0.0.
+- **Redis Pub/Sub is documented for roughly ≤ 10 nodes of active broadcast.** Beyond that you're approaching the fan-out wall; NATS is the scaling tier (ADR-001) — still capped by the same ~33k msg/s sender pipeline today, with 267k raw headroom reserved for future expansion — and sharded pub/sub is deferred beyond 2.0.0.
 - **Redis is not optional furniture.** You need a dedicated, secured Redis — auth and TLS in production — because it's the control plane. There's optional HMAC envelope auth (`cluster.auth.enable=true`) for when Redis crosses an untrusted boundary.
 - **The mesh fan-out reduction is real, but conditional.** It's genuine for **interest-partitioned live audiences** — a support topic whose agents sit on 4 of 100 nodes, or small tenants. A **global** topic (live sessions on every node) gets zero reduction, and a high-population topic under **random load-balancing** still saturates nearly the whole fleet (coupon-collector). The `fanout.target_nodes` meter exists precisely so you can *see* whether you're getting reduction instead of assuming it.
-- **Boot 2.7.x and JDK 17 only.** Spring Boot 3.x/4.x support is future work (the 2.0.0 line), not released.
+- **Boot 2.7.x and JDK 17 only.** The planned 2.0.0 target is Spring Boot 4.1; it is not released and does not promise Boot 3.x compatibility. See the [development plan](../development-plan.md).
 - **It runs its own Netty server** on `server.netty.port`. That's the point — but it also means it's **not** inside Tomcat, and it's not a drop-in for an existing Servlet stack.
 - **Not an IM platform out of the box.** No client SDKs, no admin console, no recall/receipts/history. If you need those, you're building them on top of the primitives, not getting them from the starter.
 

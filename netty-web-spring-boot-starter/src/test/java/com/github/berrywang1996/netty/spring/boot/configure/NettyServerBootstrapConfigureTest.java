@@ -20,10 +20,7 @@ import org.springframework.stereotype.Controller;
 
 import io.netty.handler.codec.http.HttpRequest;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.lang.reflect.Field;
-import java.net.ServerSocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -31,7 +28,10 @@ class NettyServerBootstrapConfigureTest {
 
     private static final String TEST_WEBSOCKET_URI = "/ws/test";
 
+    // These tests inspect configuration and mappings, without connecting a client. Let Netty bind
+    // port 0 directly so another process cannot take a temporarily probed-and-released port.
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
+            .withPropertyValues("server.netty.port=0")
             .withConfiguration(AutoConfigurations.of(
                     ConfigurationPropertiesAutoConfiguration.class,
                     NettyServerBootstrapConfigure.class,
@@ -39,9 +39,7 @@ class NettyServerBootstrapConfigureTest {
 
     @Test
     void autoConfigurationStartsNettyServerAndPublishesMessageSenderBeans() {
-        int port = findAvailablePort();
         this.contextRunner
-                .withPropertyValues("server.netty.port=" + port)
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(NettyServerStartupPropertiesWrapper.class);
@@ -51,16 +49,15 @@ class NettyServerBootstrapConfigureTest {
                     assertThat(context).hasBean("messageSender");
                     assertThat(context.getBean(MessageSender.class))
                             .isSameAs(context.getBean(MessageSenderSupport.class));
-                    assertThat(context.getBean(NettyServerStartupPropertiesWrapper.class).getPort()).isEqualTo(port);
+                    assertThat(context.getBean(NettyServerStartupPropertiesWrapper.class).getPort()).isZero();
+                    assertThat(context.getBean(NettyServerBootstrap.class).isRunning()).isTrue();
                 });
     }
 
     @Test
     void websocketControllerCanInjectMessageSenderWithoutLazy() {
-        int port = findAvailablePort();
         this.contextRunner
                 .withUserConfiguration(TestWebSocketControllerConfiguration.class)
-                .withPropertyValues("server.netty.port=" + port)
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(TestWebSocketController.class);
@@ -74,10 +71,8 @@ class NettyServerBootstrapConfigureTest {
 
     @Test
     void httpNamespaceBindsToHttpRelatedProperties() {
-        int port = findAvailablePort();
         this.contextRunner
                 .withPropertyValues(
-                        "server.netty.port=" + port,
                         "server.netty.http.file-location=public",
                         "server.netty.http.gzip.enable=true")
                 .run(context -> {
@@ -93,10 +88,8 @@ class NettyServerBootstrapConfigureTest {
 
     @Test
     void legacyHttpPropertiesRemainCompatibleAfterHttpNamespaceIsIntroduced() {
-        int port = findAvailablePort();
         this.contextRunner
                 .withPropertyValues(
-                        "server.netty.port=" + port,
                         "server.netty.file-location=public",
                         "server.netty.gzip.enable=true")
                 .run(context -> {
@@ -112,11 +105,9 @@ class NettyServerBootstrapConfigureTest {
 
     @Test
     void websocketAutoConfigurationCanBeDisabled() {
-        int port = findAvailablePort();
         this.contextRunner
                 .withUserConfiguration(PassiveWebSocketControllerConfiguration.class)
                 .withPropertyValues(
-                        "server.netty.port=" + port,
                         "server.netty.websocket.enable=false")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
@@ -127,10 +118,8 @@ class NettyServerBootstrapConfigureTest {
 
     @Test
     void customMessageSenderBacksOffDefaultMessageSenderSupport() {
-        int port = findAvailablePort();
         this.contextRunner
                 .withUserConfiguration(CustomMessageSenderConfiguration.class)
-                .withPropertyValues("server.netty.port=" + port)
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(MessageSender.class);
@@ -142,10 +131,8 @@ class NettyServerBootstrapConfigureTest {
 
     @Test
     void bothMvcAndWebsocketDisabledStillStartsServer() {
-        int port = findAvailablePort();
         this.contextRunner
                 .withPropertyValues(
-                        "server.netty.port=" + port,
                         "server.netty.mvc.enable=false",
                         "server.netty.websocket.enable=false")
                 .run(context -> {
@@ -159,11 +146,9 @@ class NettyServerBootstrapConfigureTest {
 
     @Test
     void mvcDisabledButWebsocketEnabledStillRegistersWebsocketMappings() {
-        int port = findAvailablePort();
         this.contextRunner
                 .withUserConfiguration(PassiveWebSocketControllerConfiguration.class)
                 .withPropertyValues(
-                        "server.netty.port=" + port,
                         "server.netty.mvc.enable=false",
                         "server.netty.websocket.enable=true")
                 .run(context -> {
@@ -177,12 +162,10 @@ class NettyServerBootstrapConfigureTest {
 
     @Test
     void mvcAndWebsocketControllersCoexist() {
-        int port = findAvailablePort();
         this.contextRunner
                 .withUserConfiguration(
                         TestMvcControllerConfiguration.class,
                         TestWebSocketControllerConfiguration.class)
-                .withPropertyValues("server.netty.port=" + port)
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(MessageSender.class);
@@ -200,10 +183,8 @@ class NettyServerBootstrapConfigureTest {
 
     @Test
     void heartbeatAndConnectionLimitConfigurationBinds() {
-        int port = findAvailablePort();
         this.contextRunner
                 .withPropertyValues(
-                        "server.netty.port=" + port,
                         "server.netty.websocket.heartbeat-interval-seconds=30",
                         "server.netty.websocket.heartbeat-timeout-seconds=90",
                         "server.netty.websocket.max-connections=1000",
@@ -221,10 +202,8 @@ class NettyServerBootstrapConfigureTest {
 
     @Test
     void multipleWebsocketUrisCanBeRegistered() {
-        int port = findAvailablePort();
         this.contextRunner
                 .withUserConfiguration(MultiUriWebSocketControllerConfiguration.class)
-                .withPropertyValues("server.netty.port=" + port)
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context.getBean(NettyServerBootstrap.class)
@@ -251,14 +230,6 @@ class NettyServerBootstrapConfigureTest {
         Field field = NettyServerBootstrap.class.getDeclaredField("webMappingSupporter");
         field.setAccessible(true);
         return (WebMappingSupporter) field.get(bootstrap);
-    }
-
-    private static int findAvailablePort() {
-        try (ServerSocket serverSocket = new ServerSocket(0)) {
-            return serverSocket.getLocalPort();
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
     }
 
     @Configuration(proxyBeanMethods = false)

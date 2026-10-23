@@ -1,6 +1,6 @@
 # 用一个 starter 给 Spring Boot 加上集群 WebSocket（以及它的诚实边界）
 
-> ⚠️ 发布门槛：本文引用 1.10.1。已发布的 1.10.0 集群 starter 在无 jnats 的默认 classpath 上启动即崩（本地已修复，commit 15a25d7）。**1.10.1 上 Maven Central 之前不得发布本文。**
+> 本文以 1.10.1 为例。发布状态统一见 [1.10.1 发布说明](../release-notes-1.10.1.md)；确认 Maven Central 已发布前，不可照例采用或对外发布为可运行教程。
 
 我是 netty-spring 的维护者。这个库做了一件很克制的事：给 Spring Boot 换一个 Netty 作为 HTTP/WebSocket 服务器，顺手把「多节点集群 WebSocket」压进一个 starter，同时把它的边界写在明面上。本文带你走一遍：单机 5 分钟跑通 → 一个开关开集群 → 多节点证明 → 四个可选 IM 原语 → 最后是它不骗你的边界。
 
@@ -94,7 +94,7 @@ cd docker-demo && npm install && node smoke.js
 - 跨节点广播默认 at-most-once，不重放。
 - 需要一台**专用、网络隔离、带认证 + TLS** 的 Redis——它是集群控制平面，任何能 `PUBLISH` 它的人都能注入或关闭会话。
 - mesh 的扇出削减**只在按兴趣分区的活跃受众上成立**；全局话题或高人口话题在随机负载均衡下仍会饱和整个集群。
-- 只支持 Spring Boot 2.7.x / JDK 17（Boot 3/4 是未来版本，尚未发布）。
+- 只支持 Spring Boot 2.7.x / JDK 17（2.0.0 计划升级 Boot 4.1，尚未发布；不承诺 Boot 3 兼容，见[开发计划](../development-plan.md)）。
 - 它跑自己的 Netty 服务器（`server.netty.port`），**不在 Tomcat 里**。
 - 不是完整 IM 平台：没有客户端 SDK、没有管理后台、没有撤回/回执/历史。
 

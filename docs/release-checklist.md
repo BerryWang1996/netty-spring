@@ -1,98 +1,51 @@
 # 版本发布检查清单
 
-更新时间：2026-06-08
+更新时间：2026-10-23
 
-## 适用范围
+本页只保留可复用流程。当前路线见[开发计划](development-plan.md)，每版的修复、验证、上传和发布状态只记录在对应发布说明（当前：[1.10.1](release-notes-1.10.1.md)）。历史记录不随新版本重写。
 
-- 适用于所有 `netty-spring` 版本发布（功能/稳定性发布与企业安全发布）。
-- 目标是保证发布动作可重复执行，而不是依赖一次性的人工记忆。
-- 历史 `1.0.x`–`1.7.x` 的版本特定确认项见对应 `docs/release-notes-*.md`，本清单只保留可复用的通用流程与最新版本口径。
+## 本地验证
 
-## 版本类型
+1. 11 个 POM（父工程 + 10 个子模块）的项目/父版本一致，内部依赖使用 `${project.version}`。保留当前主线的 JDK 与 Boot 基线。
+2. 使用最低支持 JDK 执行 `mvn -B -ntp clean verify`，汇总 Surefire XML 的 tests/failures/errors/skipped。Redis、Redis Cluster、NATS/JetStream、mesh、Starter 装配和多节点 E2E 都须运行，不能把环境不满足的跳过写成全量通过。
+3. 生成 SBOM：`mvn -B -ntp -Psbom -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom`。检查 `target/netty-spring-sbom.json` / `.xml` 的版本和依赖。
+4. Demo fat jar 包装成功；默认 classpath（不额外加 jnats）下验证单机健康检查与 WebSocket roundtrip，并执行 `docker-demo/README.md` 的双节点广播 smoke，确认运行目标版本。用独立 Compose 项目名隔离验证环境，仅清理本次创建的容器/网络。
+5. 对发布差异独立审查，覆盖 optional 依赖缺席、资源清理、默认配置与消息格式兼容。minor 另需按功能正确性、资源、安全、API 契约四视角并行审查并做对抗复核；发布说明记录发现与处置。
+6. 验证 release profile 的 sources、Javadoc、GPG 签名产物；跳过 GPG 的构建不能算已签名。demo 不发布到 Central。
 
-- **功能/稳定性发布**（默认）：核心要求是全量测试通过、Starter 兼容、配置文档与代码一致、SBOM 生成和基础 CI 链路成功；当前不把依赖漏洞扫描作为阻塞项。
-- **企业安全发布**（`2.0.0` 之后引入）：在功能/稳定性要求之上，额外完成 Dependency-Check / Dependabot triage 闭环、CORS / 握手鉴权 / TLS 策略说明与管理端点访问控制确认。
+## 发布动作与远端门槛
 
-## 通用发布前检查
+1. 审核差异与发布说明，创建发布提交和 annotated tag `v<version>`。提交包含验证结果，不带入本地缓存和实验文件。
+2. 推送分支和 tag，确认 GitHub Actions `Maven Test`、`Generate SBOM`、`Docker Demo Smoke`。必要时手动触发 Docker smoke（其 push/PR 有路径过滤）。
+3. **当前 CI 对所有 `v*` tag 都运行 Dependency Scan，优先使用 `NVD_API_KEY`；未配置时使用 Dependency-Check 官方 NVD 镜像。** 镜像的 `cache.properties` 时间戳必须在过去 72 小时内（最多允许超前 5 分钟），不可读取、过期或异常时间均阻断门禁；保留 CVSS 7.0 与扫描错误即失败的要求。按[依赖治理](dependency-governance.md)完成扫描与告警 triage，记录实际数据源和镜像时间戳，不能把红色 CI 写成发布验证通过。企业安全能力的额外承诺按该版范围验收。
+4. 使用已配置凭据的发布环境上传：
 
-1. **版本号与文档**：根 `pom.xml` 切到目标版本（覆盖全部 11 模块）。**逐行走「文档同步矩阵」（见文末）—— 这是防遗忘的单一权威清单；不要凭记忆更新。** 历史上 `development-plan.md` 漏更过 GA 状态，矩阵就是为了杜绝这类 lockstep-miss。
-2. **全量测试**：执行 `mvn test`，全部模块 SUCCESS（`1.8.0` 起为 11 个模块）。
-3. **SBOM**：`mvn -Psbom -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom`；CI 发布需确认 `Maven Test` + `Generate SBOM` job 成功。
-4. **Starter & Demo 回归**：四个 Starter（`netty-web` / `netty-webmvc` / `netty-websocket` / `demo-netty-web`）的集成测试必须通过；demo 启动 smoke 通过。
-5. **工程化边界复核**：
-   - Starter 启动失败抛 Spring Boot 异常，不直接终止 JVM。
-   - `NettyServerBootstrap.stop()` 在 repeated stop、异常 stop、startup failure 后都能完成资源清理。
-   - `MessageSenderSupport` 在无 websocket mapping、stop/start、停机联动下行为可预测。
-6. **稳定性门槛**（自 `1.1.0` 起持续生效）：
-   - 静态文件服务不能通过 `..`、URL 编码或路径规范化绕过根目录。
-   - HTTP request line / header / chunk / body 上限、`read-timeout` / `write-timeout` / `idle-timeout` 有显式配置入口与回归测试。
-   - 启用 SSL 时证书和私钥在启动期校验；生产环境显式配置 `http.ssl.protocols` 与 `http.ssl.ciphers`。
-   - WebSocket `allowed-origins` 在生产部署中显式评估，不默认放开跨站握手。
-   - MVC / 静态文件 / WebSocket 写失败与过载拒绝有统一日志、关闭策略和指标；`management.enable=true` 只在受保护网络下暴露。
-   - handler/sender 线程池配置有启动期校验，非法容量和 `max < core` 不会静默兜底。
-7. **可观测性门槛**（自 `1.7.0` 起）：
-   - `micrometer-core` 与 `spring-boot-actuator` 为 optional 依赖，缺失时自动退化。
-   - 新增 Micrometer 指标命名遵循 `netty.<component>.*`，标签卡死在框架枚举（如 `CloseReason`）以避免无界基数。
-   - 新增可观测能力同步进 `docs/api-guide.md` §10 与对应配置文档。
-8. **审计闭环**（自 `1.7.0` 起，minor 版本必做）：
-   - 发布前至少一轮独立代码审计（建议参考 `1.7.0` 的 4 路并行审计 + 对抗式验证模型）。
-   - 发现的正确性 / 资源 / 安全问题在发版前清零；保留审计纪要在发布说明中体现。
-9. **发布说明**：`docs/release-notes-<version>.md` 描述版本定位、改动清单、新增测试、升级指南、向后兼容性声明。
+   ```sh
+   mvn -B -ntp -P release -pl '!demo-netty-web-spring-boot-starter' -DskipTests deploy
+   ```
 
-## 企业安全发布附加项
+   仅在同一源码完成全量测试后跳过重复测试。Windows 按环境指定 GPG 可执行文件。**必须使用 `-P release`**，由此生成 sources/Javadoc/GPG 和 Central bundle；普通 `mvn deploy` 不等价。
+5. 当前 `autoPublish=false` / `waitUntil=validated`：上传完成只代表 Portal 验证通过。记录 deployment ID，完成 Portal 发布并核实全部 10 个制品（父 POM + 9 个库模块）可下载后，才标为已发布。
 
-1. 发布前完成依赖漏洞扫描，处理或记录 GitHub Dependabot / 等效扫描告警；高危及以上漏洞或未 triage 的扫描失败不得进入企业安全发布 tag。
-2. Dependency-Check 误报必须写入 `dependency-check-suppressions.xml` 并说明原因，不能通过降低扫描门槛绕过。
-3. CI 或发布机必须为企业安全发布门禁配置 `NVD_API_KEY`，并复用 `${settings.localRepository}/../dependency-check-data` Dependency-Check 缓存。
-4. 握手鉴权、CORS / Origin、TLS 协议/套件和管理端点暴露策略需要在发布说明中明确。
+## 文档同步矩阵
 
-## 发布动作
+| 文件 | 维护内容 | 更新时机 |
+|---|---|---|
+| 11 个 `pom.xml` | 构建版本 | 切版 |
+| `docs/release-notes-<version>.md` | 本版变更、兼容性、逐项验证、CI、tag、Central 状态 | 每个发布步骤完成时 |
+| `docs/development-plan.md` | 当前公开版本、本地收尾版本、下一主线与执行进度 | 状态改变时，不复制测试流水账 |
+| `README.md` | EN/中文版本摘要、依赖示例、公开版本列表与发布说明链接 | 准备时明确 pending；Central 可下载后才更新公开版本 |
+| `docs/api-guide.md` | 源码版本、API/配置变化、可用依赖示例 | API 变化及发布时 |
+| 教程、FAQ、SO 草稿 | 发布门槛链接、引用版本与实际能力 | 引用版本发布后核对；外部发表单独处理 |
+| 配置文档与 `additional-spring-configuration-metadata.json` | 新配置默认值、说明、IDE 补全 | 配置变化时 |
+| `.claude/CLAUDE.md` | 指向统一状态与路线，保留工程约定 | 约定变化时，不复制版本史 |
 
-1. 工作树只保留本次发布相关文件，不带入 `.m2/`、本地缓存或实验文件。
-2. 创建发布提交（版本号 + 发布说明 + 开发计划状态）。
-3. 创建对应 annotated tag，例如 `v1.7.0`、`v1.8.0-RC1`。
-4. 推送分支和 tag 到 `origin`。
-5. Maven 制品发布（如需）：在凭据已配置的 CI 或本机执行 `mvn deploy`，目标仓库见根 `pom.xml` `distributionManagement`。
+检查旧版本号时区分历史记录、`since` 标记和当前示例，避免全仓替换历史：
 
-## 发布后
-
-1. 将开发线切到下一个 `-SNAPSHOT` 版本（若采用 SNAPSHOT 流程）。
-2. 更新 [开发计划](development-plan.md) 当前状态与下一阶段目标。
-3. 如果本次补了新的稳定性 / 可观测性 / 审计边界，回写本清单"通用发布前检查"对应小节，避免后续回归再次依赖口头约定。
-
-## 权威记录在哪里（避免重复 = 避免漂移）
-
-**每个版本的逐项完成确认不在本清单重复** —— 它们的权威记录是 `docs/release-notes-<version>.md`。本清单只保留**可复用的流程** + 下面的**文档同步矩阵**。历史教训：本清单曾维护一份「最新版本口径」per-release 日志，结果它停在 `1.9.0-RC1` 再没更新（GA、RC2–RC20 全漏），自己变成了 stale 源。已删除，改为指针。
-
-- 当前最新稳定版 / 在研版本：见 `docs/development-plan.md` 顶部「当前结论」（**该处是版本状态的单一权威源**；其余文档应指向它，不重述完整 feature 列表）。
-- 每个已发布版本的改动/测试/升级/兼容性细节：见对应 `docs/release-notes-<version>.md`。
-- 完整周期回顾：见 `docs/1.9.x-cycle-retrospective.md`。
-
-## 📋 文档同步矩阵（防遗忘 —— 每次发布逐行走）
-
-> 版本号 / 状态 / 测试数 这类字符串散落在多个文档,**必须 lockstep 更新,漏一个就 stale**。下表是完整的承载位置清单。发布时**逐行核对**,不要凭记忆。
-
-| # | 文件 | 位置 | 承载内容 | 何时更新 |
-|---|---|---|---|---|
-| 1 | 11 个 `pom.xml` | `<version>` | 版本号本身 | 每次发布/RC（`sed` 全量改） |
-| 2 | `README.md` | EN "Current Status"（搜 `Latest stable`）+ 中文「当前阶段」（搜 `最新稳定版`） | 最新稳定版 + 测试数 + feature 摘要 | 每次 GA |
-| 3 | `README.md` | Maven 坐标 EN + 中文 + cluster starter（搜 `<version>`） | 依赖示例版本 | 每次 GA |
-| 4 | `README.md` | Central versions 列表（搜 `1.4.0`、`1.6.2`...） | 已发布版本清单 | 每次 GA |
-| 5 | `README.md` | 性能基准表 | 测试/跑分数字 | 仅 benchmark 刷新时 |
-| 6 | `docs/development-plan.md` | 「当前结论」首段 + 「历史版本一览」表 | **单一权威状态源** + 历史 | 每次发布/RC |
-| 7 | `docs/api-guide.md` | 标题头版本戳（搜 `> Version:`）+ Maven 依赖示例（搜 `<version>`）+ §9/§11 配置参考 | 版本戳 + 依赖版本 + 新配置项 | GA + 新配置项时 |
-| 8 | `docs/cluster-design.md` | scope 表（✅/⏳ 标记） | feature 实现状态 | 集群 feature 落地时 |
-| 9 | `docs/release-notes-<version>.md` | 标题状态行 + 全文 | 该版本权威记录（新建文件） | 每次发布/RC |
-| 10 | `.claude/CLAUDE.md` | Current version 行 | 项目上下文 | 每次 GA |
-| 11 | `docs/release-checklist.md`（本文件） | 顶部「更新时间」 | checklist 自身时效 | 每次走完 checklist |
-| 12 | `netty-websocket-cluster-spring-boot-starter/.../META-INF/additional-spring-configuration-metadata.json` | `properties` 数组 | **每个新 `cluster.*` 配置项的 IDE 自动补全元数据**（描述+默认值） | 新增任何集群配置项时（教训：RC4a–RC4d 的 `cluster.mesh.*` 14 个键漏到了 1.10.0 GA 才补） |
-
-**自检命令**（发布前跑,确认没有遗漏的旧版本号）：
-```bash
-# 找出仍指向上一个版本的文档（把 OLD 换成上一稳定版，如 1.9.0）
-grep -rn "OLD" README.md docs/*.md .claude/CLAUDE.md | grep -v release-notes-
-# 找出 pom 残留的上一个版本/RC
-grep -rn "1\.10\.0-RC" --include=pom.xml .   # 应只剩目标版本
+```sh
+rg -n 'OLD|Boot 3|2\.0\.0' README.md docs/api-guide.md docs/development-plan.md
+rg -n '<version>OLD</version>' -g pom.xml
+git diff --check
 ```
 
-> 维护原则:**新增一处承载版本/状态字符串的文档,必须同步把它加进本矩阵**——否则它就是下一个 stale 源。
+新增文档优先引用现有状态源；开发实施步骤放开发计划，发布操作放本清单，架构原理放设计文档，发布事实放发布说明。

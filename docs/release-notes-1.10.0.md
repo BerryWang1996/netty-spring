@@ -1,5 +1,7 @@
 # Release Notes — 1.10.0
 
+> 历史记录：文中未来版本设想保留当时语境；当前路线统一以[开发计划](development-plan.md)为准。原 `docs/2.0.0/` 的 Boot 3 草稿已合并清理，原文可从 Git 历史查阅；2.0.0 现为 Boot 4.1 纯迁移。
+
 > **Status: 1.10.0 GA — released to Maven Central on 2026-06-21** (tagged `v1.10.0`, FF-merged to master).
 > 1.10.0 is the IM-platform line built on top of 1.9.0 GA. The per-RC history (RC1–RC4d)
 > follows the overview below.

@@ -1,16 +1,16 @@
 # Cluster Design — Redis 集群方案（设计全集 + 1.8.0 实现范围）
 
 > **本文档描述的是完整目标架构（设计全集），不是单一版本的实现清单。** `1.8.0` 实现了其中一个子集；`1.9.0` RC1 完成了 5 项可靠性硬化项，RC2 新增了 Redis Streams 可靠投递（`reliableBroadcast`），RC3 新增 HMAC envelope 认证（`auth.*` 3 个配置项）；**`1.10.0`（GA 已切版）新增 RC1 房间路由 + RC2 离线队列/按用户寻址 + RC3 多设备 presence + RC4a–RC4d node-to-node mesh（兴趣路由扇出削减 + 热路径健壮性 + 9 个 `netty.cluster.mesh.*` 指标）**；其余能力推迟到后续版本。下方"## 实现范围"表是实现与设计的权威对照——阅读本文其余章节时，请以该表为准判断某项是否已落地。
-> 落地进度与推迟项跟踪：`docs/development-plan.md`。
+> 版本计划只在[开发计划](development-plan.md)维护：2.0.0 专注 Spring Boot 4.1 迁移；sharded pub/sub、Observation 等新能力在 2.0.0 后按需求评估，不在本文另排版本。
 
 ## 实现范围 vs 设计目标（1.8.0 / 1.9.0 / 1.10.0 已落地）
 
-> 原则：**只暴露有实际效果的配置项**。本文档其余章节描述的 `pubsub-connections`、
+> 原则：**只暴露有实际效果的配置项**。本文档其余章节描述的
 > `sharded-pubsub`、`publish-batch-size`、`max-subscribed-channels`、
 > `subscription-hold-duration`、`redis.mode` 等配置项**当前在 `ClusterProperties` 中不存在**
 > （其特性尚未实现，不提供会撒谎的开关），待对应特性落地时再引入。
 > `redis-loss-grace-period-ms` 和 `session-registry-write-rate` 已在 **1.9.0 RC1** 落地；
-> `reliable.*` 5 个配置项已在 **1.9.0 RC2** 落地（见下表）。
+> `reliable.*` 6 个配置项已在 **1.9.0 RC2** 落地（见下表）。
 
 | 能力 | 1.8.0 | 说明 |
 | --- | :---: | --- |
@@ -34,8 +34,8 @@
 | **对账选主去重**（`ClusterReaper` SPI，`RedisClusterReaper` 用 `SET NX` 认领） | ✅ 1.9.0 | 死节点只被一个存活节点清理；`@ConditionalOnMissingBean` 可覆盖 |
 | **Registry 写合并限速**（`session-registry-write-rate`，默认 1000 ops/s，`CoalescingRegistryWriter`） | ✅ 1.9.0 | token-bucket 透传；超速时合并写入；register 永不丢弃；防注册风暴 |
 | 多 pub/sub 连接并行解码（`pubsub-connections`） | ✅ 1.9.x（opt-in，默认 1） | 把 SUBSCRIBE 入站解码按频道哈希分散到 N 个 Lettuce 连接；**默认关闭、零开销**，仅在逼近单连接解码墙（墙②，~80k msg/s）时按需开启。非当前瓶颈，纯前瞻性开关 |
-| sharded pub/sub（`SSUBSCRIBE`/`SPUBLISH`，**广播扇出削减**） | ⏳ → 2.0.0 | 需 Lettuce 6.2+（Boot 2.7.18 为 6.1.10）；这才是扇出削减来源。RC7 的常规 cluster pub/sub **不**削减扇出 |
-| Redis Cluster 客户端一等支持（`RedisClusterClient`） | ✅ 1.9.0 RC7（客户端层） | `cluster-nodes` 非空选择 cluster 传输；4 个 `RedisClusterMode*` 实现（slot 安全）；HA 故障转移 + 注册表/心跳跨 slot 分布。**仅客户端层，不削减广播扇出**（扇出削减见上一行 sharded pub/sub → 2.0.0） |
+| sharded pub/sub（`SSUBSCRIBE`/`SPUBLISH`） | ⏳ 2.0.0 后待评估 | 升级客户端只提供实现前提；需独立验证重订阅、拓扑变化和负载收益。RC7 的常规 cluster pub/sub **不**削减扇出，2.0.0 保持该行为 |
+| Redis Cluster 客户端一等支持（`RedisClusterClient`） | ✅ 1.9.0 RC7（客户端层） | `cluster-nodes` 非空选择 cluster 传输；4 个 `RedisClusterMode*` 实现（slot 安全）；HA 故障转移 + 注册表/心跳跨 slot 分布。**仅客户端层，不削减广播扇出**（sharded pub/sub 状态见上一行） |
 | **可靠投递（at-least-once `reliableBroadcast`，opt-in）** | ✅ 1.9.0 RC2（Redis Streams） / ✅ 1.9.0 RC13（NATS JetStream） | RC2 落地 Redis Streams 实现；RC13 落地 NATS JetStream 对偶（`NatsJetStreamReliableBroker`，激活条件 `reliable.enable=true && nats.registry=true`，其他档位保持 Redis Streams）；`reliable.*` 6 个配置项 transport-agnostic（NATS 映射见 release-notes §⑱）；默认关闭 |
 | **HMAC envelope 认证**（`MessageAuthenticator` SPI，HMAC-SHA256，anti-forgery，opt-in） | ✅ 1.9.0 RC3 | 传输层 SPI，与 codec 无关；广播/单播/CLOSE/Streams 统一签名；`auth.*` 3 个配置项；默认关闭；NoOp 剥离 `H1:` 标签；三阶段滚动升级；仅 anti-forgery，不含重放保护 |
 | 写 pipeline 批量（`publish-batch-size` / `publish-flush-interval`） | ⏳ 未来版本 | 当前单条 async（Lettuce 连接层自动 pipeline） |
@@ -43,18 +43,18 @@
 | Actuator 集群健康（`ClusterHealthIndicator`，节点/broker 状态 + 运行时计数） | ✅ | `/actuator/health` 下 `nettyCluster`；actuator 在 classpath 时启用 |
 | 完整 Micrometer 指标集（meter-binder） | ✅ 1.9.0 RC4 | `NettyClusterMeterBinder`：11 个 counter + 节点/broker 状态 gauge（按 `state` 标签）；聚合粒度（无 per-URI 标签）；只读 `ClusterRuntimeStats`；需 `micrometer-core` + `cluster.enable=true` |
 | auto-config 装配测试（ApplicationContextRunner） | ✅ | 验证 enable=true→`@Primary` 为 ClusterMessageSender + health indicator；enable=false→零集群 bean |
-| W3C TraceContext 跨节点传播（MDC 日志关联） | ✅ 1.9.0 RC6 | `ClusterTraceContext` SPI + `MdcClusterTraceContext`；发送侧注入 traceparent + 接收侧恢复 MDC（`traceId`/`spanId`/`netty.traceparent`）；opt-in；Micrometer Observation 续接 → 2.0.0 |
+| W3C TraceContext 跨节点传播（MDC 日志关联） | ✅ 1.9.0 RC6 | `ClusterTraceContext` SPI + `MdcClusterTraceContext`；发送侧注入 traceparent + 接收侧恢复 MDC（`traceId`/`spanId`/`netty.traceparent`）；opt-in；Micrometer Observation 续接在 2.0.0 后待评估 |
 | NATS broker（ADR-001 规模化档位） | ✅ 1.9.0 RC9（传输层） / ✅ 1.9.0 RC13（all-NATS 可靠投递） | NatsClusterBroker（core pub/sub，at-most-once）；由 nats.servers 选择；**仅传输层**，registry/心跳仍在 Redis（混合部署）；RC13 在 `nats.registry=true && reliable.enable=true` 下激活 `NatsJetStreamReliableBroker`（at-least-once；详见 release-notes §⑱） |
 | 全 NATS 栈（NATS-only 选项） | ✅ 1.9.0 RC10 | `NatsKvSessionRegistry`/`NatsKvNodeHeartbeat`/`NatsKvReaper`（JetStream KV）；由 `nats.registry=true` 选择 → 整套 registry/心跳/reaper 也跑在 NATS（**无 Redis**）；**需 JetStream NATS（`nats-server -js`）**；心跳为时间戳存活；reaper 用 KV `create`（create-if-absent）做单赢领导选举；附加/opt-in，mixed（NATS broker + Redis registry）与 all-Redis 仍为默认 |
 | Testcontainers 端到端 CI + 进程内双节点 E2E（`ClusterMultiNodeE2ETest`） | ✅ 1.9.0 RC5 | 集群集成测试在 CI 真实运行（不再跳过）；E2E 证明跨节点广播/单播；锁定跨节点单播 hook-wiring 修复 |
-| 可运行的多节点 Docker 示例（Compose + 负载均衡 + 浏览器） | ⏳ 未来版本 | 面向人工演示；CI 验证已由上一行覆盖 |
-| **房间维度路由（`ClusterRoomRegistry`，按房间节点定向投递，opt-in）** | ✅ 1.10.0 RC1 | `roomMessage(uri, room, msg)` 只定向承载该房间成员的节点（复用 1.9.0 单播通道），扇出降到 **N/k**（k = 有成员的节点数）——**对有界房间是真实削减，即使随机落点**；**热房间（成员遍布所有节点）无削减**（且发布侧 k≈N 次定向发送 vs 1 次全局发布——此时改用 `topicMessage`）。原子 Lua（join/leave/removeAll）+ 本地索引 + hash-tag 单 slot；envelope v2（`room` 字段 + `ROOM_BROADCAST`，与 v1 滚动升级兼容）；`room.*` 2 个配置项 + `netty.cluster.room.*` 5 个指标（`fanout.target_nodes` 是削减观测点）；默认关闭、行为与 1.9.0 一致。**注意：这是"按房间局部性削减"，不是无条件的全局扇出削减——真正的集群级广播扇出削减仍需 RC4 mesh / 2.0.0 sharded pub/sub。** 设计修正（分片环 → 节点集合）归档于 `docs/superpowers/notes/2026-06-08-room-registry-design-review.json` |
+| 可运行的多节点 Docker 示例（Compose + 负载均衡 + 浏览器） | ✅ 已提供 | [docker-demo](../docker-demo/README.md)：两节点 + nginx + Redis，附跨节点投递冒烟断言 |
+| **房间维度路由（`ClusterRoomRegistry`，按房间节点定向投递，opt-in）** | ✅ 1.10.0 RC1 | `roomMessage(uri, room, msg)` 只定向承载该房间成员的节点（复用 1.9.0 单播通道），扇出降到 **N/k**（k = 有成员的节点数）——**对有界房间是真实削减，即使随机落点**；**热房间（成员遍布所有节点）无削减**（且发布侧 k≈N 次定向发送 vs 1 次全局发布——此时改用 `topicMessage`）。原子 Lua（join/leave/removeAll）+ 本地索引 + hash-tag 单 slot；envelope v2（`room` 字段 + `ROOM_BROADCAST`，与 v1 滚动升级兼容）；`room.*` 2 个配置项 + `netty.cluster.room.*` 5 个指标（`fanout.target_nodes` 是削减观测点）；默认关闭、行为与 1.9.0 一致。**注意：这是"按房间局部性削减"，不是无条件的全局扇出削减——mesh 兴趣路由同样依赖受众局部性；sharded pub/sub 仍为后续候选，未承诺版本或吞吐收益。** 设计修正（分片环 → 节点集合）归档于 `docs/superpowers/notes/2026-06-08-room-registry-design-review.json` |
 | **离线队列 + 按用户寻址投递（`UserRegistry`/`OfflineQueueStore`/`UserIdResolver`，opt-in）** | ✅ 1.10.0 RC2 | `sendToUser(userId, msg)`：在线实时单播，离线（集群范围内零会话）则按用户 Redis Stream 存储并在重连时 FIFO 回填；每 userId drain 锁保证多设备精确一次；`sessionsForUser` 永不缓存（杜绝假在线静默丢失）。`offline.*` 6 个配置项 + `netty.cluster.offline.*` 指标；默认关闭、行为与 RC1 逐字节一致。**安全：默认 `HandshakeUserIdResolver` 仅供测试——生产须自备认证解析器**（见 §安全模型）。详见下方设计注记 |
 | **多设备聚合在线状态（`PresenceRegistry`，aggregate ONLINE/AWAY/OFFLINE + 变更事件，opt-in）** | ✅ 1.10.0 RC3 | 按用户聚合在线状态（跨所有连接，原子 Lua 转换检测）+ 专用保留通道上的 `PRESENCE_CHANGE` 事件（不升信封版本）；死节点 leader 选举回收发出权威 `→OFFLINE`，**并顺带闭合潜伏的 RC2 死节点用户绑定泄漏**（`userRegistry.removeAllForNode` 此前从未接入对账，RC3 接到 leader 主路径）。`presence.*` 2 个配置项 + `netty.cluster.presence.*` 6 个指标；身份门控从 `offline.enable` 改为 `offline.enable OR presence.enable`；默认关闭、与 RC1/RC2 逐字节一致。**按设备*寻址*推迟**（需稳定 `DeviceIdResolver`）；事件是广播（~10 节点 Pub/Sub 上限）；`getPresence` 为建议性读取，非存活探针。设计修正（设备键单向门 → 聚合+计数）归档于 `docs/superpowers/notes/2026-06-15-rc3-presence-design-review.json` |
-| **node-to-node mesh 传输地基（`MeshBroker implements ClusterBroker`，直连 Netty TCP，opt-in）** | ✅ 1.10.0 RC4a（**传输地基，无扇出削减**） | `MeshBroker` 把 `ClusterBroker` 跑在节点间直连 Netty TCP 上（`RedisPubSubBroker` 的直接替代）；registry/心跳仍在 Redis，**仅用于节点地址发现，不在消息热路径**；`MeshNodeDirectory` SPI + `RedisMeshNodeDirectory`（`netty:mesh:addr:*` + PX TTL，SCAN 发现）；成员关系 = `live-by-heartbeat ∩ has-address`。**直连 unicast + 朴素广播（发给全部对端，无 per-URI 兴趣路由 → 无扇出削减）——真正的天花板突破是 RC4b**。硬化：M1 出站背压 BLOCKER + M2 帧上限 + M3 分发卸载（监听器不在 I/O loop）+ M4 advertised-host 快速失败 + M5 仅完全孤立降级；impl-review 折叠 MF1 成员∩心跳 + MF2 连接超时 + BL1 出站缓存替换。`mesh.*` 配置项；默认关闭、与 RC1/RC2/RC3 逐字节一致（`NO_MESH` AND 进单机 broker 门控）。RC4c 健壮性（热路径地址快照缓存、传输选择守卫、idle handler、mTLS）/ RC4d 指标（`netty.cluster.mesh.*`）推迟。归档 `docs/superpowers/notes/2026-06-18-rc4a-mesh-impl-review.json` |
+| **node-to-node mesh 传输地基（`MeshBroker implements ClusterBroker`，直连 Netty TCP，opt-in）** | ✅ 1.10.0 RC4a（**传输地基，无扇出削减**） | `MeshBroker` 把 `ClusterBroker` 跑在节点间直连 Netty TCP 上（`RedisPubSubBroker` 的直接替代）；registry/心跳仍在 Redis，**仅用于节点地址发现，不在消息热路径**；`MeshNodeDirectory` SPI + `RedisMeshNodeDirectory`（`netty:mesh:addr:*` + PX TTL，SCAN 发现）；成员关系 = `live-by-heartbeat ∩ has-address`。**直连 unicast + 朴素广播（发给全部对端，无 per-URI 兴趣路由 → 无扇出削减）——真正的天花板突破是 RC4b**。硬化：M1 出站背压 BLOCKER + M2 帧上限 + M3 分发卸载（监听器不在 I/O loop）+ M4 advertised-host 快速失败 + M5 仅完全孤立降级；impl-review 折叠 MF1 成员∩心跳 + MF2 连接超时 + BL1 出站缓存替换。`mesh.*` 配置项；默认关闭、与 RC1/RC2/RC3 逐字节一致（`NO_MESH` AND 进单机 broker 门控）。后续 RC4c 健壮性与 RC4d 指标已落地（见下两行）；mTLS 仍未实现。归档 `docs/superpowers/notes/2026-06-18-rc4a-mesh-impl-review.json` |
 | **mesh 按兴趣路由广播（`MeshInterestRegistry`，session-grained 扇出削减，opt-in）** | ✅ 1.10.0 RC4b | `publish(uri)` 只路由到**当前托管该 URI 活跃会话**的对端。`MeshInterestRegistry` SPI + `RedisMeshInterestRegistry` 镜像 `RedisRoomRegistry`（每 `(uri,node)` 会话集 + 每 `uri` 节点集，节点集 0↔1 在 JOIN/LEAVE Lua 内部原子决定;`removeAllForNode` 按节点）。`MeshInterestRouter` 5s 发送缓存 + 哨兵（读失败⇒`null`⇒回退全对端且不缓存;权威空⇒全裁剪);**保留通道(`PRESENCE_CHANNEL`)绕过裁剪**;死节点经新增加性 `ClusterBroker.onNodeLeft` 回收。**⚠️ 削减是按会话局部性的,不是无条件的：全局话题(受众在每个节点)零削减;一个*逻辑*分区但高并发人口的话题在随机 LB 下因优惠券收集者效应饱和(近乎)所有节点 → ~0 削减（正是砍掉 RC1 分片环的同源教训）——有效条件是活跃人口相对节点数小,或 LB 会话粘滞/租户亲和;高基数话题用 room。** `mesh.interest-routing.{enable=true,node-set-cache-ttl-ms=5000}`;默认 mesh 关 ⇒ 与 RC1/RC2/RC3 逐字节一致,`interest-routing.enable=false` ⇒ RC4a 全对端。三轮设计审查 12+3+1 + 实现审查 7 MINOR 折叠;620 测试/11 模块。归档 `docs/superpowers/notes/2026-06-18-rc4b-mesh-{design-review,rereview,v3-verify,impl-review}.json` |
 | **mesh 热路径健壮性（对端地址快照 + 重连退避 + idle 回收，opt-in）** | ✅ 1.10.0 RC4c | **BL5 对端地址快照**：`publish`/`unicast` 读内存快照（由成员 tick 刷新），稳态**广播热路径零 Redis I/O**（去掉每条消息的目录 SCAN+GET;RC4b 兴趣读仍是 5s 缓存的 SMEMBERS);**unicast** 快照未命中时回退**一次有界直查并预热快照**——保留 `unicast→MessageSessionClosedException` 契约的 ~0 不可达窗口。**仅热路径重连退避**：成员 tick 用裸 `connectionTo` 拨号，保持其作为唯一 DEGRADED→ACTIVE 恢复探针(发送路径按对端指数退避,基数/上限可配);**WRITER_IDLE** 空闲连接回收(接通此前惰性的 `idle-timeout-ms`);**BL4** `ClusterMessageSender.start()` 末尾传输状态对账(启动即 DEGRADED 也会 `onTransportLost`);**BL2** mesh 与 `cluster-nodes`/`nats.servers` 并存时快速失败守卫。新增 `reconnect-backoff-{base,max}-ms` + 接通 `idle-timeout-ms`,均经 setter 注入(无构造签名变更);默认关闭、与 RC1/RC2/RC3 逐字节一致。两轮设计审查 3 MAJOR+6 nit + 第二轮 1 MAJOR(unicast 回退再 SCAN 风暴)+ 实现审查 6 MINOR 折叠;629 测试/11 模块。归档 `docs/superpowers/notes/2026-06-20-rc4c-mesh-{design-review,rereview,impl-review}.json` |
-| **mesh 可观测性（9 个 `netty.cluster.mesh.*` Micrometer 指标，opt-in）** | ✅ 1.10.0 RC4d | 六个计数器（`frames.received`/`frames.sent`/`send.failures`/`send.dropped_backpressure`/`idle.reaps`/`reconnect.backoff_skips`）+ 三个 gauge（`fanout.target_nodes` 扇出削减观测点，复用 room 采样器；`connections.active` 活跃出站通道；`peers.known` 目录快照对端数）。**BL6：meter binder 直接读 broker 自己的 `ClusterRuntimeStats`**——计数器按 owner 自然分区（sender 拥有路由/应用计数；broker 拥有传输计数），无需共享实例/setter swap（broker 在 sender bean 之前自启动，任何 swap 都晚于流量）。顺带把 `reconnect.backoff_skips` 与 `send.failures` 改为**不相交**（退避跳过=主动 shed，非失败）；`frames.sent` 只在异步写成功时计数。`instanceof MeshBroker` 门控 ⇒ **Redis 路径零 mesh 指标**（不污染面板）；聚合、无 per-peer 标签。**诚实：`fanout.target_nodes` 对比 `peers.known` 读削减——随机 LB 人口饱和前提仍成立（gauge 如实显示 avg≈known）；`peers.known` 是原始目录快照（非存活探针）；`connections.active` 通常 ≤ `peers.known`（懒拨号/idle 回收，可瞬时超出）。** mTLS + approach-C 兴趣变更通知仍推迟（可分离子系统）；Observation/trace = 2.0.0。4 镜头对抗式实现审查 0 BLOCKER + F1/F2/RC4d-C1 测试完备性折叠;636 测试/11 模块。归档 `docs/superpowers/notes/2026-06-20-rc4d-mesh-design-review.json` |
+| **mesh 可观测性（9 个 `netty.cluster.mesh.*` Micrometer 指标，opt-in）** | ✅ 1.10.0 RC4d | 六个计数器（`frames.received`/`frames.sent`/`send.failures`/`send.dropped_backpressure`/`idle.reaps`/`reconnect.backoff_skips`）+ 三个 gauge（`fanout.target_nodes` 扇出削减观测点，复用 room 采样器；`connections.active` 活跃出站通道；`peers.known` 目录快照对端数）。**BL6：meter binder 直接读 broker 自己的 `ClusterRuntimeStats`**——计数器按 owner 自然分区（sender 拥有路由/应用计数；broker 拥有传输计数），无需共享实例/setter swap（broker 在 sender bean 之前自启动，任何 swap 都晚于流量）。顺带把 `reconnect.backoff_skips` 与 `send.failures` 改为**不相交**（退避跳过=主动 shed，非失败）；`frames.sent` 只在异步写成功时计数。`instanceof MeshBroker` 门控 ⇒ **Redis 路径零 mesh 指标**（不污染面板）；聚合、无 per-peer 标签。**诚实：`fanout.target_nodes` 对比 `peers.known` 读削减——随机 LB 人口饱和前提仍成立（gauge 如实显示 avg≈known）；`peers.known` 是原始目录快照（非存活探针）；`connections.active` 通常 ≤ `peers.known`（懒拨号/idle 回收，可瞬时超出）。** mTLS + approach-C 兴趣变更通知仍推迟（可分离子系统）；Observation/trace 续接为 2.0.0 后候选。4 镜头对抗式实现审查 0 BLOCKER + F1/F2/RC4d-C1 测试完备性折叠;636 测试/11 模块。归档 `docs/superpowers/notes/2026-06-20-rc4d-mesh-design-review.json` |
 
 ## 目标
 
@@ -201,9 +201,9 @@ netty:broadcast:{uri}  → 每个 @MessageMapping URI 一个 Pub/Sub 频道
 
 > **🔴 self-delivery 抑制是正确性要求，不是优化（TOP 瓶颈 #3）。** Redis Pub/Sub 会把消息投递给**包括发布者自己在内**的所有订阅连接；origin 节点既有本地 session 又订阅了该频道，若不抑制，本地用户会**收到两次**（本地 fan-out 一次 + 自己的 PUBLISH 回环一次）。必须在 envelope 带 `originNodeId` 并在订阅回调里比对丢弃。指标 `netty.cluster.pubsub.self-dropped` 用于确认生效。这只消除重复投递，不减少 Redis 出口（Redis 仍会写一次 origin 的 socket）；要连这次写都省掉需走 mesh（见 §传输层 SPI）。
 
-**Redis Cluster 模式用 sharded pub/sub（评审新增）：** 经典 `SUBSCRIBE` 在 Redis Cluster 下，每次 `PUBLISH` 会经 cluster bus 广播到**所有**节点——本"频道-per-URI"设计会为每个 URI 付全量 cluster-bus 广播税。`mode = cluster` 时默认改用 `SSUBSCRIBE`/`SPUBLISH`（Redis 7.0+，频道按 hash slot 归属，只到该 shard），可水平扩展 pub/sub 吞吐。约束：sharded 与经典 pub/sub 互相隔离、不支持模式订阅（本设计本就不用模式订阅）。`standalone`/`sentinel` 模式无收益（单 shard），保持经典 pub/sub。**版本门槛：Lettuce 对 sharded pub/sub 的自动重订阅在 6.4.x 有 bug，须 ≥ 6.5.5；启动期校验 Lettuce 版本，不达标时报错或回退经典并告警。**
+**未来设计候选：Redis Cluster 模式用 sharded pub/sub（尚未实现）：** 经典 `SUBSCRIBE` 在 Redis Cluster 下，每次 `PUBLISH` 会经 cluster bus 广播到**所有**节点——本"频道-per-URI"设计会为每个 URI 付全量 cluster-bus 广播税。若实现该候选，可评估在 cluster 模式使用 `SSUBSCRIBE`/`SPUBLISH`（Redis 7.0+，频道按 hash slot 归属，只到该 shard），可水平扩展 pub/sub 吞吐。约束：sharded 与经典 pub/sub 互相隔离、不支持模式订阅（本设计本就不用模式订阅）。`standalone`/`sentinel` 模式无收益（单 shard），保持经典 pub/sub。**版本门槛：Lettuce 对 sharded pub/sub 的自动重订阅在 6.4.x 有 bug，须 ≥ 6.5.5；启动期校验 Lettuce 版本，不达标时报错或回退经典并告警。**
 >
-> **RC7 实现状态（与上述设计目标的差距）：** RC7 落地的是 Redis Cluster **客户端**（`cluster-nodes` 选择，`RedisClusterModePubSubBroker` 等），其 broker 用的仍是**常规 cluster pub/sub（`SUBSCRIBE`/`PUBLISH`）**——即上文描述的"付全量 cluster-bus 广播税"的行为，**没有扇出削减**。上文的 `SSUBSCRIBE`/`SPUBLISH`（sharded，真正削减扇出）需 Lettuce 6.2+（Boot 2.7.18 管理 6.1.10），**推迟到 2.0.0（Boot 3.x）**。故 `M·(f·N−1)` 扇出墙在 RC7 下不变；RC7 的价值是 cluster 原生 HA 故障转移 + 注册表/心跳跨 slot 分布，不是吞吐扩展。
+> **RC7 实现状态（与上述设计目标的差距）：** RC7 落地的是 Redis Cluster **客户端**（`cluster-nodes` 选择，`RedisClusterModePubSubBroker` 等），其 broker 用的仍是**常规 cluster pub/sub（`SUBSCRIBE`/`PUBLISH`）**——即上文描述的"付全量 cluster-bus 广播税"的行为，**没有扇出削减**。上文的 `SSUBSCRIBE`/`SPUBLISH`（sharded，真正削减扇出）尚未实现，**在 2.0.0 之后独立评估**；Boot 4.1 迁移本身不启用 sharded pub/sub。故 `M·(f·N−1)` 扇出墙在 RC7 下不变；RC7 的价值是 cluster 原生 HA 故障转移 + 注册表/心跳跨 slot 分布，不是吞吐扩展。
 
 **订阅连接拓扑（评审新增，TOP 瓶颈 #2）：** Lettuce 单条 pub/sub 连接在 netty event loop 上解码全部入站消息，单连接 ~80k msg/s 即天花板，且与本节点 WebSocket I/O 抢同一组 event loop 线程。**每节点开 2–4 条 pub/sub 连接**（`cluster.pubsub-connections` 默认 2），按 URI 哈希分片到不同连接并行解码；解码后**立即移交业务线程池**，绝不在 pub/sub 回调里做反序列化或业务逻辑。registry 命令连接与 pub/sub 连接分离。指标 `netty.cluster.subscribe.decode.lag`（event loop 队列深度）让该天花板在熔断前可见。注意：**Redis 分片解决不了这个天花板**——每节点仍收热门 URI 的全量消息。
 
@@ -466,38 +466,15 @@ netty-spring/
 
 **🔴 1.10.0 RC2 身份与离线队列安全（必读）**：离线队列、在线状态、按用户投递都以 `UserIdResolver` 返回的 `userId` 为键——**错误的身份 = 跨用户数据泄露**（读取他人排队消息、冒充其在线状态、劫持其投递）。这与上面"Redis 是受信任控制平面"的诚实一脉相承：**框架提供机制，运维必须保障身份**。`UserIdResolver` SPI 的 javadoc 携带**安全契约**：返回的 userId 必须派生自会话的**已认证**主体（验签 JWT `sub`、OAuth、SAML NameID），绝不能是客户端可控的原始值。默认实现 `HandshakeUserIdResolver` 逐字读取 `query:userId` / `header:X-User-Id`，**明确仅供便利/测试**（`?userId=bob` 即被当作 `bob`）——**生产 IM 必须提供自己的 `UserIdResolver` `@Bean`**（通常由 `WebSocketHandshakeInterceptor` 认证连接、解析器读取已验证主体）。自动装配仅在 `@ConditionalOnMissingBean` 下注册默认实现；`offline.enable=false`（默认）时解析器永不被调用——无任何身份面。
 
-## 已知未覆盖项（明确推迟）
+## 已知边界与后续工作
 
-- **Kubernetes Operator / Helm Chart**：运维侧专项，不在 `1.8.0` 范围。
-- **Redis Streams 完整生命周期**（消费者重平衡、死信队列）：`1.8.0` 仅提供基础至少一次入口，完整治理推迟到 `1.9.x`。
-- **跨 DC 多 Redis**：本设计假设单 Redis 集群可用区；多活 / 跨 DC 复制方案在 `2.x` 评估。
-- **持久化 / 离线消息**：通过 Streams 提供原语，但消息存储 / 拉取 API 不在 `1.8.0`。
+当前交付状态见本文开头的实现范围表；版本安排只在[开发计划](development-plan.md)维护。
+2.0.0 为 Spring Boot 4.1 迁移，不包含 sharded pub/sub、Observation 续接或新 IM 功能。
 
-### 集群已知限制与硬化状态
-
-集群适用于 **≤~10 节点、配专用且加密的 Redis** 的场景。
-
-**✅ 1.9.0 已完成的硬化项（原 1.8.0 推迟项）：**
-
-- ✅ **Redis 失联宽限期**（`redis-loss-grace-period-ms`）：亚秒级 Redis 抖动不再触发状态机降级；`0` 恢复 1.8.0 即时行为。
-- ✅ **心跳 / 对账线程隔离 + 批量 EXISTS**：两个独立调度器（`cluster-hb` / `cluster-recon`），慢扫描不再饿死心跳；`findExpiredNodes` 改管道批量。
-- ✅ **`deregister` 原子性**：改为 Lua `EVAL`（HGET→DEL→SREM 单事务），消除并发竞态理论路径。
-- ✅ **reconciliation 去重 / 选主**：`ClusterReaper` SPI，`RedisClusterReaper` 用 `SET NX` 认领清理权，死节点只被一个节点清理。
-- ✅ **registry 限速**（`session-registry-write-rate`）：token-bucket `CoalescingRegistryWriter`，防注册风暴；register 永不丢弃。
-- ✅ **可靠投递（Redis Streams `reliableBroadcast`）**（RC2）：per-URI Redis Stream `netty:cluster:rstream:{uri}`；每节点一个消费者组（`g:{nodeId}`）；断线重连自动 replay-on-resync；`MAXLEN ~` 有界保留；进程内 PEL 去重；origin 自投递抑制；死节点消费者组随 `ClusterReaper` 清理。详见 §3 可靠投递设计注记。
-- ✅ **HMAC envelope 认证**（RC3）：传输层 `MessageAuthenticator` SPI，默认实现 `HmacMessageAuthenticator`（HMAC-SHA256，常量时间比较）；线格式 `H1:{base64url(hmac)}:{payload}`；广播/单播/CLOSE/Streams 路径统一签名；`auth.*` 3 个配置项（`enable`、`secret`、`permissive`）；默认关闭（`auth.enable=false`），零额外开销；NoOp 剥离 `H1:` 标签以兼容混合滚动期；三阶段零停机滚动升级；**仅防伪造（anti-forgery）**，不防重放（详见 `docs/api-guide.md` §9.2）。
-- ✅ **完整 Micrometer 指标集（meter-binder）**（RC4）：`NettyClusterMeterBinder` 把程序内 `ClusterRuntimeStats` 计数器 + 节点/broker 状态 + HMAC 拒绝计数桥接为 `netty.cluster.*` 时序——11 个 counter（broadcast published/received/self_dropped/skipped_degraded、unicast sent、publish failures、reliable published/received、cache hits/misses、auth rejected）+ 按 `state` 标签的 `netty.cluster.node.state`（6 态）/`netty.cluster.broker.state`（4 态）gauge。沿用 1.7.0 的 `MeterBinder` 模式（`FunctionCounter`/`Gauge` 只读直通，无热路径开销）；**聚合粒度**（无 per-URI/per-session 标签，基数有界）；`@ConditionalOnClass(MeterRegistry)` + `@ConditionalOnBean` 门控，缺 `micrometer-core` 或 `cluster.enable=false` 时零注册。与既有 `ClusterHealthIndicator`（point-in-time）互补。
-- ✅ **多节点 E2E + Testcontainers CI + 跨节点单播修复**（RC5）：`ClusterTestRedis` 解析器（localhost-first → Testcontainers `redis:7-alpine` 回退）让集群集成测试在 CI 真实运行；`ClusterMultiNodeE2ETest` 进程内双节点全栈 E2E 证明跨节点广播 + 单播 + 指标（HMAC 开启）。**该 E2E 暴露并修复了一个高严重度缺陷**：自动装配下 `ClusterSessionHook` 因装配顺序（server 急切启动早于 `@AutoConfigureAfter` 的 hook bean）从未挂到 resolver，分布式注册表为空 → 跨节点单播/定向关闭静默失效（影响 1.8.0 ~ RC4，广播不受影响）。修复用 `SmartInitializingSingleton` 在单例全部就绪后挂 hook；E2E 单播断言为永久回归门。
-- ✅ **W3C TraceContext 跨节点传播（MDC 日志关联）**（RC6）：`ClusterTraceContext` SPI（默认 `MdcClusterTraceContext`，零依赖、tracer 无关）在发送侧把当前 `traceparent`（显式 MDC 键或从 `traceId`/`spanId` 合成）写入信封，在接收侧恢复进 MDC（`traceId`/`spanId`/`netty.traceparent`），使跨节点投递日志带同一 `traceId`。opt-in（`trace-propagation.enable`，默认关）；无线格式变更（信封早已携带 `traceparent`）。Micrometer Observation 活跃 span 续接推迟到 2.0.0（Boot 2.7 的 Micrometer 1.9 无 Observation API）。
-- ✅ **Redis Cluster 客户端一等支持（客户端层）**（RC7）：新增 `cluster.redis.cluster-nodes`（逗号分隔 `host:port` 种子节点）选择 Redis Cluster 传输（`RedisClusterClient` + 4 个 `RedisClusterMode*` 实现，皆 `@ConditionalOnMissingBean`），让注册表/心跳跨 slot 分布并获得 cluster 原生 HA 故障转移；slot 安全增量：`deregister` 非原子（三条各自路由的 async，非跨 slot Lua）、`clusterSessionIds` 用 cluster-aware SCAN 跨 master 扇出、心跳判定用逐键 EXISTS、reaper 单键 `SET NX PX`。**`cluster-nodes` 空（默认）时与 RC6 字节级一致**。**⚠️ 仅客户端层——broker 用常规 cluster pub/sub（`SUBSCRIBE`/`PUBLISH`），仍向所有节点传播每条广播，不削减扇出**；扇出削减需 sharded pub/sub（Lettuce 6.2+ → 2.0.0）。限制：`cluster-nodes` 无法表达 TLS/密码（受保护 cluster 自备 `RedisClusterClient` bean）；reliable.* 与 cluster-nodes 在 RC7 互斥；连接配 `validateClusterNodeMembership(false)` + 关周期拓扑刷新（容器/NAT 端口映射友好）。验证范围：单节点 Redis Cluster（Testcontainers `redis:7 --cluster-enabled`，16384 slot 全在单节点），证明 `RedisClusterClient` API 路径端到端；多节点 slot 分布/跨节点 pub/sub 传播为未来项。
-
-**⏳ 仍推迟到后续版本的项：**
-
-- **多 pub/sub 连接并行解码 / 写 pipeline 批量**：规模化档位优化，见实现范围表。
-- **sharded pub/sub（广播扇出削减，`SSUBSCRIBE`/`SPUBLISH`）**：需 Lettuce 6.2+（Boot 2.7.18 为 6.1.10），推迟到 2.0.0。注：Redis Cluster **客户端**已在 RC7 落地，但 RC7 的常规 cluster pub/sub **不**削减广播扇出——`M·(f·N−1)` 扇出墙在 RC7 下不变；削减来自这里的 sharded pub/sub。
-- **NATS broker**（ADR-001 规模化档位）：`NatsBroker` SPI 实现，消除 N× 扇出放大。
-- **W3C TraceContext 的 Micrometer Observation / 活跃 span 续接**：`traceparent` 传播 + MDC 关联已在 RC6 落地；让真实 tracer 在接收节点续接活跃 span 需 Micrometer 1.10+（Boot 3.x），推迟到 2.0.0。`tracestate` 传播亦推迟（需新增信封字段）。
-- **可运行的多节点 Docker 示例（Compose + 负载均衡 + 浏览器）**（Testcontainers CI + 进程内双节点 E2E 已在 RC5 落地）。
+尚未提供 Kubernetes Operator / Helm Chart、Streams 消费者重平衡和死信治理、跨 DC 多活、
+消息历史存储/拉取 API。已有的用户离线队列是有界回填机制，不等同于消息历史。
+这些是设计边界，不能据此承诺未来发布日期。已完成的 NATS、并行 Pub/Sub 连接及
+[多节点 Docker 示例](../docker-demo/README.md)不再列作待办。
 
 ### 可靠投递设计注记（1.9.0 RC2）
 
@@ -522,8 +499,8 @@ netty-spring/
 - **连接时回填（bind→drain 窗口）**：钩子在 `bindUser` 完成**后**再 drain，使 bind→drain 窗口内入队的消息仍在 drain 读到流尾的范围内（被回填，不丢不重）；窗口后到达的消息直接实时投递到已在线会话。
 - **仅发送时边界（诚实）**：`broker.unicast()` 发后即忘，离线队列只兜底**发送时**失败（零可达会话或本地 `MessageSessionClosedException`）；远程会话在受理后、收帧前关闭不入队（指标 `offline.unicast_failures`），精确一次超出范围，处理器靠幂等对账。
 - **有界保留 + 至少一次**：`max-messages-per-user`（默认 1000）/`ttl-seconds`（默认 7 天）之外裁剪（有界缺口）。**TTL 丢弃路径**（超过 `ttl-seconds`、drain 时清理的条目）计入指标 `dropped_retention`；服务端 `MAXLEN ~` 裁剪由 Redis 在 `XADD` 时执行，不单独计量。drain 投递后删除；删除失败下次重投——处理器须幂等（携带 `X-Offline-Message-Id` 便于去重）。
-- **离线 = 集群范围内零会话**：多设备用户有任一在线会话即「在线」，投递到在线设备；按设备离线回填随按设备**寻址**一并推迟到后续 RC（RC3 多设备在线状态交付的是聚合，不含按设备寻址）。
-- **默认关闭**（`offline.enable=false`）：无离线 Bean、不解析 userId、钩子向 register 传 `emptyMap()`，与 RC1 逐字节一致。仅 Redis（NATS-KV 离线存储是后续 RC）。
+- **离线 = 集群范围内零会话**：多设备用户有任一在线会话即「在线」，投递到在线设备；按设备离线回填随按设备**寻址**一并延后，未排版本（RC3 多设备在线状态交付的是聚合，不含按设备寻址）。
+- **默认关闭**（`offline.enable=false`）：无离线 Bean、不解析 userId、钩子向 register 传 `emptyMap()`，与 RC1 逐字节一致。仅 Redis（NATS-KV 离线存储未实现，未排版本）。
 
 ### 多设备在线状态设计注记（1.10.0 RC3）
 
@@ -536,7 +513,7 @@ RC3 在 RC2 身份之上新增**按用户的聚合在线状态** + **实时变�
 - **🐛 同时闭合潜伏的 RC2 死节点用户绑定泄漏（对账缺口修复）**：RC2 的 `UserRegistry.removeAllForNode` 虽实现但**从未接入**死节点扇出——崩溃节点的 `netty:user:*` 绑定永久泄漏（假 ONLINE → `sendToUser` 即发即忘到死会话 → 静默丢失）。RC3 把 `userRegistry` + `presenceRegistry` 的回收接到 `ClusterNodeManager.doReconciliation` 的 **leader 选举主路径**上（与 `sessionRegistry.removeAllForNode` 同一条带 `.exceptionally` 重试的链，失败重新排队下次扫描——不是吞异常的尽力 `deadNodeCallback`）。`UserRegistry` 那句「经 removeAllForNode 对账」自此才真正成立，由 `UserRegistryReapRegressionIT` 端到端守护。
 - **建议性读取（陈旧 ONLINE 窗口）**：`getPresence` 不缓存，返回最后已知状态——**不是存活探针**。崩溃后死连接保持 ONLINE 直到对账回收（上界 `heartbeatTimeoutMs + reconciliationIntervalMs + leader 抢占 + SCAN`，默认约 25s）；延迟敏感者视其为建议性，正确性依赖 `sendToUser` 投递时的新鲜查找 + 离线兜底。回收发出的 `→OFFLINE` 是权威自愈修正。
 - **广播上限**：在线状态事件是广播——与 `topicMessage` 同的 ~10 节点 Pub/Sub 上限；大规模需 RC4 mesh。Lua 抑制同状态无操作重设，去抖超此为应用职责。
-- **默认关闭**（`presence.enable=false`）：与 `offline.enable=false` 组合 → 身份关闭 → `register(emptyMap())`，与 RC1/RC2 逐字节一致。仅 Redis（NATS-KV 在线状态是后续 RC）。
+- **默认关闭**（`presence.enable=false`）：与 `offline.enable=false` 组合 → 身份关闭 → `register(emptyMap())`，与 RC1/RC2 逐字节一致。仅 Redis（NATS-KV 在线状态未实现，未排版本）。
 
 ## 技术参考
 

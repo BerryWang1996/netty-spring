@@ -1,6 +1,8 @@
 # netty-spring API Usage Guide
 
-> Version: 1.10.0 | Updated: 2026-06-20
+> Version: 1.10.1 source (pending publication) | Updated: 2026-10-23
+
+> Source baseline: **1.10.1 (pending publication)**. Default cluster startup without jnats is fixed in this source tree; check [release status](release-notes-1.10.1.md) before using the published dependency. Next baseline and migration steps: [Spring Boot 4.1 plan](development-plan.md).
 
 This guide walks through the most common integration scenarios for `netty-spring`. Each section is self-contained — jump directly to the scenario that matches your use case.
 
@@ -522,11 +524,13 @@ public MessageCryptoPolicy cryptoPolicy() {
 
 Add the cluster starter alongside your existing starter:
 
+> **1.10.1 pending publication / 待发布** — Check [release status / 发布状态](release-notes-1.10.1.md) before using this dependency.
+
 ```xml
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-websocket-cluster-spring-boot-starter</artifactId>
-    <version>1.10.0</version>
+    <version>1.10.1</version>
 </dependency>
 ```
 
@@ -682,7 +686,7 @@ server:
 
 When `cluster-nodes` is empty/absent, the transport stays on `redis.uri` (standalone/sentinel). The four `RedisClusterMode*` impls (`RedisClusterModePubSubBroker` / `RedisClusterModeSessionRegistry` / `RedisClusterModeNodeHeartbeat` / `RedisClusterModeReaper`) mirror their standalone siblings' SPI contracts and are each `@ConditionalOnMissingBean` (overridable).
 
-> ⚠️ **No broadcast fan-out reduction.** RC7's cluster broker uses **regular** cluster pub/sub (`SUBSCRIBE`/`PUBLISH`), which still propagates every broadcast to **all** nodes via the cluster bus. Fan-out reduction comes from **sharded pub/sub** (`SSUBSCRIBE`/`SPUBLISH`), which requires **Lettuce 6.2+** (Boot 2.7.18 manages 6.1.10) and is therefore **deferred to 2.0.0** (Boot 3.x). RC7 delivers the Redis Cluster *client* (HA failover + a registry/heartbeat distributed across slots), not fan-out reduction.
+> ⚠️ **No broadcast fan-out reduction.** RC7's cluster broker uses **regular** cluster pub/sub (`SUBSCRIBE`/`PUBLISH`), which still propagates every broadcast to **all** nodes via the cluster bus. Fan-out reduction comes from **sharded pub/sub** (`SSUBSCRIBE`/`SPUBLISH`), which requires a compatible Lettuce sharded API and is **deferred beyond 2.0.0**; see the [development plan](development-plan.md). RC7 delivers the Redis Cluster *client* (HA failover + a registry/heartbeat distributed across slots), not fan-out reduction.
 
 #### Notes & limitations
 
@@ -983,7 +987,7 @@ and reserved/control channels (`PRESENCE_CHANNEL`) **bypass pruning** entirely �
 as a failure. `peers.known` is the **raw directory snapshot** (by address TTL), not a liveness probe — it may briefly
 include a heartbeat-dead peer whose address lingers. `connections.active` is **usually ≤** `peers.known` (channels are
 dialed lazily and idle-reaped; a peer dropped from the snapshot can keep a cached channel until reaped, so it can
-transiently overshoot). No Micrometer Observation/trace propagation yet (2.0.0).
+transiently overshoot). Micrometer Observation active-span continuation is deferred beyond 2.0.0; existing MDC trace propagation remains available.
 
 > **Deferred to later RCs:** mTLS for mesh links and approach-C interest-change push notifications are separable
 > subsystems.
@@ -1108,7 +1112,7 @@ The framework populates SLF4J [MDC](http://www.slf4j.org/manual.html#mdc) for th
 | `netty.remoteAddr` | both | Client IP address |
 | `netty.traceparent` | cross-node cluster delivery — *since V1.9.0*, when `server.netty.websocket.cluster.trace-propagation.enable=true` | The W3C `traceparent` carried from the originating node; the receiving node also restores `traceId`/`spanId` so a trace correlates across nodes in logs |
 
-> **Cluster trace propagation** (*since V1.9.0*, opt-in): with `trace-propagation.enable=true`, the current `traceparent` (an explicit `traceparent` MDC key, or one synthesized from `traceId`/`spanId`) is carried in the cross-node envelope and restored into MDC during delivery on the receiving node. Tracer-agnostic (default `MdcClusterTraceContext`; supply a `ClusterTraceContext` bean for native Sleuth/Brave integration). Micrometer **Observation** active-span continuation is a 2.0.0 (Boot 3.x) follow-up.
+> **Cluster trace propagation** (*since V1.9.0*, opt-in): with `trace-propagation.enable=true`, the current `traceparent` (an explicit `traceparent` MDC key, or one synthesized from `traceId`/`spanId`) is carried in the cross-node envelope and restored into MDC during delivery on the receiving node. Tracer-agnostic (default `MdcClusterTraceContext`; supply a `ClusterTraceContext` bean for native Sleuth/Brave integration). Micrometer **Observation** active-span continuation is deferred beyond 2.0.0; see the [development plan](development-plan.md).
 
 Include them in your logback/log4j2 pattern — no code changes required:
 
@@ -1230,7 +1234,7 @@ Namespace `server.netty.websocket.cluster.*`. Only active when `enable=true`; re
 | `cluster.enable` | `false` | Master switch; `false` = single-node (zero overhead) |
 | `cluster.node-id` | *(auto UUID)* | Unique node id; empty auto-generates |
 | `cluster.redis.uri` | `redis://localhost:6379` | Redis URI; scheme selects topology (`redis://` / `redis-sentinel://`); use `rediss://` + auth in production. Used when `cluster-nodes` is empty. |
-| `cluster.redis.cluster-nodes` | *(empty)* | *(since V1.9.0-RC7)* Comma-separated Redis **Cluster** seed nodes `host:port,host:port,...`. **Non-empty** selects the Redis Cluster transport (`RedisClusterClient` + `RedisClusterMode*` impls); **empty/absent (default)** uses the standalone/sentinel path via `redis.uri` (byte-identical to RC6). ⚠️ Uses **regular** cluster pub/sub (`SUBSCRIBE`/`PUBLISH`) — **no broadcast fan-out reduction** (sharded pub/sub → 2.0.0). No TLS/password expressible here — for a secured cluster, supply your own `RedisClusterClient` bean (`@ConditionalOnMissingBean`). |
+| `cluster.redis.cluster-nodes` | *(empty)* | *(since V1.9.0-RC7)* Comma-separated Redis **Cluster** seed nodes `host:port,host:port,...`. **Non-empty** selects the Redis Cluster transport (`RedisClusterClient` + `RedisClusterMode*` impls); **empty/absent (default)** uses the standalone/sentinel path via `redis.uri` (byte-identical to RC6). ⚠️ Uses **regular** cluster pub/sub (`SUBSCRIBE`/`PUBLISH`) — **no broadcast fan-out reduction** (sharded pub/sub → after 2.0.0). No TLS/password expressible here — for a secured cluster, supply your own `RedisClusterClient` bean (`@ConditionalOnMissingBean`). |
 | `cluster.nats.servers` | *(empty)* | *(since V1.9.0-RC9)* Comma-separated NATS servers (`nats://host:port,...`). **Non-empty** selects the `NatsClusterBroker` (NATS core pub/sub, at-most-once) **instead of** the Redis broker — **transport only**; the SessionRegistry/heartbeat stay on Redis (mixed NATS+Redis deployment, per ADR-001). Requires `io.nats:jnats` on the classpath. **Empty/absent (default)** = Redis broker. **Payload note:** NATS' default server `max_payload` is 1 MB while `message-max-size-bytes` defaults to 1 MiB — after envelope Base64 (~+37%) and optional HMAC overhead the wire body can exceed it, so when using NATS either lower `message-max-size-bytes` or raise the server's `max_payload`; an oversized cross-node message is handled gracefully per `on-publish-failure` (local delivery is unaffected). |
 | `cluster.nats.registry` | `false` | *(since V1.9.0-RC10)* When **`true`** (and `nats.servers` is set), the SessionRegistry/heartbeat/reaper also run on **NATS JetStream KV** (`NatsKvSessionRegistry`/`NatsKvNodeHeartbeat`/`NatsKvReaper`) instead of Redis — a fully **NATS-only** deployment (**no Redis**). **Requires a JetStream-enabled NATS server** (`nats-server -js`). **`false` (default)** = mixed (NATS broker + Redis registry). |
 | `cluster.heartbeat-interval-seconds` | `3` | Heartbeat write interval |

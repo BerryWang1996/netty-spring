@@ -121,7 +121,7 @@ class NettyWebSocketClusterConfigureOptionalDependencyTest {
      *  This is exactly the shape of the docker-demo / real-user classpath that crashed in 1.10.0 GA. */
     @Test
     void clusterEnabled_jnatsHidden_defaultRedisPath_contextStartsCleanly() {
-        Assumptions.assumeTrue(ClusterTestRedis.available(), "Redis not available on " + ClusterTestRedis.uri());
+        Assumptions.assumeTrue(ClusterTestRedis.available(), "No Redis available (configured URI, localhost or Docker)");
         new ApplicationContextRunner()
                 .withConfiguration(AutoConfigurations.of(
                         ConfigurationPropertiesAutoConfiguration.class,

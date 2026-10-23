@@ -1,6 +1,6 @@
 # netty-spring — Frequently Asked Questions
 
-> ⚠️ Publication gate: This document references 1.10.1. The published 1.10.0 cluster starter crashes at startup on a default classpath without the optional jnats dependency (fixed locally, commit 15a25d7). **Do not publish this document until 1.10.1 is on Maven Central.**
+> Release status: see [1.10.1 release notes](release-notes-1.10.1.md). Do not adopt or promote the 1.10.1 cluster examples until its Maven Central publication is confirmed there.
 
 netty-spring is an Apache-2.0 Spring Boot integration for Netty — HTTP MVC, WebSocket, application-layer AES-GCM crypto, and Micrometer observability — plus an opt-in WebSocket cluster and IM-platform foundation on top. It runs its own Netty server (`server.netty.port`, not Tomcat), targets Spring Boot 2.7.x / JDK 17, and is published on Maven Central as `io.github.berrywang1996:netty-*`.
 
@@ -32,7 +32,7 @@ If you're already committed to STOMP and want broker-relay semantics, Spring's n
 
 **Protocol.** netty-socketio is a Socket.IO **wire-protocol** server — you get the Socket.IO client SDKs, but you're bound to that protocol. netty-spring speaks **native WebSocket (RFC 6455)** with no wire-protocol lock-in: plain `@MessageMapping` annotations, Spring Boot auto-configuration, and an injectable `MessageSender`.
 
-**Clustering.** netty-spring ships an opt-in Redis-backed cluster with documented delivery semantics (see Q10); Socket.IO server-side clustering has historically been a pain point. Our own market research (kept in our working notes) found netty-socketio's clustering questions (e.g. #230/#670/#786/#884) going unanswered from 2015 through 2023.
+**Clustering.** netty-spring ships an opt-in Redis-backed cluster with documented delivery semantics (see Q10). Evaluate alternatives against their current upstream documentation and the protocol your clients require.
 
 The honest read: if you need Socket.IO-protocol client compatibility, netty-spring is **not** for you — it's aimed at greenfield / native-WebSocket builds.
 
@@ -42,13 +42,13 @@ YeautyYE is a single-node Netty + Spring Boot WebSocket starter — a solid, nar
 
 ### 6. Does it work with Spring Boot 3 or 4?
 
-**No — not today.** The 1.x line targets **Spring Boot 2.7.x (2.7.18) and JDK 17 only**, and runs its own Netty server rather than inside Tomcat. Boot 3/4 support is a **future major release (2.0.0)** on the roadmap — it is not shipped, and there is no workaround in 1.x. If you're pinned to Boot 3 or Boot 4, wait for 2.0.0. Note honestly: Spring Boot 2.7's upstream OSS support has ended, so the migration to a supported Boot line is the project's next major work item rather than an afterthought.
+**No — not today.** The 1.x line targets **Spring Boot 2.7.x (2.7.18) and JDK 17 only**, and runs its own Netty server rather than inside Tomcat. **2.0.0 targets Spring Boot 4.1**, as detailed in the [development plan](development-plan.md); it has not shipped. Boot 3.x is not a supported target of that release. Note honestly: Spring Boot 2.7's upstream OSS support has ended, so the migration to a supported Boot line is the project's next major work item rather than an afterthought.
 
 ### 7. Is it production-ready?
 
-**Scoped yes.** Single-node mode is production-grade and behaviorally identical to 1.7.x/1.8.0. The project ships 647 tests across 11 modules. Cluster mode is production-ready **within its documented envelope**: roughly ≤10 nodes of active broadcast, a dedicated/secured Redis, and the stated delivery semantics (local never lost; cross-node at-most-once; Redis loss degrades to local delivery after a grace period instead of dropping connections).
+**Scoped yes.** Single-node mode is production-grade and behaviorally identical to 1.7.x/1.8.0. Release verification results are recorded in the release notes. Cluster mode is production-ready **within its documented envelope**: roughly ≤10 nodes of active broadcast, a dedicated/secured Redis, and the stated delivery semantics (local never lost; cross-node at-most-once; Redis loss degrades to local delivery after a grace period instead of dropping connections).
 
-It is **not** production-ready as a full IM platform, at unlimited scale, or on Boot 3/4 — none of which the project claims. One concrete caveat for this cycle: the published 1.10.0 cluster starter crashes at startup without the optional jnats dependency; that is fixed locally and requires the 1.10.1 release before cluster users should adopt (see the gate at the top).
+It is **not** production-ready as a full IM platform, at unlimited scale, or on Boot 3/4 — none of which the project claims. For the 1.10.0 optional-NATS startup defect, its fix, and the adoption gate, use the [1.10.1 release notes](release-notes-1.10.1.md).
 
 ### 8. What's the license?
 
@@ -76,6 +76,6 @@ The project publishes its ceilings, not just its wins:
 - **Cluster (Redis Pub/Sub):** documented for **roughly ≤10 nodes** of active broadcast, ~33k msg/s cross-node, and it needs a **dedicated, secured Redis** (auth + TLS in production).
 - **Mesh transport:** pushes the ~10-node ceiling, but the fan-out reduction is **genuine only for interest-partitioned live audiences** — a global topic or a high-population topic under random load-balancing still saturates the fleet.
 - **Delivery semantics:** local delivery happens first and is never lost; cross-node broadcast is **at-most-once** (fire-and-forget Pub/Sub); a node offline at publish time misses the message. Undeliverable unicast throws `MessageSessionClosedException`. Redis loss degrades the node to local delivery after a grace period.
-- **Platform:** Spring Boot 2.7.x / JDK 17 only; Boot 3/4 is future.
+- **Platform:** Spring Boot 2.7.x / JDK 17 only; the planned 2.0.0 target is Boot 4.1.
 
 There's a checked-in multi-node proof you can run yourself — `docker-demo/` spins up two nodes behind an nginx load balancer + Redis, and `smoke.js` asserts one-way cross-node delivery (a broadcast from one node reaches a client on the other with the correct origin-node stamp).

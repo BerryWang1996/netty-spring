@@ -95,14 +95,40 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-dependency-check-
 
-      - name: Require NVD API key
+      - name: Validate NVD mirror freshness when no API key is configured
         if: env.NVD_API_KEY == ''
         run: |
-          echo "::error::NVD_API_KEY secret is required for the release dependency scan gate."
-          exit 1
+          python3 - <<'PY'
+          import os
+          from datetime import datetime, timedelta, timezone
+          from urllib.request import Request, urlopen
+
+          base = "https://dependency-check.github.io/DependencyCheck_Builder/nvd_cache/"
+          request = Request(base + "cache.properties", headers={"Cache-Control": "no-cache"})
+          with urlopen(request, timeout=30) as response:
+              metadata = response.read(65536).decode("utf-8")
+          timestamps = [line.split("=", 1)[1].strip() for line in metadata.splitlines()
+                        if line.startswith("lastModifiedDate=")]
+          if len(timestamps) != 1:
+              raise SystemExit("::error::NVD mirror has no unique lastModifiedDate; scan gate blocked.")
+          updated = datetime.fromisoformat(timestamps[0].replace("\\:", ":").replace("Z", "+00:00"))
+          if updated.utcoffset() is None:
+              raise SystemExit("::error::NVD mirror timestamp has no timezone; scan gate blocked.")
+          age = datetime.now(timezone.utc) - updated
+          if age > timedelta(hours=72) or age < -timedelta(minutes=5):
+              raise SystemExit("::error::NVD mirror is older than 72 hours or dated in the future; scan gate blocked.")
+          print(f"NVD mirror lastModifiedDate={updated.isoformat()} (age={age.total_seconds() / 3600:.1f} hours)")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as output:
+              output.write("NVD_DATAFEED_URL=" + base + "nvdcve-{0}.json.gz\n")
+          PY
 
       - name: Run Dependency-Check
-        run: bash ./mvnw $MAVEN_ARGS -Pdependency-scan org.owasp:dependency-check-maven:12.2.1:aggregate
+        run: |
+          scan_args=()
+          if [[ -n "${NVD_DATAFEED_URL:-}" ]]; then
+            scan_args+=("-DnvdDatafeedUrl=$NVD_DATAFEED_URL")
+          fi
+          bash ./mvnw $MAVEN_ARGS -Pdependency-scan -DskipTests package org.owasp:dependency-check-maven:12.2.1:aggregate "${scan_args[@]}"
 
       - name: Upload Dependency-Check reports
         if: always()

@@ -136,6 +136,8 @@ Handler and WebSocket lifecycle code populates SLF4J **MDC** (`netty.requestId`,
 
 ### WebSocket Cluster *(v1.8.0 / reliability-hardened in v1.9.0 / IM-platform foundation in v1.10.0)*
 
+> The example below uses **1.10.1 (pending publication)** to fix default startup without jnats. Check the [release status](docs/release-notes-1.10.1.md) before resolving it from Maven Central.
+
 Scale WebSocket across multiple nodes with Redis Pub/Sub. Default is single-node mode (zero overhead). Enable cluster with one config flag:
 
 ```xml
@@ -143,7 +145,7 @@ Scale WebSocket across multiple nodes with Redis Pub/Sub. Default is single-node
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-websocket-cluster-spring-boot-starter</artifactId>
-    <version>1.10.0</version>
+    <version>1.10.1</version>
 </dependency>
 ```
 
@@ -213,7 +215,7 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 | 25k – 75k | 2–3 | Redis Standalone or Sentinel | ~33k msg/s |
 | 75k – 250k | 4–10 | Redis Sentinel (recommended) or NATS broker | ~33k msg/s (single primary / single NATS server) |
 | 250k – 1M | 10–20 | NATS broker (RC9 ADR-001 scaling tier) | NATS raw 267k msg/s headroom — still bottlenecked by sender pipeline ~33k msg/s today |
-| > 1M | > 20 | Sharded pub/sub (Boot 3.x / 2.0.0) | Beyond Lettuce 6.1 — see [Boot 3.x compatibility matrix](docs/2.0.0/boot3-compatibility-matrix.md) |
+| > 1M | > 20 | Requires workload-specific validation | Sharded pub/sub is unimplemented and deferred beyond 2.0.0; see the [development plan](docs/development-plan.md) |
 
 #### Selection Guide — Pick the Right Configuration
 
@@ -243,7 +245,7 @@ The NATS broker (RC9) replaces ONLY the cross-node broadcast/unicast path. Regis
 
 - **Standalone** (`cluster.redis.uri=redis://...`) — dev, demo, single-master prod ≤ 10 nodes.
 - **Sentinel** (`cluster.redis.uri=redis-sentinel://...?sentinelMasterId=mymaster`) — production HA with automatic failover; ≤ 10 cluster nodes; managed Redis offerings (AWS ElastiCache, Aliyun Tair) support this out of the box.
-- **Redis Cluster** (`cluster.redis.cluster-nodes=host1:6379,host2:6379,...`, RC7) — shards SessionRegistry + heartbeat across multiple Redis primaries; needed when registry write rate or memory exceeds a single primary. **RC7 caveat**: cluster pub/sub is still regular (no fan-out reduction — that's sharded pub/sub in 2.0.0).
+- **Redis Cluster** (`cluster.redis.cluster-nodes=host1:6379,host2:6379,...`, RC7) — shards SessionRegistry + heartbeat across multiple Redis primaries; needed when registry write rate or memory exceeds a single primary. **RC7 caveat**: cluster pub/sub is still regular (no fan-out reduction — sharded pub/sub is deferred beyond 2.0.0).
 
 ##### Decision 4 — Reliable broadcast? (`reliable.enable`)
 
@@ -351,7 +353,7 @@ server.netty.websocket.cluster.enable=true
 server.netty.websocket.cluster.redis.cluster-nodes=redis-1.internal:6379,redis-2.internal:6379,redis-3.internal:6379
 server.netty.websocket.cluster.auth.enable=true
 server.netty.websocket.cluster.auth.secret=${CLUSTER_AUTH_SECRET}
-# Note: regular cluster pub/sub does NOT reduce fan-out. Sharded pub/sub is 2.0.0.
+# Note: regular cluster pub/sub does NOT reduce fan-out. Sharded pub/sub is deferred beyond 2.0.0.
 ```
 
 #### Pluggable Serialization
@@ -471,22 +473,22 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#11-configurati
 
 ### Current Status
 
-- **Latest stable: `1.10.0` GA (released 2026-06-21 on Maven Central).** The **IM-platform foundation** on top of 1.9.0: room-scoped routing, offline queue + user-addressed `sendToUser`, multi-device presence, and the node-to-node **mesh** transport (interest-routed fan-out reduction + nine `netty.cluster.mesh.*` meters). `cluster.enable=false` stays byte-identical to 1.9.0. **644 tests / 11 modules green.** See [Release Notes 1.10.0](docs/release-notes-1.10.0.md) and [API Guide §9](docs/api-guide.md#9-websocket-cluster).
-- **Previous stable: `1.9.0` GA (released 2026-06-07).** Before that: `1.8.0`. The 1.9.0 GA cycle delivered: cluster reliability hardening (5 deferred items + 2 new knobs), reliable broadcast (Redis Streams + NATS JetStream — at-least-once, opt-in), HMAC envelope authentication (`MessageAuthenticator` SPI), full Micrometer cluster metrics, W3C TraceContext propagation, Redis Cluster client, multi/sharded pub/sub multiplexing, NATS broker + all-NATS stack (JetStream-KV registry/heartbeat/reaper), multi-node E2E + Testcontainers CI, and a GA-readiness audit. **444 tests / 11 modules green.** Single-node mode stays production-grade and identical to 1.7.x/1.8.0 — see [Release Notes 1.9.0](docs/release-notes-1.9.0.md) and [Cluster Design §Security](docs/cluster-design.md).
-- `1.8.0` delivered WebSocket cluster support (Redis Pub/Sub + 5-layer SPI architecture + 291 tests) — all preserved in 1.9.0 and backward compatible.
-- Milestones P0 through P7 are all complete; performance (1.6.x), security/stability (1.6.2), observability (1.7.0), clustering (1.8.0), and cluster hardening (1.9.0) followed.
-- Next: `2.0.0` Spring Boot 3.x / Jakarta migration + enterprise security
+- Published release: **1.10.0**. The default cluster starter has a known startup failure without the optional jnats dependency; see the [1.10.1 fixes and publication status](docs/release-notes-1.10.1.md) before adopting it.
+- Current source version: **1.10.1**; local tests, demo smoke and signatures verified, publication pending. Details are in the release notes above.
+- Next: **2.0.0 on Spring Boot 4.1**, preserving existing functionality. The [development plan](docs/development-plan.md) is the single roadmap and contains migration steps, acceptance criteria and deferred work.
 
 ### Documentation
 
 - [API Usage Guide](docs/api-guide.md) — Complete integration guide with code examples
 - [Netty Configuration](docs/netty-configuration.md) — HTTP / TLS / management endpoint reference
 - [WebSocket Configuration](docs/websocket-configuration.md) — WebSocket runtime, crypto, observability
-- [Release Notes - 1.9.0](docs/release-notes-1.9.0.md) — Current stable (1.9.0 GA — cluster reliability + reliable delivery + HMAC + Micrometer + W3C TraceContext + Redis Cluster + NATS)
+- [Release Notes - 1.10.1](docs/release-notes-1.10.1.md) — Patch fixes, validation and publication status
+- [Release Notes - 1.10.0](docs/release-notes-1.10.0.md) — IM platform foundation
+- [Release Notes - 1.9.0](docs/release-notes-1.9.0.md) — Cluster reliability release history
 - [Release Notes - 1.8.0](docs/release-notes-1.8.0.md) — WebSocket cluster support
 - [Release Notes - 1.7.1](docs/release-notes-1.7.1.md)
 - [Release Notes - 1.7.0](docs/release-notes-1.7.0.md)
-- [Development Plan](docs/development-plan.md) — Roadmap (1.9.0 cluster hardening, 2.0.0 Spring Boot 3.x)
+- [Development Plan](docs/development-plan.md) — Single roadmap and Spring Boot 4.1 migration plan
 - [Cluster Design](docs/cluster-design.md) — Redis Pub/Sub cluster architecture, 1.8.0/1.9.0 scope vs roadmap, and the security/trust model
 - [Release Checklist](docs/release-checklist.md) — Release process & gates
 - [Dependency Governance](docs/dependency-governance.md) — SBOM, vulnerability scanning
@@ -646,6 +648,8 @@ handler 与 WebSocket 生命周期会写入 SLF4J **MDC**（`netty.requestId`、
 
 ### WebSocket 集群 *(v1.8.0 引入 / v1.9.0 可靠性硬化 / v1.10.0 IM 平台基础)*
 
+> 下例使用 **1.10.1（待发布）** 修复缺少 jnats 时的默认启动问题。从 Maven Central 使用前，请确认[发布状态](docs/release-notes-1.10.1.md)。
+
 通过 Redis Pub/Sub 实现跨节点广播和单播。默认单机模式零开销；一个配置开关即可启用集群：
 
 ```xml
@@ -653,7 +657,7 @@ handler 与 WebSocket 生命周期会写入 SLF4J **MDC**（`netty.requestId`、
 <dependency>
     <groupId>io.github.berrywang1996</groupId>
     <artifactId>netty-websocket-cluster-spring-boot-starter</artifactId>
-    <version>1.10.0</version>
+    <version>1.10.1</version>
 </dependency>
 ```
 
@@ -723,7 +727,7 @@ server.netty.websocket.cluster.redis.uri=rediss://:password@your-redis:6379
 | 25k – 75k | 2–3 | Redis Standalone / Sentinel | ~33k msg/s |
 | 75k – 250k | 4–10 | Redis Sentinel（推荐）或 NATS 传输 | ~33k msg/s（单主 / 单 NATS） |
 | 250k – 100 万 | 10–20 | NATS 传输（RC9 ADR-001 规模化档位） | NATS raw 头空间 267k；当前受 sender pipeline 上限 ~33k msg/s |
-| > 100 万 | > 20 | Sharded pub/sub（Boot 3.x / 2.0.0） | 超出 Lettuce 6.1 — 详见 [Boot 3.x 兼容矩阵](docs/2.0.0/boot3-compatibility-matrix.md) |
+| > 100 万 | > 20 | 需按实际负载验证 | Sharded pub/sub 尚未实现，排在 2.0.0 之后；见[开发计划](docs/development-plan.md) |
 
 #### 选型指南——什么情况下选什么
 
@@ -753,7 +757,7 @@ NATS broker（RC9）**只**替换跨节点广播/单播路径；registry + 心�
 
 - **Standalone**（`cluster.redis.uri=redis://...`）——开发、demo、单主生产 ≤ 10 节点。
 - **Sentinel**（`cluster.redis.uri=redis-sentinel://...?sentinelMasterId=mymaster`）——生产 HA 自动故障转移；≤ 10 集群节点；托管 Redis（AWS ElastiCache、阿里云 Tair）原生支持。
-- **Redis Cluster**（`cluster.redis.cluster-nodes=host1:6379,host2:6379,...`，RC7）——SessionRegistry + 心跳分片跨多个 Redis primary；registry 写入速率或内存超出单 primary 上限时启用。**RC7 注意事项**：cluster pub/sub 仍是常规模式（不削减广播扇出——sharded pub/sub 在 2.0.0）。
+- **Redis Cluster**（`cluster.redis.cluster-nodes=host1:6379,host2:6379,...`，RC7）——SessionRegistry + 心跳分片跨多个 Redis primary；registry 写入速率或内存超出单 primary 上限时启用。**RC7 注意事项**：cluster pub/sub 仍是常规模式（不削减广播扇出——sharded pub/sub 排在 2.0.0 之后）。
 
 ##### 决策 4——可靠广播？（`reliable.enable`）
 
@@ -861,7 +865,7 @@ server.netty.websocket.cluster.enable=true
 server.netty.websocket.cluster.redis.cluster-nodes=redis-1.internal:6379,redis-2.internal:6379,redis-3.internal:6379
 server.netty.websocket.cluster.auth.enable=true
 server.netty.websocket.cluster.auth.secret=${CLUSTER_AUTH_SECRET}
-# 注意：常规 cluster pub/sub 不削减扇出。Sharded pub/sub 在 2.0.0。
+# 注意：常规 cluster pub/sub 不削减扇出。Sharded pub/sub 排在 2.0.0 之后。
 ```
 
 #### 可插拔序列化
@@ -979,22 +983,22 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 
 ### 当前阶段
 
-- **最新稳定版：`1.10.0` GA（2026-06-21 发布，已上 Maven Central）。** 在 1.9.0 之上叠加的 **IM 平台基础**：房间维度路由、离线队列 + 按用户寻址 `sendToUser`、多设备在线状态、以及节点间 **mesh** 传输（按兴趣路由扇出削减 + 九个 `netty.cluster.mesh.*` 指标）。`cluster.enable=false` 与 1.9.0 逐字节一致。**644 个测试 / 11 个模块全绿。** 见 [1.10.0 发布说明](docs/release-notes-1.10.0.md) 与 [API 指南 §9](docs/api-guide.md#9-websocket-cluster)。
-- **上一稳定版：`1.9.0` GA**（2026-06-07 发布）。再上一版：`1.8.0`。1.9.0 GA 周期交付：集群可靠性硬化（5 项 1.8.0 推迟项 + 2 个新配置项）、可靠投递（Redis Streams + NATS JetStream，至少一次，按需启用）、HMAC 信封鉴权（`MessageAuthenticator` SPI）、完整 Micrometer 集群指标、W3C TraceContext 跨节点透传、Redis Cluster 客户端、多/分片 Pub/Sub 多路复用、NATS 传输 + 全 NATS 技术栈（JetStream-KV 注册表/心跳/leader）、多节点 E2E + Testcontainers CI、以及 GA 就绪审计。**444 个测试 / 11 个模块全绿。** 单机模式生产级、与 1.7.x/1.8.0 完全一致——见 [1.9.0 发布说明](docs/release-notes-1.9.0.md) 与 [集群方案设计 §安全模型](docs/cluster-design.md)。
-- `1.8.0` 交付 WebSocket 集群支持（Redis Pub/Sub 跨节点广播/单播 + 5 层 SPI 可插拔架构 + 291 个测试全绿）——在 `1.9.0` 中完整保留，全部向后兼容。
-- P0 至 P7 全部里程碑已完成；其后依次推进性能（1.6.x）、安全稳定性（1.6.2）、可观测性（1.7.0）、集群水平扩展（1.8.0）、集群可靠性硬化（1.9.0）。
-- 下一步：`2.0.0` Spring Boot 3.x / Jakarta 迁移 + 企业安全版本
+- 已发布版本：**1.10.0**。默认集群 starter 存在缺少可选 jnats 依赖时启动失败的问题，采用前请查阅 [1.10.1 修复与发布状态](docs/release-notes-1.10.1.md)。
+- 当前源码版本：**1.10.1**，本地测试、demo 冒烟和签名验证完成，待发布；证据见上方发布说明。
+- 下一主线：**2.0.0 升级 Spring Boot 4.1**，保留现有功能与行为。迁移步骤、验收标准和延期项统一见[开发计划](docs/development-plan.md)。
 
 ### 文档
 
 - [API 使用指南](docs/api-guide.md) — 完整接入指南，含代码示例
 - [Netty 配置说明](docs/netty-configuration.md) — HTTP / TLS / 管理端点参考
 - [WebSocket 配置说明](docs/websocket-configuration.md) — WebSocket 运行时、加密、可观测性
-- [1.9.0 发布说明](docs/release-notes-1.9.0.md) — 当前稳定版（1.9.0 GA — 集群可靠性 + 可靠投递 + HMAC + Micrometer + W3C TraceContext + Redis Cluster + NATS）
+- [1.10.1 发布说明](docs/release-notes-1.10.1.md) — 补丁修复、验证与发布状态
+- [1.10.0 发布说明](docs/release-notes-1.10.0.md) — IM 平台基础
+- [1.9.0 发布说明](docs/release-notes-1.9.0.md) — 集群可靠性历史版本
 - [1.8.0 发布说明](docs/release-notes-1.8.0.md) — WebSocket 集群支持
 - [1.7.1 发布说明](docs/release-notes-1.7.1.md)
 - [1.7.0 发布说明](docs/release-notes-1.7.0.md)
-- [开发计划与阶段状态](docs/development-plan.md) — 路线图（1.9.0 集群硬化、2.0.0 Spring Boot 3.x）
+- [开发计划与阶段状态](docs/development-plan.md) — 唯一路线与 Spring Boot 4.1 迁移执行计划
 - [集群方案设计](docs/cluster-design.md) — Redis Pub/Sub 集群架构、1.8.0/1.9.0 实现范围 vs 路线图、安全/信任模型
 - [版本发布检查清单](docs/release-checklist.md) — 发布流程与门槛
 - [依赖治理与供应链门禁](docs/dependency-governance.md) — SBOM、漏洞扫描

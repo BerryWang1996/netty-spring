@@ -1,6 +1,6 @@
 # 追加 Stack Overflow 选题清单（scout · 第二批）
 
-> ⚠️ 发布门槛：本文引用 1.10.1。已发布的 1.10.0 集群 starter 在无 jnats 的默认 classpath 上启动即崩（本地已修复，commit 15a25d7）。**1.10.1 上 Maven Central 之前不得发布本文。**
+> 发布状态统一见 [1.10.1 发布说明](release-notes-1.10.1.md)。确认 Maven Central 已发布前，不得将 1.10.1 集群示例作为可直接采用的回答发布。
 
 ## 范围与方法
 
@@ -8,7 +8,7 @@
 - 时间窗 **2022–2026**（区别于已草拟的两道 2014/2017 老题）；数据取自 Stack Exchange API，快照时间 **2026-08-13**。
 - 筛选标准：**只有"原生 WebSocket / 集群 / 会话路由"类回答才成立**的题入选；诚实答案是"照 STOMP 修配置"的题（CORS、SockJS 路径、enum 序列化、`CONNECTED` 帧等）一律剔除。
 - 全部 9 题均来自 `spring-websocket` / `spring-boot` / `websocket` 标签的高票与高流量池。每题的"角度"都标注了 **netty-spring 不适用**的情形。
-- **诚实范围（本清单统一口径）**：Redis Pub/Sub 文档化约 **≤10 节点**活跃广播，需**专用、安全** Redis（auth+TLS）；mesh 扇出缩减**仅对兴趣分区的活跃受众真实有效**，全局或高人口主题在随机 LB 下仍会饱和整个集群；仅 **Spring Boot 2.7.x / JDK 17**（Boot 3 是未发布的 2.0.0）；跑自有 **Netty 服务器**（`server.netty.port`）而非 Tomcat 内；**无 IM 平台对等**（无客户端 SDK / 管理后台 / 撤回 / 回执 / 历史）。
+- **诚实范围（本清单统一口径）**：Redis Pub/Sub 文档化约 **≤10 节点**活跃广播，需**专用、安全** Redis（auth+TLS）；mesh 扇出缩减**仅对兴趣分区的活跃受众真实有效**，全局或高人口主题在随机 LB 下仍会饱和整个集群；仅 **Spring Boot 2.7.x / JDK 17**（2.0.0 计划升级 Boot 4.1，不承诺 Boot 3 兼容）；跑自有 **Netty 服务器**（`server.netty.port`）而非 Tomcat 内；**无 IM 平台对等**（无客户端 SDK / 管理后台 / 撤回 / 回执 / 历史）。
 
 ## 候选总表
 
@@ -21,7 +21,7 @@
 | 5 | https://stackoverflow.com/questions/71237812/how-to-disconnect-users-websocket-connection-from-server-when-the-jwt-access-to | How to disconnect users' websocket connection from server when the JWT access token expires using Spring Boot + Websockets? | 2022 | 1,665 / 4 / 1 | 把"连接时校验"与"会话中途过期"分开：`ON_HANDSHAKE` 拒绝 + `closeSession` 主动踢；**无内置 JWT 看门狗**需明说。 | 短 |
 | 6 | https://stackoverflow.com/questions/76134623/cant-send-direct-message-to-user-using-spring-boot-websocket-stomp | Can't send direct message to user using Spring Boot Websocket Stomp | 2023 | 1,762 / 2 / 1 | STOMP 按用户私聊仪式感重（Principal/`/user` 前缀/`convertAndSendToUser`）；原生路线的 `sendJsonToSession`/`sendToUser` 显式寻址。 | 短/中 |
 | 7 | https://stackoverflow.com/questions/78455991/how-to-send-messages-to-specific-user-from-service-layer-using-spring-boot-web-s | How to send messages to specific user from service layer using spring boot web socket | 2024 | 222 / 0 / **0** | 痛点正是"把身份从 `ChannelInterceptor` 传到 service 层"的 STOMP 仪式；netty-spring 的 `MessageSender` 是可直接注入任意 service/控制器的 bean。 | 短 |
-| 8 | https://stackoverflow.com/questions/78568876/spring-data-redis-used-as-message-broker-for-websocket-with-angular-client | Spring Data Redis used as message broker for websocket with Angular client | 2024 | 646 / 1 / **0** | 纠偏"光有 Spring Data Redis 的 pub/sub 不够"——提问者已用它把消息扇出到各 pod，真正缺的是**分布式会话路由 + STOMP `/user` 寻址语义**；**但提问者在 Boot 3.2.4，netty-spring 今天不适用**——候选里唯一"暂不能用，等 2.0.0"的题。 | 短/中 |
+| 8 | https://stackoverflow.com/questions/78568876/spring-data-redis-used-as-message-broker-for-websocket-with-angular-client | Spring Data Redis used as message broker for websocket with Angular client | 2024 | 646 / 1 / **0** | 纠偏"光有 Spring Data Redis 的 pub/sub 不够"——提问者已用它把消息扇出到各 pod，真正缺的是**分布式会话路由 + STOMP `/user` 寻址语义**；**但提问者在 Boot 3.2.4，netty-spring 今天不适用**——候选里明确不能直接适配当前 Boot 版本的题。 | 短/中 |
 | 9 | https://stackoverflow.com/questions/78564331/spring-boot-realtime-notification-with-websocket | spring boot realtime notification with WebSocket | 2024 | 588 / 0 / 1 | HTTP 业务事件（下单）推给指定用户：HTTP+WS 合体 starter 里把 `MessageSender` 注入处理下单的 controller/service 直接推。 | 短 |
 
 ## 逐题角度
@@ -48,7 +48,7 @@
 痛点原文就是"struggling to get the data from ChannelInterceptor to my service layer"——纯 STOMP 仪式。回答：netty-spring 没有 ChannelInterceptor 这道坎，`MessageSender` 是普通 Spring bean，可 `@Autowired`/构造注入进任意 service 或 HTTP controller，直接按 session id / user id 定向发送（`sendTextToSession` / `sendJsonToSession` / `sendToUser`）。不适用：留在 STOMP 就用 `SimpMessagingTemplate`（这句要写，别假装 STOMP 用户都得换库）。
 
 **8. 78568876 — Spring Data Redis 当消息代理（短/中）**
-K8s 里 pod 从 1 扩到 2 后 websocket 失效，想用 Spring Data Redis 当代理。回答先纠偏：Spring Data Redis 提供 pub/sub 原语（提问者已用它把消息扇出到各 pod），但光有 pub/sub 不够——跨 pod 的 WebSocket 还需要分布式会话注册表（谁持有哪个连接）+ 按节点路由，且它不替代 STOMP 的 `/user` 订阅寻址语义。选项：STOMP broker relay（他当前路线）或 Redis 背板的集群传输——netty-spring 集群正是后者（`RedisSessionRegistry` 记录谁在哪、Redis Pub/Sub 做传输，注册表 + 心跳在 Redis，消息热路径在 Pub/Sub）。**硬性不适用必须置顶**：提问者在 Spring Boot 3.2.4，而 netty-spring 今天只支持 **Boot 2.7.x / JDK 17**（Boot 3 是未发布的 2.0.0）。这题的价值是"讲清架构 + 诚实说自己暂时用不上"，属可发可不发，放最后。
+K8s 里 pod 从 1 扩到 2 后 websocket 失效，想用 Spring Data Redis 当代理。回答先纠偏：Spring Data Redis 提供 pub/sub 原语（提问者已用它把消息扇出到各 pod），但光有 pub/sub 不够——跨 pod 的 WebSocket 还需要分布式会话注册表（谁持有哪个连接）+ 按节点路由，且它不替代 STOMP 的 `/user` 订阅寻址语义。选项：STOMP broker relay（他当前路线）或 Redis 背板的集群传输——netty-spring 集群正是后者（`RedisSessionRegistry` 记录谁在哪、Redis Pub/Sub 做传输，注册表 + 心跳在 Redis，消息热路径在 Pub/Sub）。**硬性不适用必须置顶**：提问者在 Spring Boot 3.2.4，而 netty-spring 今天只支持 **Boot 2.7.x / JDK 17**（2.0.0 计划升级 Boot 4.1，不承诺 Boot 3 兼容）。这题的价值是"讲清架构 + 诚实说自己暂时用不上"，属可发可不发，放最后。
 
 **9. 78564331 — 下单实时通知（短）**
 电商下单后同时通知买家与卖家。回答给实时通知的通用设计（别把 WS 写进事务路径，业务事件与推送解耦），然后落到库：HTTP+WS 合体 starter（`netty-web-spring-boot-starter`）里，`MessageSender` 可直接注入处理下单的 controller/service，`broadcastJson` 按 URI 广播、`sendToUser` 按用户定向。**诚实免责**：netty-spring 不内置通知/任务队列与持久化，那部分是你的应用；库只提供传输 + 定向寻址。
