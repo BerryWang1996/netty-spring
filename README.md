@@ -59,7 +59,7 @@ Use Spring Boot `4.1.2` and Java 17+, enable `-parameters`, and apply the [appli
 </dependency>
 ```
 
-Available on Maven Central as `io.github.berrywang1996:*` (versions `1.4.0`, `1.6.2`, `1.7.0`, `1.8.0`, `1.9.0`, `1.10.0`, `2.0.0`). Earlier `com.github.berrywang1996:*` artifacts were only published to a private repository — migrate by changing the groupId in your `pom.xml`.
+Available on Maven Central as `io.github.berrywang1996:*` (versions `1.4.0`, `1.6.2`, `1.7.0`, `1.8.0`, `1.9.0`, `1.10.0`, `1.10.1`, `2.0.0`). Earlier `com.github.berrywang1996:*` artifacts were only published to a private repository — migrate by changing the groupId in your `pom.xml`.
 
 #### 3. Configure
 
@@ -482,7 +482,7 @@ Full configuration reference: [API Usage Guide](docs/api-guide.md#11-configurati
 ### Current Status
 
 - Published release and current source: **2.0.0 / Spring Boot 4.1.2 / JDK 17+**. All ten Maven Central coordinates and their published payloads/signatures have been verified; see the [release and migration notes](docs/release-notes-2.0.0.md).
-- The Boot 2.7-based 1.x line has separate [1.10.1 publication status](docs/release-notes-1.10.1.md); it does not change the 2.0.0 release status.
+- The Boot 2.7-based **1.10.1** patch is also published and downloadable. Its [release notes](docs/release-notes-1.10.1.md) retain the failed security scan and known dependency risks; the current mainline remains 2.0.0.
 - The [development plan](docs/development-plan.md) remains the single roadmap, with migration steps, acceptance criteria and deferred work.
 
 ### Documentation
@@ -578,7 +578,7 @@ Verified on `GraalVM JDK 17.0.11` + `Apache Maven 3.9.9`. CI workflow runs full 
 </dependency>
 ```
 
-Maven Central 上以 `io.github.berrywang1996:*` 提供（版本 `1.4.0`、`1.6.2`、`1.7.0`、`1.8.0`、`1.9.0`、`1.10.0`、`2.0.0`）。早期 `com.github.berrywang1996:*` 仅发布到私有仓库——迁移时只需把 `pom.xml` 里的 groupId 改成新的即可。
+Maven Central 上以 `io.github.berrywang1996:*` 提供（版本 `1.4.0`、`1.6.2`、`1.7.0`、`1.8.0`、`1.9.0`、`1.10.0`、`1.10.1`、`2.0.0`）。早期 `com.github.berrywang1996:*` 仅发布到私有仓库——迁移时只需把 `pom.xml` 里的 groupId 改成新的即可。
 
 #### 3. 配置
 
@@ -1001,7 +1001,7 @@ public class TokenInterceptor implements WebSocketHandshakeInterceptor {
 ### 当前阶段
 
 - 已发布及当前源码版本：**2.0.0 / Spring Boot 4.1.2 / JDK 17+**。Maven Central 的十个坐标及全部制品、签名已核对；应用依赖管理、API 差异与升级/回滚边界见 [2.0.0 发布与迁移说明](docs/release-notes-2.0.0.md)。
-- Boot 2.7 的 1.x 维护线单独保留 [1.10.1 发布状态](docs/release-notes-1.10.1.md)，不影响 2.0.0 的公开发布。
+- Boot 2.7 的 **1.10.1** 补丁也已发布并确认可下载，[发布说明](docs/release-notes-1.10.1.md)继续保留扫描失败和已知依赖风险；当前主线仍为 2.0.0。
 - 迁移步骤、验收标准和延期项统一见[开发计划](docs/development-plan.md)。
 
 ### 文档

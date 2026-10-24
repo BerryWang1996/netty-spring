@@ -1,12 +1,12 @@
 # Release Notes — 1.10.1
 
-更新时间：2026-10-23
+更新时间：2026-10-24
 
 ## 发布状态（本版唯一记录）
 
-**`v1.10.1` 已推送，Central 上传校验已通过，正式发布请求已提交，当前仍为 `PUBLISHING`，尚未确认公共仓库可下载。** 标签指向 `002358b`，使用 `BerryWang1996` 账号发布。测试、SBOM、单机/双节点冒烟和最终 34 份签名验证完成；正式标签扫描仍有 43 项 Boot/Spring 告警，其中 21 项 CVSS ≥ 7.0。本版为公开披露风险的功能/稳定性补丁，不能作为企业安全发布或宣称全部 CI 绿色。2.0.0 开发已转入独立分支，不等待 Central 传播。
+**`1.10.1` 已发布到 Maven Central，原 deployment 已为 `PUBLISHED`，全部十个坐标的 68 份公开制品和签名均已下载并核对一致。** 标签 `v1.10.1` 仍指向 `002358b`，发布账号为 `BerryWang1996`；本次仅确认原发布结果，没有重新上传或移动标签。测试、SBOM、单机/双节点冒烟和最终 34 份签名验证完成；正式标签扫描仍有 43 项 Boot/Spring 告警，其中 21 项 CVSS ≥ 7.0。本版为公开披露风险的功能/稳定性补丁，不能作为企业安全发布或宣称全部 CI 绿色。主线 `2.0.0` 已完成 Boot 4.1 迁移并发布。
 
-教程、FAQ、SO 草稿中使用 `1.10.1` 的依赖示例，须在 Central 可下载该版本后再对外发布。当前公开版本与下一步路线见[开发计划](development-plan.md)。
+公开下载入口：[组合 starter](https://repo.maven.apache.org/maven2/io/github/berrywang1996/netty-web-spring-boot-starter/1.10.1/)、[集群 starter](https://repo.maven.apache.org/maven2/io/github/berrywang1996/netty-websocket-cluster-spring-boot-starter/1.10.1/)。当前教程与默认依赖示例使用 `2.0.0`；仍使用 Boot 2.7 的应用应结合本页的兼容边界与剩余风险接入 `1.10.1`。当前公开版本与路线统一见[开发计划](development-plan.md)。
 
 ## 修复与兼容性
 
@@ -32,9 +32,24 @@
 | 发布制品 sources / Javadoc / GPG | 10 个发布模块、34 个发布文件及其分离签名已上传；最终 deploy 后的 34 份签名独立验签通过，发布包 SHA-256 全量匹配。3 个无源码 starter 不生成 sources.jar，其余源码/Javadoc 附件齐全 |
 | Dependency Scan / 漏洞 triage | Dependency-Check 12.2.2 复扫生成 HTML/JSON/SARIF，无 analysisExceptions；43 项 Boot/Spring 告警，21 项 CVSS ≥ 7.0，扫描失败。四组升级依赖的原告警已不再出现；未添加 suppression。另由 Dependabot 补充 Logback 6 项，详见下文 |
 | Git 提交、v1.10.1 tag、远端 CI | `v1.10.1` → `002358b`；[正式标签 CI #39963415642](https://github.com/BerryWang1996/netty-spring/actions/runs/39963415642)：650 tests / 0 failures / 0 errors / 0 skipped，SBOM 通过，Dependency Scan 因上述漏洞失败，报告已上传。标签与已测候选 `52206a5` 仅发布记录不同 |
-| Central 上传及发布 | deployment `fedd63c8-f139-4a40-a0ef-9a9a4af1a4bc` 已 VALIDATED，正式发布请求已接受；状态 PUBLISHING，公开下载验证待完成，暂不标记已发布 |
+| Central 上传及发布 | 原 deployment `fedd63c8-f139-4a40-a0ef-9a9a4af1a4bc` 已 `PUBLISHED`；2026-10-24 从公开仓库匿名下载十个坐标的 34 份制品与 34 份签名，全部 HTTP 200、长度和 SHA-256 一致，无待完成文件 |
+| 独立 Maven 消费者 | 全新空缓存、匿名 Central-only 解析和编译成功；最小单机运行 8/8 检查通过，无 jnats。应用 Boot parent 的实际依赖覆盖与本版 reactor 基线分开记录如下 |
 
 环境：GraalVM JDK 17.0.11、Maven 3.9.16、Docker Desktop；2026-10-23 执行。首轮 clean 构建暴露装配测试的端口竞争，修复后重新执行完整 `verify` 通过。项目 demo fat jar 的依赖清单确认没有 jnats。Docker 验证使用独立 Compose 项目 `netty-spring-1101-check` 和本机 18080/18081 端口，结束后已清理本次容器及网络。
+
+### Central 下载确认（2026-10-24）
+
+此前在发布请求后立即检查时，Portal 为 `PUBLISHING`，公开文件返回 404，原始记录保留在 `.m2/central-download-verification-1101.json`。本次复核同一 deployment 已为 `PUBLISHED`；没有重新 deploy、重新签名或替换已发布版本。Portal 附带的 `Deployment components info not found` 信息不提供组件清单，因此以实际公开文件的完整下载和字节核对作为可用性证据。
+
+从原冻结包 `.m2/central-bundle-1.10.1.zip` 安全提取 34 份 payload 和 34 份 ASC，包 SHA-256 为 `d667f6d0a5671927559d55c19939ad9e819e7b4995e6043f36fd55a87ae066dc`；四组 MD5/SHA-1/SHA-256/SHA-512 校验文件各 34 份全部匹配。34 份 payload 与原下载清单一致，十个 POM 的 GAV 均为本版本且与 `v1.10.1` 一致（仅规范换行）。全部 34 份签名以主指纹 `09CC1D729D9E1CBBA18DE39E8B24A2A210E4168C` 实际验签通过，签名创建时间为最终 deploy 对应的 `2026-10-23T13:42:34Z` 至 `13:42:41Z`。核验归档为 `.m2/1101-publication-verification-2026-10-24T01-13-28-963Z/`；没有使用当前 2.0.0 的 target 产物代替旧版本。
+
+随后匿名读取 `https://repo.maven.apache.org/maven2/`，十个坐标的 POM、主包、适用的 sources/Javadoc 及全部 ASC 共 **68/68 文件**均在首轮 HTTP 200，长度和 SHA-256 与上述冻结包逐项一致。公开证据为 `.m2/central-public-1.10.1-2026-10-24T01-14-14-519Z-34592/verification.json`，`complete=true`、`credentialsUsed=false`、`failedOrPending=0`。此次核对确认仓库可下载及内容一致，不改变历史漏洞扫描失败和风险披露。
+
+另建普通 `spring-boot-starter-parent:2.7.18` 应用，使用 JDK `17.0.11`，显式依赖普通 Boot starter、`netty-web-spring-boot-starter:1.10.1` 与 `netty-websocket-cluster-spring-boot-starter:1.10.1`。从全新空 Maven 缓存匿名解析、编译成功，共取得 40 个运行库；7 个项目 jar、7 个子 POM 和父 POM 均与上述公开文件的长度、SHA-256 和 Central 下载来源标记一致。Maven 日志无 WARNING、校验和或传输错误。1 个夹具源码编译为 3 个 Java 17 class，实际运行的 8 项检查全部通过：无 jnats 的单机自动装配、健康 UP、文本/JSON Bean 精确回显及各自 code 1000 关闭、JVM 正常退出 0、端口 18116 释放。没有使用 Docker 或修改既有 MySQL 容器；本次单机检查不替代上方已完成的集群演练。
+
+**应用依赖管理边界：** 本次刻意使用普通 Boot parent，未额外复制本库 reactor 的版本覆盖。实际解析为 Spring `5.3.31`、Netty `4.1.101.Final`、Jackson `2.13.5`、SnakeYAML `1.30`、Logback `1.2.12`、Log4j `2.17.2`、SLF4J `1.7.36`、Lettuce `6.1.10.RELEASE`，因此不能将“starter 已升级到 1.10.1”当作应用传递依赖已采用上文安全补丁版本的证明。继续使用 1.x 的应用须检查自己的 effective POM、依赖树与打包结果，并在自身 dependencyManagement 中维护所需兼容覆盖；即使与发布 reactor 对齐，本页已披露的 Boot/Spring/Logback 残余风险仍保留。该消费者验证只证明公开制品可解析、编译和最小运行，不是新的安全扫描。
+
+消费者完整证据（含独立缓存、源码/class、脚本快照、输入清单、依赖树和原始日志）冻结于 `.m2/consumer-central-1101/runs/2026-10-24T01-15-05-239Z/`，`verification-summary.json` 为汇总，运行结果在 `smoke-2026-10-24T01-18-29-826Z/result.json`；1,893 文件清单的 SHA-256 为 `42de79c01de31a9b76805efc0f3d83cd16afde39643015b054c38c7ac5d9291a`。
 
 验证命令（使用 JDK 17；新环境先 clean）：
 
@@ -138,6 +153,6 @@ docker compose -f docker-demo/docker-compose.yml up -d --build
 
 ## 升级与发布
 
-Central 发布后，将所用 `io.github.berrywang1996:netty-*` 依赖统一升级到 `1.10.1`。从 `1.10.0` 升级无需配置迁移；使用 `@AutowiredMessageSender` 的代码须改为构造注入，旧注解此前也不会自动注入字段。
+`1.10.1` 已可从 Central 获取。Boot 2.7 应用从 `1.10.0` 升级时，将所用 `io.github.berrywang1996:netty-*` 依赖统一为 `1.10.1`，无需本库配置迁移；使用 `@AutowiredMessageSender` 的代码须改为构造注入，旧注解此前也不会自动注入字段。Boot 4.1 应用继续使用 `2.x`，不要混用两个主版本。
 
-发布流程复用[发布检查清单](release-checklist.md)。使用 `-P release` 排除 demo；该 profile 的 `autoPublish=false`，上传验证完成后仍须在 Central Portal 发布并核实可下载，再更新本页状态与 README 的公开版本。不要将待发布版本写入“已发布”列表。
+本次发布已完成 Portal 发布与公开下载核对。后续版本沿用[发布检查清单](release-checklist.md)：使用 `-P release` 排除 demo，`autoPublish=false` 时须明确完成 Portal 发布，再核对公开制品；不覆盖已发布版本。
